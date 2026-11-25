@@ -387,6 +387,12 @@ NetPage::NetPage(QWidget *parent) : QWidget(parent) {
     hr->setContentsMargins(6, 6, 6, 6);
     wl_ = new QListWidget;
     wl_->setSelectionMode(QAbstractItemView::ExtendedSelection);
+    apps_ = new QListWidget;
+    apps_->setSelectionMode(QAbstractItemView::ExtendedSelection);
+    apps_->setToolTip(tr("Native Linux programs that may not reach the internet (LAN stays allowed while \"LAN is not internet\" is on).\n"
+                         "Matched on the program's executable: a full path, a folder ending in /, or a bare file name.\n"
+                         "A script run by an interpreter (python, node, bash) shows as that interpreter: block it by its full path only\n"
+                         "if every script it runs may go offline. Wine / .exe programs are handled by the Wine guard and its whitelist."));
     bl_ = makeTree({QString()});
     bl_->setHeaderHidden(true);
     bl_->setRootIsDecorated(true);
@@ -407,6 +413,10 @@ NetPage::NetPage(QWidget *parent) : QWidget(parent) {
     auto *bWlAdd = button("Add", rw);
     auto *bWlBrowse = button("Browse…", rw);
     auto *bWlDel = button("Remove", rw, true);
+    auto *ra = column("Blocked Linux programs — kept off the internet", "/usr/bin/curl  ·  /opt/app/  ·  firefox", apps_, appEdit_);
+    auto *bAppAdd = button("Add", ra);
+    auto *bAppBrowse = button("Browse…", ra);
+    auto *bAppDel = button("Remove", ra, true);
     auto *rl = column("Blacklist — addresses blocked for every program", "203.0.113.7  ·  198.51.100.0/24  ·  192.0.2.10 - 192.0.2.80", bl_, blEdit_);
     auto *bBlAdd = button("Add", rl);
     auto *bBlMany = button("Add many…", rl);
@@ -926,11 +936,32 @@ NetPage::NetPage(QWidget *parent) : QWidget(parent) {
             m.addAction(QStringLiteral("Kill connection"), this, [killConn, c] { killConn(c); });
         }
         if (wine) m.addAction(QStringLiteral("Whitelist program"), this, [wlConn, c] { wlConn(c); });
+        // A native program: keep it off the internet (its executable, as the kernel reports it).
+        else if (str(c, "exe").startsWith(QLatin1Char('/')))
+            m.addAction(tr("Block this program online"), this, [this, exe = str(c, "exe")] { changeList("block_apps", "add", exe); });
     });
     menuFor(blocked_, [this](QMenu &m, QTreeWidgetItem *it) {
         const QString exe = it->data(0, ExeRole).toString();
         addIpActions(m, it->data(0, IpRole).toString());
         m.addSeparator();
+        bool listed = false;  // cut off by the program block list, not the Wine guard
+        for (int i = 0; i < apps_->count(); ++i) {
+            const QString e = apps_->item(i)->text();
+            listed = listed || e == exe || (e.endsWith(QLatin1Char('/')) && exe.startsWith(e))
+                     || (!e.contains(QLatin1Char('/')) && e.compare(exe.section(QLatin1Char('/'), -1), Qt::CaseInsensitive) == 0);
+        }
+        if (listed) {
+            m.addAction(tr("Remove from blocked Linux programs"), this, [this, exe] {
+                QJsonArray rm;
+                for (int i = 0; i < apps_->count(); ++i) {
+                    const QString e = apps_->item(i)->text();
+                    if (e == exe || (e.endsWith(QLatin1Char('/')) && exe.startsWith(e))
+                        || (!e.contains(QLatin1Char('/')) && e.compare(exe.section(QLatin1Char('/'), -1), Qt::CaseInsensitive) == 0)) rm.append(e);
+                }
+                runRoot({{"op", "block_apps"}, {"remove", rm}});
+            });
+            return;
+        }
         m.addAction(QStringLiteral("Whitelist program"), this, [this, exe] { changeList("whitelist", "add", exe); });
         if (exe.startsWith(QLatin1Char('/')))
             m.addAction(QStringLiteral("Whitelist folder"), this, [this, exe] { changeList("whitelist", "add", exe.left(exe.lastIndexOf(QLatin1Char('/')) + 1)); });
@@ -981,6 +1012,17 @@ NetPage::NetPage(QWidget *parent) : QWidget(parent) {
     connect(bWlBrowse, &QPushButton::clicked, this, [this] {
         const QString f = QFileDialog::getOpenFileName(this, "Windows program", QDir::homePath(), "Windows programs (*.exe *.EXE);;All files (*)");
         if (!f.isEmpty()) changeList("whitelist", "add", f);
+    });
+    connect(bAppAdd, &QPushButton::clicked, this, [=, this] { addFrom("block_apps", appEdit_); });
+    connect(appEdit_, &QLineEdit::returnPressed, this, [=, this] { addFrom("block_apps", appEdit_); });
+    connect(bAppBrowse, &QPushButton::clicked, this, [this] {
+        const QString f = QFileDialog::getOpenFileName(this, tr("Program to keep offline"), QStringLiteral("/usr/bin"));
+        if (!f.isEmpty()) changeList("block_apps", "add", QFileInfo(f).canonicalFilePath().isEmpty() ? f : QFileInfo(f).canonicalFilePath());
+    });
+    connect(bAppDel, &QPushButton::clicked, this, [this] {
+        QJsonArray a;
+        for (const QListWidgetItem *it : apps_->selectedItems()) a.append(it->text());
+        if (!a.isEmpty()) runRoot({{"op", "block_apps"}, {"remove", a}});
     });
     connect(bWlDel, &QPushButton::clicked, this, [this] {
         QJsonArray a;
@@ -1130,9 +1172,11 @@ void NetPage::applyStatus(const QJsonObject &s) {
       guard_->setChecked(guard);
       logConns_->setChecked(logging);
       lan_->setChecked(s.value(QLatin1String("allow_lan")).toBool(true));
-      lan_->setEnabled(guard); }
+      lan_->setEnabled(guard || !s.value(QLatin1String("block_apps")).toArray().isEmpty()); }
     wl_->clear();
     for (const QJsonValue &x : s.value(QLatin1String("whitelist")).toArray()) wl_->addItem(x.toString());
+    apps_->clear();
+    for (const QJsonValue &x : s.value(QLatin1String("block_apps")).toArray()) apps_->addItem(x.toString());
     // Blacklist: entries banned together (same label) sit under one group row; the rest are single rows.
     QSet<QString> open;
     for (int i = 0; i < bl_->topLevelItemCount(); ++i)
@@ -1167,6 +1211,7 @@ void NetPage::applyStatus(const QJsonObject &s) {
         lines << QStringLiteral("<span style='color:%1'>●</span> Daemon running — blacklist enforced (%2), Wine guard <b>%3</b> (%4 whitelisted), connection log <b>%5</b>")
                      .arg(QLatin1String(theme::OK)).arg(blacklist_.size()).arg(QLatin1String(guard ? "on" : "off")).arg(wl_->count())
                      .arg(QLatin1String(logging ? "on" : "off"));
+        if (apps_->count()) lines.last() += tr(", %n Linux program(s) blocked", nullptr, apps_->count());
     } else {
         const bool systemd = QFileInfo::exists(QStringLiteral("/run/systemd/system"));
         lines << QStringLiteral("<span style='color:%1'>○ Daemon not running — rules are saved, nothing is enforced.</span> Start it: <code>%2</code>")

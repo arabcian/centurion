@@ -5730,6 +5730,34 @@ Daemon çalışıyor olmalı; açmak conntrack bayt sayaçlarını da açar.</tr
             <source>Socket snapshot is unavailable, changed or ambiguous. Refresh and select again.</source>
             <translation>Soket anlık görüntüsü kullanılamıyor, değişti veya belirsiz. Yenileyip tekrar seçin.</translation>
         </message>
+        <message>
+            <source>Native Linux programs that may not reach the internet (LAN stays allowed while "LAN is not internet" is on).
+Matched on the program's executable: a full path, a folder ending in /, or a bare file name.
+A script run by an interpreter (python, node, bash) shows as that interpreter: block it by its full path only
+if every script it runs may go offline. Wine / .exe programs are handled by the Wine guard and its whitelist.</source>
+            <translation>İnternete çıkmasına izin verilmeyen yerel Linux programları ("LAN internet değildir" açıkken yerel ağ serbest kalır).
+Programın çalıştırılabilir dosyasıyla eşleşir: tam yol, / ile biten bir klasör ya da yalnızca dosya adı.
+Bir yorumlayıcıyla (python, node, bash) çalışan betik o yorumlayıcı olarak görünür: onu tam yoluyla yalnızca
+çalıştırdığı her betiğin çevrimdışı kalması uygunsa engelleyin. Wine / .exe programları Wine koruması ve beyaz listesiyle yönetilir.</translation>
+        </message>
+        <message>
+            <source>Program to keep offline</source>
+            <translation>Çevrimdışı tutulacak program</translation>
+        </message>
+        <message>
+            <source>Block this program online</source>
+            <translation>Bu programın internete çıkmasını engelle</translation>
+        </message>
+        <message>
+            <source>Remove from blocked Linux programs</source>
+            <translation>Engellenen Linux programlarından çıkar</translation>
+        </message>
+        <message numerus="yes">
+            <source>, %n Linux program(s) blocked</source>
+            <translation>
+                <numerusform>, %n Linux programı engelli</numerusform>
+            </translation>
+        </message>
 </context>
     <context>
         <name>NotifyDialog</name>

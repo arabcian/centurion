@@ -26,7 +26,9 @@ class Audit20261119(unittest.TestCase):
     def test_cen01_guard_uses_non_bypass_queue(self):
         s = source(NET)
         self.assertIn('let guard_queue = format!', s)
-        self.assertIn('if cfg.guard { &guard_queue } else { &log_queue }', s)
+        # Fail-closed for every application verdict: the Wine guard and the native program block list.
+        self.assertIn('if cfg.guarding() { &guard_queue } else { &log_queue }', s)
+        self.assertIn('pub fn guarding(&self) -> bool { self.guard || !self.apps.is_empty() }', s)
         self.assertIn('queue num {QUEUE_NUM}\\n', s)
 
     def test_cen02_queue_opens_before_rules_are_replaced(self):

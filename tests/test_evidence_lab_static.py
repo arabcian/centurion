@@ -95,7 +95,8 @@ class EvidenceLabIntegration(unittest.TestCase):
 
     def test_snapshot_is_opt_in_and_redacts(self):
         s=src('gui/src/diagnostictools.cpp')
-        assert 'Save baseline' in src('gui/src/systools.cpp') and 'allow.contains(name)' in s
+        # Boot parameters keep their values except identifying ones (disk, LUKS, address): name=… only.
+        assert 'Save baseline' in src('gui/src/systools.cpp') and 'identifying.contains(name)' in s and 'name + QStringLiteral("=…")' in s
         assert 'diagsrc::saveJson(baselinePath()' in s
         assert 'QFileDevice::ReadOwner | QFileDevice::WriteOwner' in src('gui/src/diagsources.cpp')
         assert 'hardwareSnapshot(' in s and 'loadHardwareBaseline(' in s

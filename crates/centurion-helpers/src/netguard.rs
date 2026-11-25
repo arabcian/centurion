@@ -4,6 +4,9 @@
 //!   * connection list   sock_diag (the kernel interface behind `ss`) + /proc/<pid>/fd
 //!   * IP blacklist      nftables table `inet centurion_netguard` (drop in + out)
 //!   * firewall          default inbound / outbound policy and port rules (firewall.rs), same table
+//!   * app block list    native Linux programs named in `block_apps` (exact path, directory or file name):
+//!    the same queue finds the owning process; if its executable is listed: DROP, socket destroyed, logged.
+//!    Default allow (a list of what to block), unlike the Wine guard's default deny.
 //!   * Wine/.exe guard   the first packet of every new outbound flow is queued
 //!    (NFQUEUE) to the daemon; it finds the owning socket
 //!    and process, and if that is a Wine program which is
@@ -185,6 +188,8 @@ pub struct Config {
     pub traffic: bool,
     /// Exact path, directory prefix (trailing '/') or bare file name (case-insensitive).
     pub whitelist: Vec<String>,
+    /// Native (non-Wine) programs kept off the internet: same entry forms as the whitelist, matched on the executable.
+    pub apps: Vec<String>,
     pub blacklist: Vec<Net>,
     /// Blacklist entry (as printed) → group name; entries banned together are removed together.
     pub labels: HashMap<String, String>,
@@ -195,10 +200,21 @@ pub struct Config {
 }
 
 impl Default for Config {
-    fn default() -> Self { Config { guard: false, allow_lan: true, log_conns: false, traffic: false, whitelist: Vec::new(), blacklist: Vec::new(), labels: HashMap::new(), shared: HashMap::new(), fw: Firewall::default() } }
+    fn default() -> Self { Config { guard: false, allow_lan: true, log_conns: false, traffic: false, whitelist: Vec::new(), apps: Vec::new(), blacklist: Vec::new(), labels: HashMap::new(), shared: HashMap::new(), fw: Firewall::default() } }
 }
 
 fn basename(s: &str) -> &str { s.rsplit(['/', '\\']).next().unwrap_or(s) }
+
+/// Exact path, directory prefix (trailing '/') or bare file name (case-insensitive).
+fn list_matches(list: &[String], ident: &str) -> bool {
+    let base = basename(ident).to_lowercase();
+    list.iter().any(|w| {
+        if w.ends_with('/') { ident.starts_with(w.as_str()) }
+        else if w.contains('/') || w.contains('\\') { w == ident }
+        else if w.is_ascii() { w.eq_ignore_ascii_case(&base) }
+        else { w.to_lowercase() == base }
+    })
+}
 
 fn valid_entry(s: &str) -> bool { !s.is_empty() && s.len() <= 512 && !s.chars().any(char::is_control) }
 
@@ -220,6 +236,7 @@ impl Config {
             log_conns: v["log_conns"].as_bool().unwrap_or(false),
             traffic: v["traffic"].as_bool().unwrap_or(false),
             whitelist: strs("whitelist").into_iter().filter(|s| valid_entry(s)).take(MAX_WHITELIST).collect(),
+            apps: strs("block_apps").into_iter().filter(|s| valid_entry(s)).take(MAX_WHITELIST).collect(),
             blacklist,
             labels,
             shared,
@@ -229,7 +246,7 @@ impl Config {
 
     pub fn to_json(&self) -> Value {
         json!({"guard": self.guard, "allow_lan": self.allow_lan, "log_conns": self.log_conns, "traffic": self.traffic, "whitelist": self.whitelist,
-               "blacklist": self.blacklist.iter().map(Net::to_string).collect::<Vec<_>>(), "labels": self.labels, "shared_labels": self.shared, "firewall": self.fw.to_json()})
+               "block_apps": self.apps, "blacklist": self.blacklist.iter().map(Net::to_string).collect::<Vec<_>>(), "labels": self.labels, "shared_labels": self.shared, "firewall": self.fw.to_json()})
     }
 
     /// What the daemon enforces when the saved rules cannot be read: nothing new gets in, and the machine stays online.
@@ -245,15 +262,13 @@ impl Config {
     /// An entry without a path separator matches the program's *file name*, so a program renamed to a listed
     /// name matches too; an entry with a path (or a trailing '/') is compared as a whole. Whitelist full paths
     /// for anything that must not be spoofable by renaming.
-    pub fn whitelisted(&self, ident: &str) -> bool {
-        let base = basename(ident).to_lowercase();
-        self.whitelist.iter().any(|w| {
-            if w.ends_with('/') { ident.starts_with(w.as_str()) }
-            else if w.contains('/') || w.contains('\\') { w == ident }
-            else if w.is_ascii() { w.eq_ignore_ascii_case(&base) }
-            else { w.to_lowercase() == base }
-        })
-    }
+    pub fn whitelisted(&self, ident: &str) -> bool { list_matches(&self.whitelist, ident) }
+
+    /// A native program on the block list (same entry forms as the whitelist, compared with its executable).
+    pub fn app_blocked(&self, exe: &str) -> bool { list_matches(&self.apps, exe) }
+
+    /// Outbound flows go through the daemon for a verdict: the Wine guard, or a non-empty app block list.
+    pub fn guarding(&self) -> bool { self.guard || !self.apps.is_empty() }
 
     pub fn blacklisted(&self, ip: IpAddr) -> bool { self.blacklist.iter().any(|n| n.contains(ip)) }
 }
@@ -629,14 +644,14 @@ fn nft_ruleset(cfg: &Config, log_blocked: bool) -> String {
     s += "\t}\n\tchain out {\n\t\ttype filter hook output priority 0; policy accept;\n\t\toifname \"lo\" accept\n\t\tip daddr @bl4 drop\n\t\tip6 daddr @bl6 drop\n";
     if cfg.traffic { s += "\t\tct state invalid counter\n"; }
     s += &cfg.fw.hook(false);
-    if cfg.guard || cfg.log_conns {
+    if cfg.guarding() || cfg.log_conns {
         s += "\t\tct state != new accept\n";
         // With the connection log on, LAN flows must reach the daemon too; it applies the exemption itself.
         if cfg.allow_lan && !cfg.log_conns {
             s += "\t\tip daddr { 10.0.0.0/8, 100.64.0.0/10, 169.254.0.0/16, 172.16.0.0/12, 192.168.0.0/16, 224.0.0.0/4, 255.255.255.255 } accept\n";
             s += "\t\tip6 daddr { fc00::/7, fe80::/10, ff00::/8 } accept\n";
         }
-        s += if cfg.guard { &guard_queue } else { &log_queue };
+        s += if cfg.guarding() { &guard_queue } else { &log_queue };
     }
     s += "\t}\n}\n";
     s
@@ -997,7 +1012,7 @@ impl Guard {
     fn decide(&mut self, pkt: &[u8], hook: u8) -> bool {
         let Some(f) = parse_packet(pkt) else { return true };
         let inbound = hook == HOOK_LOCAL_IN;
-        let guarded = self.cfg.guard && !inbound && !(self.cfg.allow_lan && is_lan(f.dst));
+        let guarded = self.cfg.guarding() && !inbound && !(self.cfg.allow_lan && is_lan(f.dst));
         let peer = if inbound { f.src } else { f.dst };
         let log = self.cfg.log_conns && !peer.is_multicast() && peer != IpAddr::V4(Ipv4Addr::BROADCAST) && self.pending.len() < 1024;
         if !guarded && !log { return true; }
@@ -1039,21 +1054,53 @@ impl Guard {
                                  inode: sock.as_ref().map_or(0, |s| s.inode), uid: sock.as_ref().map(|s| s.uid), pid: 0, exe: String::new(), f });
     }
 
-    /// Some((pid, program)) when the socket belongs to a non-whitelisted Wine program: cut off and logged.
+    /// Some((pid, program)) when the socket belongs to a non-whitelisted Wine program or to a native program on
+    /// the block list: cut off and logged.
     fn block(&mut self, f: &Flow, pkt: &[u8], s: &Sock) -> Option<(i32, String)> {
         if s.inode == 0 { return None; }
-        let pid = self.owner(s)?;
-        let ident = self.offender(pid)?;
+        let (pid, ident) = self.wine_offender(s).or_else(|| self.app_offender(s))?;
         let killed = self.diag.destroy(s).is_ok();
         self.log(f, pkt, pid, &ident, killed);
         Some((pid, ident))
+    }
+
+    fn wine_offender(&mut self, s: &Sock) -> Option<(i32, String)> {
+        if !self.cfg.guard { return None; }
+        let pid = self.owner(s)?;
+        Some((pid, self.offender(pid)?))
+    }
+
+    /// The listed native program holding the socket. Wine programs are left to the Wine guard and its whitelist.
+    fn app_offender(&mut self, s: &Sock) -> Option<(i32, String)> {
+        if self.cfg.apps.is_empty() { return None; }
+        let pid = self.socket_owner(s)?;
+        let exe = exe_of(pid)?;
+        (!is_wine_loader(&exe) && self.cfg.app_blocked(&exe)).then_some((pid, exe))
+    }
+
+    /// The process holding one socket, before the verdict: the cached owner if it still holds it, the recent
+    /// owners, then only the processes of the socket's user.
+    fn socket_owner(&mut self, s: &Sock) -> Option<i32> {
+        use std::os::unix::fs::MetadataExt;
+        let inode = s.inode;
+        let holds = |p: i32| socket_inodes(p).any(|i| i == inode);
+        if let Some(&p) = self.owners.get(&inode) { if holds(p) { return Some(p); } }
+        let found = self.hot.iter().copied().find(|&p| holds(p))
+            .or_else(|| pids().filter(|p| std::fs::metadata(format!("/proc/{p}")).is_ok_and(|m| m.uid() == s.uid)).find(|&p| holds(p)))?;
+        if self.owners.len() > 4096 { self.owners.clear(); }
+        self.owners.insert(inode, found);
+        if !self.hot.contains(&found) {
+            if self.hot.len() >= 16 { self.hot.remove(0); }
+            self.hot.push(found);
+        }
+        Some(found)
     }
 
     /// Guard switched on (or its rules changed): connections that non-whitelisted Wine programs opened
     /// *before* that are established flows the queue rule never sees again, so they used to stay up for
     /// as long as the program kept them. Abort them once here; new ones go through decide().
     fn sweep(&mut self) {
-        if !self.cfg.guard { return; }
+        if !self.cfg.guarding() { return; }
         let Ok(socks) = dump_all(&self.diag) else { return };
         let mut n = 0;
         for s in socks.iter().filter(|s| s.dport != 0 && s.inode != 0 && s.state != 6 && !s.dst.is_loopback() && !s.src.is_loopback()) {
@@ -1061,7 +1108,7 @@ impl Guard {
             let f = Flow { proto: s.proto, src: s.src, sport: s.sport, dst: s.dst, dport: s.dport, l4: 0 };
             if self.block(&f, &[], s).is_some() { n += 1; }
         }
-        if n > 0 { eprintln!("centurion-netguard: {n} connection(s) of non-whitelisted Wine programs were already open — closed"); }
+        if n > 0 { eprintln!("centurion-netguard: {n} connection(s) of blocked programs were already open — closed"); }
     }
 
     /// Fills `owners` for the wanted socket inodes: recent owners first, then one /proc pass.
@@ -1843,6 +1890,15 @@ pub fn handle(req: &Value) -> Value {
             cfg.whitelist.retain(|w| !del.contains(w));
             if cfg.whitelist.len() > MAX_WHITELIST { return json!({"ok": false, "error": "whitelist is full"}); }
         }
+        "block_apps" => {
+            for s in strings(&req["add"]) {
+                if !valid_entry(&s) { return json!({"ok": false, "error": "invalid program entry"}); }
+                if !cfg.apps.contains(&s) { cfg.apps.push(s); }
+            }
+            let del = strings(&req["remove"]);
+            cfg.apps.retain(|w| !del.contains(w));
+            if cfg.apps.len() > MAX_WHITELIST { return json!({"ok": false, "error": "program block list is full"}); }
+        }
         "firewall" => {
             // Compare under the existing helper lock, before apply, nft validation, save or reload.
             // Optional for compatibility with CLI and older clients.
@@ -2193,6 +2249,18 @@ mod tests {
     }
 
     #[test]
+    fn app_block_list() {
+        let c = Config { apps: vec!["firefox".into(), "/opt/spotify/".into(), "/usr/bin/curl".into()], ..Config::default() };
+        assert!(c.guarding() && !c.guard);
+        assert!(c.app_blocked("/usr/lib/firefox/firefox") && c.app_blocked("/opt/spotify/spotify") && c.app_blocked("/usr/bin/curl"));
+        assert!(!c.app_blocked("/usr/local/bin/curl") && !c.app_blocked("/usr/bin/wget") && !c.app_blocked("/opt/spotify2/x"));
+        assert!(!c.whitelisted("/usr/lib/firefox/firefox"));   // separate lists
+        // Round trip through the saved configuration.
+        let back = Config { ..c.clone() }.to_json();
+        assert_eq!(back["block_apps"], json!(["firefox", "/opt/spotify/", "/usr/bin/curl"]));
+    }
+
+    #[test]
     fn packets() {
         let mut p = vec![0x45, 0, 0, 40, 0, 0, 0x40, 0, 64, 17, 0, 0, 192, 168, 1, 5, 8, 8, 8, 8, 0xC0, 0x00, 0, 53, 0, 0, 0, 0];
         p.extend_from_slice(&[0; 12]);
@@ -2254,6 +2322,12 @@ mod tests {
         assert!(s.matches("queue num").count() == 2 && !s.contains("192.168.0.0/16") && s.contains("iifname \"lo\" accept"));
         c.guard = false;
         assert!(nft_script(&c).matches("queue num").count() == 2);
+        // A native app block list alone queues outbound flows the same fail-closed way as the Wine guard.
+        let mut a = Config { apps: vec!["firefox".into()], ..Config::default() };
+        let s = nft_script(&a);
+        assert!(s.matches("queue num").count() == 1 && s.contains("queue num 19536\n") && !s.contains("bypass"));
+        a.apps.clear();
+        assert!(!nft_script(&a).contains("queue"));
         // Loopback is accepted before the blacklist drops in both chains, whatever is enabled.
         for (guard, log) in [(false, false), (true, false), (false, true)] {
             c.guard = guard;

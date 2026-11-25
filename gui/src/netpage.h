@@ -124,7 +124,7 @@ private:
     int wifiTab_ = -1;
     QPointer<QListWidget> subList_;           // open Subscriptions window
     QNetworkAccessManager *nam_ = nullptr;
-    QLineEdit *filter_, *logFilter_, *wlEdit_, *blEdit_;
+    QLineEdit *filter_, *logFilter_, *wlEdit_, *blEdit_, *appEdit_;
     QLabel *logInfo_;
     QTreeWidget *conns_, *blocked_, *connLog_, *bl_;  // bl_: groups (entries banned together) with their entries
     QTreeWidget *trafficTree_;
@@ -141,6 +141,7 @@ private:
     QDateTime trafficSeen_;
     bool trafficReadable_ = false, trafficValid_ = false;
     QListWidget *wl_;
+    QListWidget *apps_;  // native Linux programs kept off the internet (netguard block_apps)
     QStringList blacklist_;
     QTimer *timer_;
     QFileSystemWatcher *watch_;
