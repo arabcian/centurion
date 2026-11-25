@@ -63,6 +63,7 @@
 #include <QStandardPaths>
 #include <QTreeWidget>
 #include <QVBoxLayout>
+#include <QMenu>
 
 #include <algorithm>
 #include <functional>
@@ -712,7 +713,7 @@ DiagReportView::DiagReportView(QWidget *parent) : QWidget(parent) {
     copy_->setEnabled(false);
     save_->setEnabled(false);
     v->addLayout(top);
-    auto *actions = new QHBoxLayout;
+    auto *actions = actions_ = new QHBoxLayout;
     snapshot_ = text(QString(), "muted");
     actions->addWidget(snapshot_, 1);
     preview_ = new QPushButton(tr("Export preview…"));
@@ -722,7 +723,7 @@ DiagReportView::DiagReportView(QWidget *parent) : QWidget(parent) {
     actions->addWidget(pin_); actions->addWidget(compare_);
     archive_ = new QPushButton(tr("History…")); archive_->setEnabled(false);
     actions->addWidget(archive_); connect(archive_, &QPushButton::clicked, this, &DiagReportView::archiveWorkspace);
-    auto *crossBoot = new QPushButton(tr("Cross-Boot History…"));
+    auto *crossBoot = crossBoot_ = new QPushButton(tr("Cross-Boot History…"));
     actions->addWidget(crossBoot); connect(crossBoot,&QPushButton::clicked,this,[this]{diagnostichistory::open(this);});
     evidence_ = new QPushButton(tr("Evidence…")); evidence_->setEnabled(false);
     actions->addWidget(evidence_); connect(evidence_, &QPushButton::clicked, this, &DiagReportView::evidenceWorkspace);
@@ -867,7 +868,8 @@ void DiagReportView::setReport(const diag::Report &r) {
     verdict_->setVisible(true);
     headline_->setText(QStringLiteral("· ") + current.headline());
     about_->setText(current.about);
-    about_->setVisible(!current.about.isEmpty());
+    about_->setVisible(!current.about.isEmpty() && !compact_);
+    if (compact_) headline_->setToolTip(current.about);
     copy_->setEnabled(true);
     save_->setEnabled(true);
 
@@ -965,6 +967,33 @@ void DiagReportView::setFilterText(const QString &text) {
     else filterReport();
 }
 
+void DiagReportView::setCompact(bool compact) {
+    compact_ = compact;
+    if (compact && !more_) {
+        // One menu for the tools that are used now and then; each entry follows its (hidden) button's state.
+        auto *more = new QPushButton(tr("More…"));
+        more->setToolTip(tr("Export preview, snapshots, history and evidence relationships of this report."));
+        auto *menu = new QMenu(more);
+        for (QPushButton *b : {preview_, pin_, compare_, archive_, crossBoot_, evidence_}) {
+            QAction *a = menu->addAction(b->text());
+            connect(a, &QAction::triggered, b, &QPushButton::click);
+            connect(menu, &QMenu::aboutToShow, a, [a, b] { a->setEnabled(b->isEnabled()); });
+        }
+        more->setMenu(menu);
+        actions_->insertWidget(actions_->indexOf(copy_), more);
+        // The level and section pickers move up next to it; the search box is the page's incident focus.
+        actions_->insertWidget(actions_->indexOf(more), severity_);
+        actions_->insertWidget(actions_->indexOf(more), sections_);
+        more_ = more;
+    }
+    for (QPushButton *b : {preview_, pin_, compare_, archive_, crossBoot_, evidence_}) b->setVisible(!compact);
+    if (more_) more_->setVisible(compact);
+    search_->setVisible(!compact);
+    about_->setVisible(!compact && !report_.about.isEmpty() && hasReport_);
+    headline_->setToolTip(compact ? report_.about : QString());
+    filterReport();
+}
+
 void DiagReportView::filterReport() {
     if (!hasReport_) return;
     const QString needle = search_->text().trimmed();
@@ -995,7 +1024,9 @@ void DiagReportView::filterReport() {
     }
     filterInfo_->setText(tr("Showing %1/%2 findings and %3/%4 table rows. Export includes the full report.")
         .arg(visibleFindings).arg(findingWidgets_.size()).arg(visibleRows).arg(allRows));
+    if (compact_) filterInfo_->setVisible(visibleFindings < findingWidgets_.size() || visibleRows < allRows);
 }
+
 
 void DiagReportView::previewExport() {
     if (!hasReport_) return;

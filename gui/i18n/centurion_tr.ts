@@ -24730,6 +24730,14 @@ Satırlar sıralamadan bağımsız karşılaştırılır; değişen satırlar si
         <message><source>Note exceeds 4096 characters.</source><translation>Not 4096 karakteri aşıyor.</translation></message>
         <message><source>Note: %1</source><translation>Not: %1</translation></message>
         <message><source>This capture is already archived.</source><translation>Bu yakalama zaten arşivlenmiş.</translation></message>
+        <message>
+            <source>More…</source>
+            <translation>Daha fazla…</translation>
+        </message>
+        <message>
+            <source>Export preview, snapshots, history and evidence relationships of this report.</source>
+            <translation>Bu raporun dışa aktarma önizlemesi, anlık görüntüleri, geçmişi ve kanıt ilişkileri.</translation>
+        </message>
     </context>
     <context>
         <name>AdvancedHealthPage</name>

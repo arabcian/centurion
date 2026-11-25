@@ -21,20 +21,13 @@ static QString samplePath() { return diagsrc::dataDir() + QStringLiteral("/aer-l
 HealthEvidencePage::HealthEvidencePage(QWidget *parent) : QWidget(parent) {
     auto *layout = new QVBoxLayout(this);
     layout->setContentsMargins(8, 7, 8, 7);
-    auto *top = new QHBoxLayout;
-    auto *info = new QLabel(tr("One read-only scan of this boot's kernel log and device counters, read five ways. Press Scan; nothing runs in the background."));
-    info->setWordWrap(true);
-    info->setProperty("role", "muted");
-    top->addWidget(info, 1);
-    scan_ = new QPushButton(tr("Scan"));
-    top->addWidget(scan_);
-    layout->addLayout(top);
-    status_ = new QLabel;
-    status_->setWordWrap(true);
-    status_->setProperty("role", "muted");
-    layout->addWidget(status_);
-    // Incident focus: one subject followed through all five reports, kept across tabs, rescans and restarts.
+    // One row of controls: Scan, then the incident focus that filters all five reports. The description is
+    // the status line until the first scan, then that scan's summary.
     auto *focusRow = new QHBoxLayout;
+    scan_ = new QPushButton(tr("Scan"));
+    scan_->setToolTip(tr("One read-only scan of this boot's kernel log and device counters, read five ways. Nothing runs in the background."));
+    focusRow->addWidget(scan_);
+    focusRow->addSpacing(8);
     focusRow->addWidget(new QLabel(tr("Incident focus:")));
     focus_ = new QComboBox;
     focus_->setEditable(true);
@@ -46,10 +39,15 @@ HealthEvidencePage::HealthEvidencePage(QWidget *parent) : QWidget(parent) {
     auto *clearFocus = new QPushButton(tr("Clear focus"));
     focusRow->addWidget(clearFocus);
     layout->addLayout(focusRow);
+    status_ = new QLabel(tr("One read-only scan of this boot's kernel log and device counters, read five ways. Press Scan; nothing runs in the background."));
+    status_->setWordWrap(true);
+    status_->setProperty("role", "muted");
+    layout->addWidget(status_);
     tabs_ = new QTabWidget(this);
     const QStringList names = {tr("H02 · Machine Checks"), tr("H03 · PCIe Errors"), tr("H04 · NVIDIA Xid"), tr("H05 · F2FS"), tr("H09 · Wi-Fi / Bluetooth")};
     for (int i = 0; i < 5; ++i) {
         views_[i] = new DiagReportView;
+        views_[i]->setCompact(true);
         views_[i]->setMessage(tr("Press Scan to read this boot's evidence."));
         tabs_->addTab(views_[i], names.at(i));
     }

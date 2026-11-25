@@ -25,6 +25,10 @@ public:
     const diag::Report &report() const { return report_; }
     /// Sets the findings/readings search from outside (Evidence Lab incident focus).
     void setFilterText(const QString &text);
+    /// Fewer controls above the report (Evidence Lab: five reports under one incident focus): the snapshot, history and
+    /// evidence tools go into one "More" menu next to Copy / Save, the search box (the page's focus drives it) and the
+    /// report's description line are hidden, and the "Showing …" line appears only while something is filtered out.
+    void setCompact(bool compact);
 
 Q_SIGNALS:
     /// A finding's fix button changed the system: the owner reads the report again.
@@ -40,7 +44,10 @@ private:
     QLineEdit *search_;
     QComboBox *severity_, *sections_;
     QLabel *filterInfo_, *snapshot_;
-    QPushButton *preview_, *pin_, *compare_, *archive_, *evidence_;
+    QPushButton *preview_, *pin_, *compare_, *archive_, *evidence_, *crossBoot_;
+    QWidget *more_ = nullptr;
+    class QHBoxLayout *actions_ = nullptr;
+    bool compact_ = false;
     QString capturedAt_, captureBoot_;
     std::shared_ptr<QJsonObject> hardwareTreeState_ = std::make_shared<QJsonObject>();
     std::shared_ptr<QJsonObject> acpiTreeState_ = std::make_shared<QJsonObject>();
