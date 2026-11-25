@@ -66,6 +66,7 @@
 #include <QPointer>
 #include <QProcess>
 #include <QPushButton>
+#include <QRegularExpression>
 #include <QTimer>
 #include <QTreeWidget>
 #include <QVBoxLayout>
@@ -764,8 +765,8 @@ HealthTab::HealthTab(QWidget *parent) : QWidget(parent) {
     // Resume point: highest seq of the current boot already in the file, so a
     // restart does not write this boot's history twice.
     {
-        savedBoot_ = diagsrc::bootId().toLower();
-        if (!diagnostichistory::fullBoot(savedBoot_.toStdString()).empty()) {
+        savedBoot_ = QString::fromStdString(diagnostichistory::fullBoot(diagsrc::bootId().toStdString()));
+        if (!savedBoot_.isEmpty()) {
             const auto tail = diagsrc::savedLog(diagsrc::SavedLog::Health, 10000, TAIL_BYTES);
             for (const auto &record : tail.lines)
                 if (record.boot == savedBoot_) savedSeq_ = std::max(savedSeq_, record.seq);
@@ -836,7 +837,7 @@ void HealthTab::scan() {
         return;
     }
     busy_ = true;
-    const QJsonObject req{{QStringLiteral("op"), QStringLiteral("health")}, {QStringLiteral("since"), qint64(lastSeq_)}};
+    const QJsonObject req{{QStringLiteral("op"), QStringLiteral("health")}, {QStringLiteral("since"), qint64(savedCaptureSeq_)}};
     if (needsRoot_) {
         // health-reader: read-only, classified events only, silent polkit action at every
         // security level -- this runs at start-up and on a timer with the window hidden.
@@ -854,11 +855,18 @@ void HealthTab::scan() {
     }
     auto *p = new QProcess(this);
     QPointer<QProcess> guard(p);
-    connect(p, &QProcess::finished, this, [this, p](int, QProcess::ExitStatus) {
+    connect(p, &QProcess::finished, this, [this, p](int code, QProcess::ExitStatus status) {
         busy_ = false;
         const QByteArray out = p->readAllStandardOutput().trimmed();
         p->deleteLater();
-        onReply(QJsonDocument::fromJson(out.mid(out.lastIndexOf('\n') + 1)).object(), false);
+        const auto reply = QJsonDocument::fromJson(out.mid(out.lastIndexOf('\n') + 1)).object();
+        if (status != QProcess::NormalExit || reply.isEmpty()
+            || (code != 0 && reply.value(QStringLiteral("ok")).toBool())) {
+            const auto error = tr("Kernel monitor stopped or returned an invalid reply.");
+            onReply(QJsonObject{{QStringLiteral("error"), error}}, false);
+            return;
+        }
+        onReply(reply, false);
     });
     connect(p, &QProcess::errorOccurred, this, [this, p](QProcess::ProcessError e) {
         if (e != QProcess::FailedToStart) return;
@@ -887,19 +895,57 @@ void HealthTab::onReply(const QJsonObject &r, bool viaRoot) {
         scanWarning_->setVisible(true);
         return;
     }
+    const auto reject = [this] {
+        const auto error = tr("Kernel monitor returned invalid event data.");
+        source_->setText(error);
+        scanWarning_->setText(error);
+        scanWarning_->setVisible(true);
+    };
+    const auto bootId = QString::fromStdString(diagnostichistory::fullBoot(
+        r.value(QStringLiteral("boot_id")).toString().toStdString()));
+    const auto cursor = r.value(QStringLiteral("last_seq")).toInteger(-1);
+    const auto events = r.value(QStringLiteral("events"));
+    if (bootId.isEmpty() || (!savedBoot_.isEmpty() && bootId != savedBoot_)
+        || cursor < qint64(lastSeq_) || !events.isArray()) {
+        reject();
+        return;
+    }
+    const auto ev = events.toArray();
+    static const QRegularExpression token(QStringLiteral("\\A[A-Za-z0-9_-]+\\z"));
+    qint64 previous = qint64(savedCaptureSeq_);
+    for (const auto &v : ev) {
+        const auto e = v.toObject();
+        const auto sequence = e.value(QStringLiteral("seq")).toInteger(-1);
+        if (sequence <= previous || sequence > cursor || e.value(QStringLiteral("ts_us")).toInteger(-1) < 0
+            || !token.match(e.value(QStringLiteral("level")).toString()).hasMatch()
+            || !token.match(e.value(QStringLiteral("kind")).toString()).hasMatch()
+            || !e.value(QStringLiteral("title")).isString() || !e.value(QStringLiteral("text")).isString()) {
+            reject();
+            return;
+        }
+        previous = sequence;
+    }
+    const bool saved = persist(ev, bootId);
+    if (saved) {
+        savedCaptureSeq_ = quint64(cursor);
+        if (!needsRoot_) timer_->stop();
+    } else if (!timer_->isActive()) {
+        // Retry on quiet systems even if the kernel produces no new events.
+        timer_->start(POLL_ROOT_MS);
+    }
+
     scanWarning_->setVisible(false);
     source_->setText(viaRoot
         ? QStringLiteral("Kernel log is restricted (kernel.dmesg_restrict=1): read through pkexec every %1 min. "
                          "sysctl kernel.dmesg_restrict=0 allows direct, faster checks.").arg(POLL_ROOT_MS / 60000)
         : QStringLiteral("Watching the kernel log directly (scans only when a relevant line appears)."));
 
-    const QJsonArray ev = r.value(QStringLiteral("events")).toArray();
-    const QString bootId = r.value(QStringLiteral("boot_id")).toString();
     int newBad = 0;
     bool newCritical = false;
     QString firstBad;
     for (const QJsonValue &v : ev) {
         const QJsonObject e = v.toObject();
+        if (e.value(QStringLiteral("seq")).toInteger() <= qint64(lastSeq_)) continue;
         addEvent(e, bootId);
         if (!first_) Q_EMIT fault(e);
         const QString lvl = e.value(QStringLiteral("level")).toString();
@@ -908,8 +954,7 @@ void HealthTab::onReply(const QJsonObject &r, bool viaRoot) {
             if (!newBad++) firstBad = e.value(QStringLiteral("title")).toString();
         }
     }
-    persist(ev, r.value(QStringLiteral("boot_id")).toString());
-    lastSeq_ = std::max<quint64>(lastSeq_, quint64(r.value(QStringLiteral("last_seq")).toDouble()));
+    lastSeq_ = quint64(cursor);
 
     if (newBad) {
         const QString severity = newCritical ? notifyprefs::CRITICAL_LEVEL : notifyprefs::ERROR_LEVEL;
@@ -938,7 +983,7 @@ void HealthTab::onReply(const QJsonObject &r, bool viaRoot) {
                                 : QStringLiteral("PCIe AER counters (since boot):<br>") + aer.join(QStringLiteral("<br>")));
     updateSummary();
     applyDayFilter();
-    if (!ev.isEmpty()) refreshDays();
+    if (saved && !ev.isEmpty()) refreshDays();
 }
 
 void HealthTab::addEvent(const QJsonObject &e, const QString &bootId) {
@@ -1858,13 +1903,8 @@ QString HealthTab::logPath() {
     return diagsrc::savedLogPath(diagsrc::SavedLog::Health);
 }
 
-void HealthTab::persist(const QJsonArray &ev, const QString &bootId) {
-    const auto fullBoot = QString::fromStdString(diagnostichistory::fullBoot(bootId.toStdString()));
-    if (fullBoot.isEmpty()) {
-        logInfo_->setText(tr("Saved log requires a full boot identity."));
-        return;
-    }
-    if (fullBoot != savedBoot_) { savedBoot_ = fullBoot; savedSeq_ = 0; }
+bool HealthTab::persist(const QJsonArray &ev, const QString &bootId) {
+    savedBoot_ = bootId;
     QStringList lines;
     // Kernel timestamps count from boot; wall time = now - uptime + ts.
     timespec now{};
@@ -1873,13 +1913,8 @@ void HealthTab::persist(const QJsonArray &ev, const QString &bootId) {
     quint64 top = savedSeq_;
     for (const QJsonValue &v : ev) {
         const QJsonObject e = v.toObject();
-        const auto sequence = e.value(QStringLiteral("seq")).toInteger(-1);
-        const auto timestamp = e.value(QStringLiteral("ts_us")).toInteger(-1);
-        if (sequence < 0 || timestamp < 0) {
-            logInfo_->setText(tr("A malformed event prevented the saved log from being updated."));
-            return;
-        }
-        const auto seq = quint64(sequence);
+        const auto seq = quint64(e.value(QStringLiteral("seq")).toInteger());
+        const auto timestamp = e.value(QStringLiteral("ts_us")).toInteger();
         if (seq <= savedSeq_) continue;
         top = std::max(top, seq);
         const qint64 tsMs = timestamp / 1000;
@@ -1896,14 +1931,15 @@ void HealthTab::persist(const QJsonArray &ev, const QString &bootId) {
                      .arg(e.value(QStringLiteral("kind")).toString().toUpper(), -6)
                      .arg(title, message);
     }
-    if (lines.isEmpty()) return;
+    if (lines.isEmpty()) return true;
     const QByteArray bytes = (lines.join(QLatin1Char('\n')) + QLatin1Char('\n')).toUtf8();
     if (!diagsrc::appendSavedLog(diagsrc::SavedLog::Health, bytes, LOG_MAX_BYTES)) {
         logInfo_->setText(tr("Could not write the saved log."));
-        return;
+        return false;
     }
     savedSeq_ = top;
     updateLogInfo();
+    return true;
 }
 
 void HealthTab::updateLogInfo() {

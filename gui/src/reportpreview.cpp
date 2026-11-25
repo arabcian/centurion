@@ -20,6 +20,7 @@
 #include <QPushButton>
 #include <QRegularExpression>
 #include <QSplitter>
+#include <QStringList>
 #include <QSignalBlocker>
 #include <QHash>
 #include <QVBoxLayout>
@@ -31,6 +32,9 @@ constexpr int NameRole = Qt::UserRole + 1;
 constexpr int DigestRole = Qt::UserRole + 2;
 constexpr int BytesRole = Qt::UserRole + 3;
 constexpr int TruncatedRole = Qt::UserRole + 4;
+constexpr int PageDigestsRole = Qt::UserRole + 5;
+constexpr int PageCountRole = Qt::UserRole + 6;
+constexpr int ShownPageCountRole = Qt::UserRole + 7;
 }
 
 ReportPreview::ReportPreview(const QJsonObject &preview, const QString &snapshotPath, QWidget *parent)
@@ -70,12 +74,28 @@ ReportPreview::ReportPreview(const QJsonObject &preview, const QString &snapshot
         const auto shown = o.value(QStringLiteral("text"));
         const QByteArray shownBytes = shown.toString().toUtf8();
         const auto bytes = o.value(QStringLiteral("bytes")).toInteger(-1);
+        const auto digestList = o.value(QStringLiteral("page_sha256"));
+        const qint64 pageCount = canPage && bytes > 0 ? 1 + (bytes - 1) / pageBytes_ : 1;
+        QStringList pageDigests;
+        bool validDigests = true;
+        if (canPage && truncated && !digestList.isUndefined()) {
+            const auto values = digestList.toArray();
+            validDigests = values.size() == pageCount && !values.isEmpty();
+            for (const auto &value : values) {
+                const auto hash = value.toString();
+                if (!digestPattern.match(hash).hasMatch()) validDigests = false;
+                pageDigests.append(hash);
+            }
+            validDigests = validDigests && QCryptographicHash::hash(shownBytes, QCryptographicHash::Sha256).toHex()
+                == pageDigests.constFirst().toLatin1();
+        }
         const bool matchesPreview = truncated
             ? !shownBytes.isEmpty() && bytes > shownBytes.size()
+                && (!canPage || (pageCount > 1 && shownBytes.size() >= pageBytes_ - 3 && shownBytes.size() <= pageBytes_))
             : bytes == shownBytes.size() && QCryptographicHash::hash(shownBytes, QCryptographicHash::Sha256).toHex() == digest.toLatin1();
         const bool eligible = preview.value(QStringLiteral("preview_schema")).toInt() == 2 && status == QLatin1String("included")
             && !name.isEmpty() && nameCounts.value(name) == 1 && shown.isString() && truncatedValue.isBool()
-            && digestPattern.match(digest).hasMatch() && matchesPreview;
+            && digestPattern.match(digest).hasMatch() && matchesPreview && validDigests;
         it->setData(TextRole, shown.toString());
         it->setFlags(it->flags() & ~Qt::ItemIsUserCheckable);
         if (eligible) {
@@ -83,6 +103,8 @@ ReportPreview::ReportPreview(const QJsonObject &preview, const QString &snapshot
             it->setData(DigestRole, digest);
             it->setData(BytesRole, bytes);
             it->setData(TruncatedRole, truncated);
+            it->setData(PageDigestsRole, pageDigests);
+            it->setData(PageCountRole, pageCount);
             it->setFlags(it->flags() | Qt::ItemIsUserCheckable);
             it->setCheckState(truncated ? Qt::Unchecked : Qt::Checked);
             if (truncated && !canPage) it->setText(it->text() + tr(" (partial preview; full file if selected)"));
@@ -198,6 +220,7 @@ ReportPreview::ReportPreview(const QJsonObject &preview, const QString &snapshot
     save->setText(tr("Save…"));
     auto *selectionBar = new QHBoxLayout;
     auto *selected = new QLabel;
+    selected->setWordWrap(true);
     auto *selectComplete = new QPushButton(tr("Select complete previews"));
     auto *clear = new QPushButton(tr("Clear file selection"));
     selectComplete->setAutoDefault(false);
@@ -209,14 +232,22 @@ ReportPreview::ReportPreview(const QJsonObject &preview, const QString &snapshot
 
     const auto updateSelection = [this, save, selected, selectComplete, clear] {
         int checked = 0;
+        int incomplete = 0;
         bool completeAvailable = false;
         for (int i = 0; i < list_->count(); ++i) {
             const auto *item = list_->item(i);
             if (!item->flags().testFlag(Qt::ItemIsUserCheckable)) continue;
-            if (item->checkState() == Qt::Checked) ++checked;
-            else if (!item->data(TruncatedRole).toBool()) completeAvailable = true;
+            if (item->checkState() == Qt::Checked) {
+                ++checked;
+                const auto pages = item->data(PageCountRole).toLongLong();
+                if (item->data(TruncatedRole).toBool()
+                    && (pages == 1 || item->data(ShownPageCountRole).toLongLong() < pages)) ++incomplete;
+            } else if (!item->data(TruncatedRole).toBool()) {
+                completeAvailable = true;
+            }
         }
-        selected->setText(tr("%1 selected").arg(checked));
+        selected->setText(incomplete ? tr("%1 selected · %2 include text you have not opened").arg(checked).arg(incomplete)
+                                     : tr("%1 selected").arg(checked));
         save->setEnabled(checked > 0);
         clear->setEnabled(checked > 0);
         selectComplete->setEnabled(completeAvailable);
@@ -244,11 +275,17 @@ void ReportPreview::selectFile(QListWidgetItem *item) {
     ++generation_;
     loadingPage_ = false;
     page_ = 0;
-    const auto bytes = item ? item->data(BytesRole).toLongLong() : 0;
-    pageCount_ = !snapshotPath_.isEmpty() && pageBytes_ > 0 && bytes > 0
-        ? 1 + (bytes - 1) / pageBytes_ : 1;
+    pageCount_ = item ? qMax<qint64>(1, item->data(PageCountRole).toLongLong()) : 1;
     text_->setPlainText(item ? item->data(TextRole).toString() : QString());
+    markPageShown(item);
     updatePageControls();
+}
+
+void ReportPreview::markPageShown(QListWidgetItem *item) {
+    if (!item || pageCount_ <= 1) return;
+    auto &pages = shownPages_[item];
+    pages.insert(page_);
+    item->setData(ShownPageCountRole, qint64(pages.size()));
 }
 
 void ReportPreview::updatePageControls() {
@@ -278,12 +315,20 @@ void ReportPreview::showPage(qint64 page) {
                      {QStringLiteral("page"), page}}, this, [this, page, generation](const QJsonObject &reply) {
         if (generation != generation_) return;
         loadingPage_ = false;
+        auto *item = list_->currentItem();
+        if (!item) { updatePageControls(); return; }
+        const auto content = reply.value(QStringLiteral("text"));
+        const auto bytes = content.toString().toUtf8();
+        const auto nominal = qMin(pageBytes_, item->data(BytesRole).toLongLong() - page * pageBytes_);
+        const auto digests = item->data(PageDigestsRole).toStringList();
         if (reply.value(QStringLiteral("ok")).toBool()
             && reply.value(QStringLiteral("page")).toInteger(-1) == page
             && reply.value(QStringLiteral("page_count")).toInteger() == pageCount_
-            && reply.value(QStringLiteral("text")).isString()) {
+            && content.isString() && !bytes.isEmpty() && bytes.size() >= nominal - 3 && bytes.size() <= nominal + 3
+            && (digests.isEmpty() || QCryptographicHash::hash(bytes, QCryptographicHash::Sha256).toHex() == digests.at(page).toLatin1())) {
             page_ = page;
-            text_->setPlainText(reply.value(QStringLiteral("text")).toString());
+            text_->setPlainText(content.toString());
+            markPageShown(item);
             updatePageControls();
             return;
         }

@@ -210,6 +210,29 @@ fn frequency_mhz(value: &str) -> Option<u32> {
     (freq >= 1.0 && freq <= f64::from(u32::MAX) && freq.fract() == 0.0).then_some(freq as u32)
 }
 
+fn signal_dbm(value: &str) -> Option<i32> {
+    let measurement = value.strip_suffix("dBm")?;
+    if !measurement.ends_with(char::is_whitespace) { return None; }
+    let measurement = measurement.trim_end();
+    let end = measurement.find(char::is_whitespace).unwrap_or(measurement.len());
+    let dbm = measurement[..end].parse::<f64>().ok()?;
+    let chains = measurement[end..].trim();
+    let valid_chains = chains.is_empty() || (chains.starts_with('[') && chains.ends_with(']'));
+    (valid_chains && (-127.0..=0.0).contains(&dbm)).then(|| dbm.round() as i32)
+}
+
+fn bitrate_mbps(value: &str) -> Option<f64> {
+    let mut fields = value.split_whitespace();
+    let number = fields.next()?;
+    let rate = if let Some(n) = number.strip_suffix("Mbps") {
+        n.parse::<f64>().ok()?
+    } else {
+        if !matches!(fields.next()?, "MBit/s" | "Mbps") { return None; }
+        number.parse::<f64>().ok()?
+    };
+    (rate.is_finite() && rate >= 0.0).then_some(rate)
+}
+
 pub fn parse_link(text: &str) -> Link {
     let mut l = Link { connected: text.trim_start().starts_with("Connected to"), ..Link::default() };
     if let Some(b) = text.trim_start().strip_prefix("Connected to ").and_then(|t| t.split_whitespace().next()) { l.bssid = b.to_owned(); }
@@ -217,9 +240,9 @@ pub fn parse_link(text: &str) -> Link {
         match k {
             "SSID" => l.ssid = v.to_owned(),
             "freq" => l.freq = frequency_mhz(v),
-            "signal" => l.signal_dbm = first(v),
-            "rx bitrate" => { l.rx_mbps = first(v); l.rx_mode = v.to_owned(); }
-            "tx bitrate" => { l.tx_mbps = first(v); l.tx_mode = v.to_owned(); }
+            "signal" => l.signal_dbm = signal_dbm(v),
+            "rx bitrate" => { l.rx_mbps = bitrate_mbps(v); l.rx_mode = v.to_owned(); }
+            "tx bitrate" => { l.tx_mbps = bitrate_mbps(v); l.tx_mode = v.to_owned(); }
             _ => {}
         }
     }
@@ -230,8 +253,8 @@ pub fn parse_station(text: &str) -> Station {
     let mut s = Station::default();
     for (k, v) in fields(text) {
         match k {
-            "signal" => s.signal_dbm = first(v),
-            "tx bitrate" => s.tx_mbps = first(v),
+            "signal" => s.signal_dbm = signal_dbm(v),
+            "tx bitrate" => s.tx_mbps = bitrate_mbps(v),
             "tx packets" => s.tx_packets = first(v).unwrap_or(0),
             "tx retries" => s.tx_retries = first(v).unwrap_or(0),
             "tx failed" => s.tx_failed = first(v).unwrap_or(0),
@@ -240,15 +263,15 @@ pub fn parse_station(text: &str) -> Station {
             "tx bytes" => s.tx_bytes = first(v).unwrap_or(0),
             "beacon loss" => s.beacon_loss = first(v).unwrap_or(0),
             "connected time" => s.connected_secs = first(v),
-            "signal avg" => s.signal_avg_dbm = first(v),
-            "expected throughput" => s.expected_mbps = lead_f64(v),
+            "signal avg" => s.signal_avg_dbm = signal_dbm(v),
+            "expected throughput" => s.expected_mbps = bitrate_mbps(v),
             _ => {}
         }
     }
     s
 }
 
-/// The number a value starts with, even when the unit is glued to it ("866.700Mbps", "22.00 dBm").
+/// The number a value starts with ("22.00 dBm").
 fn lead_f64(v: &str) -> Option<f64> {
     let end = v.find(|c: char| !(c.is_ascii_digit() || c == '.' || c == '-')).unwrap_or(v.len());
     v[..end].parse().ok()
@@ -345,7 +368,7 @@ pub fn parse_scan(text: &str) -> Vec<Bss> {
         let v = v.trim();
         match k {
             "freq" => r.bss.freq = frequency_mhz(v).unwrap_or(0),
-            "signal" => r.bss.signal_dbm = first::<f64>(v).filter(|f| f.is_finite() && (-127.0..=0.0).contains(f)).map(|f| f.round() as i32),
+            "signal" => r.bss.signal_dbm = signal_dbm(v),
             "SSID" => r.bss.ssid = v.to_owned(),
             "capability" => r.privacy = v.contains("Privacy"),
             "last seen" if v.ends_with("s [boottime]") => r.bss.seen_boottime_ms = seen_boottime(v),
@@ -359,9 +382,11 @@ pub fn parse_scan(text: &str) -> Vec<Bss> {
 }
 
 /// How crowded the connected channel is: other networks on it, and (2.4 GHz only) on channels within
-/// four of it, which overlap it. `None` when the scan holds no associated network.
+/// four of it, which overlap it. Requires one unambiguous associated network.
 pub fn channel_load(list: &[Bss]) -> Option<(u32, usize, usize)> {
-    let me = list.iter().find(|b| b.associated)?;
+    let mut associated = list.iter().filter(|b| b.associated);
+    let me = associated.next()?;
+    if associated.next().is_some() { return None; }
     let ch = channel(me.freq)?;
     let mut same = 0;
     let mut overlap = 0;

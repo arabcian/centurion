@@ -53,7 +53,7 @@ static bool openRegular(QFile &f, const QString &path, bool *missing = nullptr, 
     if (missing) *missing = fd < 0 && errno == ENOENT;
     if (fd < 0) return false;
     struct stat st{};
-    const auto mode = append ? QIODevice::WriteOnly | QIODevice::Append : QIODevice::ReadOnly;
+    const auto mode = append ? QIODevice::WriteOnly | QIODevice::Append | QIODevice::Unbuffered : QIODevice::ReadOnly;
     if (::fstat(fd, &st) != 0 || !S_ISREG(st.st_mode) || !f.open(fd, mode, QFileDevice::AutoCloseHandle)) {
         ::close(fd); return false;
     }
@@ -73,7 +73,8 @@ bool appendSavedLog(SavedLog source, const QByteArray &records, qint64 rotateAft
 
     QFile file;
     if (!openRegular(file, path, nullptr, true)) return false;
-    if (file.size() > rotateAfter) {
+    auto originalSize = file.size();
+    if (originalSize > 0 && (originalSize > rotateAfter || records.size() > rotateAfter - originalSize)) {
         const auto current = QFile::encodeName(path);
         const auto rotated = current + ".1";
         // Replacing the old rotation and moving the current file is one operation.
@@ -81,8 +82,13 @@ bool appendSavedLog(SavedLog source, const QByteArray &records, qint64 rotateAft
         if (::rename(current.constData(), rotated.constData()) != 0) return false;
         file.close();
         if (!openRegular(file, path, nullptr, true)) return false;
+        originalSize = file.size();
     }
-    return file.write(records) == records.size() && file.flush();
+    if (originalSize < 0) return false;
+    if (file.write(records) == records.size() && file.flush()) return true;
+    // Restore the record boundary before the caller retries a short write.
+    while (::ftruncate(file.handle(), originalSize) != 0 && errno == EINTR) {}
+    return false;
 }
 
 bool clearSavedLog(SavedLog source) {

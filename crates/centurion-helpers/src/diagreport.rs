@@ -508,12 +508,24 @@ fn preview_boundary(text: &str, mut offset: usize) -> usize {
     offset
 }
 
+fn preview_page(text: &str, page: usize) -> &str {
+    let start = preview_boundary(text, page * PREVIEW_BYTES);
+    let end = preview_boundary(text, ((page + 1) * PREVIEW_BYTES).min(text.len()));
+    &text[start..end]
+}
+
 /// The file list and each file's text, cut to PREVIEW_BYTES on a character boundary.
 fn preview(entries: &[Entry]) -> Value {
     let files: Vec<Value> = entries.iter().map(|e| {
-        let cut = preview_boundary(&e.text, e.text.len().min(PREVIEW_BYTES));
-        json!({"name": e.name, "status": e.status, "bytes": e.text.len(), "masked": e.masked,
-               "sha256": content_digest(&e.text), "truncated": cut < e.text.len(), "text": &e.text[..cut]})
+        let first = preview_page(&e.text, 0);
+        let mut file = json!({"name": e.name, "status": e.status, "bytes": e.text.len(), "masked": e.masked,
+                             "sha256": content_digest(&e.text), "truncated": first.len() < e.text.len(), "text": first});
+        if e.status == "included" && first.len() < e.text.len() {
+            let digests: Vec<_> = (0..e.text.len().div_ceil(PREVIEW_BYTES))
+                .map(|page| content_digest(preview_page(&e.text, page))).collect();
+            file["page_sha256"] = json!(digests);
+        }
+        file
     }).collect();
     let masked: u64 = entries.iter().map(|e| e.masked).sum();
     json!({"ok": true, "preview_schema": 2, "files": files, "masked": masked})
@@ -695,9 +707,7 @@ pub fn page_request(req: &Value) -> Value {
     let text = &entries[0].text;
     let page_count = text.len().div_ceil(PREVIEW_BYTES).max(1);
     if page >= page_count { return error("preview page out of range"); }
-    let start = preview_boundary(text, page * PREVIEW_BYTES);
-    let end = preview_boundary(text, ((page + 1) * PREVIEW_BYTES).min(text.len()));
-    json!({"ok": true, "page": page, "page_count": page_count, "text": &text[start..end]})
+    json!({"ok": true, "page": page, "page_count": page_count, "text": preview_page(text, page)})
 }
 
 /// Op "diag_report": a preview without "out", the archive with it.

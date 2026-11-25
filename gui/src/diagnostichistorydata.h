@@ -4,6 +4,7 @@
 #include "diagreport.h"
 #include "diagsources.h"
 #include <QCryptographicHash>
+#include <QDateTime>
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
@@ -66,7 +67,7 @@ inline QList<RecordedEvent> recordedEvents(const diagsrc::LogTail &health, const
     return out;
 }
 
-struct Entry { QString id,code,title,boot,reportedBoot,time,locale,note; QJsonObject snapshot; };
+struct Entry { QString id,code,title,boot,reportedBoot,time,locale,note; QJsonObject snapshot; QDateTime capturedAt; };
 struct Archive { QList<Entry> entries; int rejected=0; bool limited=false; };
 inline bool validSnapshot(const QJsonObject &snap) {
     if(snap.value("version").toInt()!=1 || !snap.value("code").isString() || !snap.value("title").isString() || !snap.value("records").isArray()) return false;
@@ -109,12 +110,19 @@ inline Archive load(const QString &dir) {
             if(ids.contains(id)) {duplicates.insert(id);++out.rejected;continue;}
             ids.insert(id);
             const auto boot=e.value("boot").toString();
-            out.entries.append({id,code,diag::redactPrivateText(snap.value("title").toString()),full(boot),diag::redactPrivateText(boot).left(80),e.value("time").toString().left(80),e.value("locale").toString().left(32),diag::redactPrivateText(e.value("note").toString()).left(4096),snap});
+            const auto time=e.value("time").toString().left(80);
+            auto capturedAt=QDateTime::fromString(time,Qt::ISODate);
+            if (capturedAt.timeSpec()==Qt::LocalTime) capturedAt=QDateTime();
+            out.entries.append({id,code,diag::redactPrivateText(snap.value("title").toString()),full(boot),diag::redactPrivateText(boot).left(80),time,e.value("locale").toString().left(32),diag::redactPrivateText(e.value("note").toString()).left(4096),snap,capturedAt});
         }
     }
     for(qsizetype i=out.entries.size();i>0;--i) if(duplicates.contains(out.entries.at(i-1).id)) {out.entries.removeAt(i-1);++out.rejected;}
     // Presentation order only. Wall timestamps are not monotonic causal evidence.
-    std::sort(out.entries.begin(),out.entries.end(),[](const Entry&a,const Entry&b){return a.time==b.time?a.id<b.id:a.time>b.time;});
+    std::sort(out.entries.begin(),out.entries.end(),[](const Entry &a,const Entry &b) {
+        if (a.capturedAt.isValid()!=b.capturedAt.isValid()) return a.capturedAt.isValid();
+        if (a.capturedAt.isValid() && a.capturedAt!=b.capturedAt) return a.capturedAt>b.capturedAt;
+        return a.id<b.id;
+    });
     return out;
 }
 }

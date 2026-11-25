@@ -2,8 +2,10 @@
 // The diagnostic report before it is saved: every file of the archive with its status, and the text of
 // the file selected. The text is the sanitized text: what is shown is what is written.
 #include <QDialog>
+#include <QHash>
 #include <QJsonObject>
 #include <QJsonArray>
+#include <QSet>
 
 class QLabel;
 class QListWidget;
@@ -23,6 +25,7 @@ private:
     void selectFile(QListWidgetItem *item);
     void showPage(qint64 page);
     void updatePageControls();
+    void markPageShown(QListWidgetItem *item);
 
     QListWidget *list_;
     QPlainTextEdit *text_;
@@ -33,6 +36,7 @@ private:
     QLabel *pageStatus_;
     const QString snapshotPath_;
     const qint64 pageBytes_;
+    QHash<QListWidgetItem *, QSet<qint64>> shownPages_;
     qint64 page_ = 0;
     qint64 pageCount_ = 1;
     quint64 generation_ = 0;
