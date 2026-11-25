@@ -12,6 +12,10 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions follo
   Same keys, presets, Restore originals and boot defaults; only the page and its own Apply checked button differ.
 
 ### Added
+- Six knobs found missing in a full /sys dump: *No EC wake-ups in s2idle* (`pm.ec_no_wakeup`, s2idle battery
+  drain), *Freeze file systems before suspend* and *Removable-disk polling interval* (Optimizations → Devices);
+  *KSM pages_to_scan*, *KSM sleep_millisecs* and *DAMON proactive reclaim* (System tools → Kernel tuning). Manual
+  only: neither calibration nor Autotune sets them.
 - Product-report follow-ups (docs/REPORT_FEATURES_2026-11-25.md):
   - Scenes: every apply records its trigger (manual, tray, shortcut, D-Bus, power source, login, resume, game end,
     CO Search, …) and the final state of each component; the Scenes tab shows them under *Last apply*, so a refused

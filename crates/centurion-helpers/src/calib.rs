@@ -467,6 +467,8 @@ pub const EXCLUDED: &[(&str, &str)] = &[
     ("kernel.yield_type", "Project C kernels only: manual"),
     ("thp.khp_max_ptes_shared", "khugepaged: minutes"), ("mm.ksm_advisor", "no effect without mergeable memory"),
     ("vm.dirtytime_expire_seconds", "12 h timestamp age: longer than a run, unmeasurable"),
+    ("mm.ksm_pages_to_scan", "no effect without mergeable memory"), ("mm.ksm_sleep_ms", "no effect without mergeable memory"),
+    ("mm.damon_reclaim", "reclaims pages idle for 2 min: longer than a run, unmeasurable"),
 ];
 
 /// A key the calibration never tests (see `EXCLUDED`). Measurements of such a key that an older

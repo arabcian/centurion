@@ -13562,6 +13562,30 @@ Bu değişiklikler kararlılığı azaltabilir, sıcaklığı veya boşta güç 
             <source>Controller-specific NVMe APST latency ceiling; overrides the global APST row on this SSD. 0 disables non-operational power states and costs idle power.</source>
             <translation>Bu SSD denetleyicisine özgü NVMe APST güç durumu geçişleri için gecikme toleransı sınırıdır. Genel APST satırının bu disk üzerindeki etkisini değiştirir. 0, çalışmayan güç durumlarını devre dışı bırakır; boşta güç tüketimi ve SSD sıcaklığı artabilir.</translation>
         </message>
+        <message>
+            <source>Kernel Samepage Merging: how many pages the scanner looks at in each pass (stock 100). More = identical pages are merged sooner, at the price of more ksmd CPU time; fewer = the opposite. The kernel refuses the write while the KSM advisor (mm.ksm_advisor) is on, because the advisor sets this value itself. Has no effect while KSM is off (mm.ksm_run = 0, as here). Never part of a calibration.</source>
+            <translation>Kernel Samepage Merging: tarayıcının her geçişte incelediği sayfa sayısı (varsayılan 100). Daha fazla = aynı sayfalar daha çabuk birleşir, karşılığında ksmd daha çok CPU harcar; daha az = tersi. KSM danışmanı (mm.ksm_advisor) açıkken çekirdek yazmayı reddeder, çünkü bu değeri danışman kendisi belirler. KSM kapalıyken (mm.ksm_run = 0, burada olduğu gibi) etkisi yoktur. Hiçbir zaman kalibrasyona girmez.</translation>
+        </message>
+        <message>
+            <source>Kernel Samepage Merging: how long (ms) ksmd sleeps between two scan passes (stock 20). Longer = less background CPU and fewer wake-ups, slower merging; shorter = the opposite. Has no effect while KSM is off (mm.ksm_run = 0, as here). Never part of a calibration.</source>
+            <translation>Kernel Samepage Merging: ksmd'nin iki tarama geçişi arasında uyuduğu süre (ms, varsayılan 20). Daha uzun = daha az arka plan CPU'su ve uyanma, daha yavaş birleştirme; daha kısa = tersi. KSM kapalıyken (mm.ksm_run = 0, burada olduğu gibi) etkisi yoktur. Hiçbir zaman kalibrasyona girmez.</translation>
+        </message>
+        <message>
+            <source>DAMON_RECLAIM: a kernel thread watches memory access and reclaims (pages out, to zram or disk swap) regions nobody has touched for 2 minutes, before memory actually runs short, so a game or browser that suddenly needs memory finds it free instead of waiting for reclaim. It is active only while free memory is between about 20 % and 40-50 % of RAM and spends at most 10 ms of CPU per second. A page it took out comes back with a fault on the next access. Off (stock) = reclaim only under real pressure. Background work measured in minutes: never part of a calibration.</source>
+            <translation>DAMON_RECLAIM: bir çekirdek iş parçacığı bellek erişimini izler ve 2 dakikadır kimsenin dokunmadığı bölgeleri, bellek gerçekten azalmadan önce geri kazanır (zram'a ya da disk takas alanına yazar); böylece birden bellek isteyen bir oyun ya da tarayıcı geri kazanımı beklemek yerine boş bellek bulur. Yalnızca boş bellek RAM'in yaklaşık yüzde 20'si ile yüzde 40-50'si arasındayken çalışır ve saniyede en çok 10 ms CPU harcar. Dışarı aldığı bir sayfa bir sonraki erişimde bir sayfa hatasıyla geri gelir. Kapalı (varsayılan) = geri kazanım yalnızca gerçek bellek baskısında. Dakikalarla ölçülen arka plan işi: hiçbir zaman kalibrasyona girmez.</translation>
+        </message>
+        <message>
+            <source>Stops the embedded controller (EC) from waking the laptop out of s2idle (modern standby). The EC reports battery level steps, AC changes, thermal and fan events; on many laptops these wake the CPU again and again through the night and drain the battery while it is 'asleep'. 1 = the EC may not wake the system (the power button still does). On some machines the lid switch or the AC adapter also go through the EC: then opening the lid or plugging in no longer wakes it, press the power button instead. Only matters with mem_sleep = s2idle; takes effect from the next suspend.</source>
+            <translation>Gömülü denetleyicinin (EC) dizüstünü s2idle'dan (modern bekleme) uyandırmasını engeller. EC pil seviyesi adımlarını, AC değişikliklerini, ısı ve fan olaylarını bildirir; birçok dizüstünde bunlar gece boyunca CPU'yu tekrar tekrar uyandırır ve makine 'uykudayken' pili tüketir. 1 = EC sistemi uyandıramaz (güç düğmesi yine uyandırır). Bazı makinelerde kapak anahtarı ya da AC adaptörü de EC üzerinden geçer: o zaman kapağı açmak ya da şarja takmak artık uyandırmaz, bunun yerine güç düğmesine basın. Yalnızca mem_sleep = s2idle iken önemlidir; bir sonraki uykudan itibaren geçerli olur.</translation>
+        </message>
+        <message>
+            <source>1 = before suspend or hibernation the kernel freezes every mounted file system, so no write is in flight when the devices power down. Helps when suspend fails or hangs because a task is stuck in a file system (FUSE, network shares); costs a little time on every suspend. Stock 0. Present only on kernels that have /sys/power/freeze_filesystems.</source>
+            <translation>1 = uyku ya da hazırda bekletmeden önce çekirdek bağlı her dosya sistemini dondurur, böylece aygıtların gücü kesilirken yolda hiçbir yazma kalmaz. Bir görev bir dosya sisteminde (FUSE, ağ paylaşımları) takılı kaldığı için uykuya geçiş başarısız olduğunda ya da asılı kaldığında işe yarar; her uykuda biraz zaman alır. Varsayılan 0. Yalnızca /sys/power/freeze_filesystems dosyası olan çekirdeklerde bulunur.</translation>
+        </message>
+        <message>
+            <source>How often (ms) the kernel polls removable disks that cannot report a media change by themselves (USB card readers, optical drives) to see whether a card or disc was inserted; systemd sets 2000 at boot. Every poll wakes the reader, which keeps it (and its USB port) out of autosuspend: 0 stops the polling and saves that idle power. With 0, a card put into such a reader may not show up until something opens the device or it is replugged. Applies at once to every disk that uses the default interval.</source>
+            <translation>Çekirdeğin, ortam değişikliğini kendisi bildiremeyen çıkarılabilir diskleri (USB kart okuyucular, optik sürücüler) bir kart ya da disk takılıp takılmadığını görmek için ne sıklıkta (ms) yokladığı; systemd açılışta 2000 yapar. Her yoklama okuyucuyu uyandırır ve onu (ve USB bağlantı noktasını) otomatik askıya almanın dışında tutar: 0 yoklamayı durdurur ve bu boşta güç tüketimini kurtarır. 0 iken böyle bir okuyucuya takılan kart, aygıtı bir şey açana ya da okuyucu yeniden takılana kadar görünmeyebilir. Varsayılan aralığı kullanan her diske hemen uygulanır.</translation>
+        </message>
     </context>
     <context>
         <name>OptimizationLabels</name>
@@ -14680,6 +14704,30 @@ Bu değişiklikler kararlılığı azaltabilir, sıcaklığı veya boşta güç 
         <message>
             <source>NVMe 2 · APST latency (µs)</source>
             <translation>NVMe 2 · APST gecikmesi (µs)</translation>
+        </message>
+        <message>
+            <source>KSM pages_to_scan</source>
+            <translation>KSM pages_to_scan</translation>
+        </message>
+        <message>
+            <source>KSM sleep_millisecs</source>
+            <translation>KSM sleep_millisecs</translation>
+        </message>
+        <message>
+            <source>DAMON proactive reclaim</source>
+            <translation>DAMON proaktif bellek geri kazanımı</translation>
+        </message>
+        <message>
+            <source>No EC wake-ups in s2idle</source>
+            <translation>s2idle'da EC uyandırması yok</translation>
+        </message>
+        <message>
+            <source>Freeze file systems before suspend</source>
+            <translation>Uykudan önce dosya sistemlerini dondur</translation>
+        </message>
+        <message>
+            <source>Removable-disk polling interval (ms)</source>
+            <translation>Çıkarılabilir disk yoklama aralığı (ms)</translation>
         </message>
     </context>
     <context>

@@ -1,6 +1,6 @@
 # Knob envanteri (kalibrasyon ve autotune)
 
-Kaynak koddan üretildi (2026-11-01; 2026-11-23: 13 EEVDF feature biti, /sys dökümünden 37 knob ve MC/PKG sched domain satırları eklendi, elle işlendi): `tune::TUNABLES`, `calib::EXCLUDED`, `calib::phases_for`, `calib::dev_key`; autotune sütunu `autotune.rs`'in test dışı kodunda knobun adının geçip geçmediğine göre.
+Kaynak koddan üretildi (2026-11-01; 2026-11-23: 13 EEVDF feature biti, /sys dökümünden 37 knob ve MC/PKG sched domain satırları eklendi; 2026-11-25: /sys dökümünden 6 knob daha, elle işlendi): `tune::TUNABLES`, `calib::EXCLUDED`, `calib::phases_for`, `calib::dev_key`; autotune sütunu `autotune.rs`'in test dışı kodunda knobun adının geçip geçmediğine göre.
 
 - **Kalibrasyon**: evet = tasarım oturumunda ölçülür (makineye göre atlanma koşulu parantez içinde).
 - Her knob, dosyası bu makinede/çekirdekte yoksa atlanır (ör. `cpu.epp_boost` yalnız yamalı çekirdekte).
@@ -8,9 +8,9 @@ Kaynak koddan üretildi (2026-11-01; 2026-11-23: 13 EEVDF feature biti, /sys dö
 - **Autotune**: *ölçüm (joint)* = ortak modelden seçilir; *kural + ölçüm* = kural ön bilgidir, ölçüm güvenle aksini gösterirse ezer; *yalnız kural* = ölçülmeden kuralla; — = hiç ayarlanmaz (yalnız elle).
 - Birleşik knoblar (`thp`, `vm.dirty`, `launch.slice_us`) TUNABLES dışında tanımlıdır; `thp` 5 mod, idle+load; `vm.dirty` IO fazı.
 
-Not: Autotune sütunu "—" olan ve hiçbir yerleşik presette geçmeyen 61 satır (`tune::HOME_NETWORK/STORAGE/KERNEL`) Optimizasyonlar sekmesinde değil, Sağlık > Sistem araçları > Ağ / Depolama / Çekirdek ayarları sayfalarında görünür.
+Not: Autotune sütunu "—" olan ve hiçbir yerleşik presette geçmeyen 64 satır (`tune::HOME_NETWORK/STORAGE/KERNEL`) Optimizasyonlar sekmesinde değil, Sağlık > Sistem araçları > Ağ / Depolama / Çekirdek ayarları sayfalarında görünür.
 
-Özet: 254 knob · kalibre + autotune 123 · yalnız autotune kuralı 52 · hiçbiri 79
+Özet: 260 knob · kalibre + autotune 123 · yalnız autotune kuralı 52 · hiçbiri 85
 
 ## CPU (38)
 
@@ -55,7 +55,7 @@ Not: Autotune sütunu "—" olan ve hiçbir yerleşik presette geçmeyen 61 sat�
 | `cpu.smt` | hayır | — | yalnız kural | takes CPUs offline |
 | `cpu.ccd_park` | hayır | — | yalnız kural | takes CPUs offline |
 
-## Memory (58)
+## Memory (61)
 
 | Knob | Kalibrasyon | Faz[test] | Autotune | Ölçülmeme nedeni |
 |---|---|---|---|---|
@@ -115,6 +115,9 @@ Not: Autotune sütunu "—" olan ve hiçbir yerleşik presette geçmeyen 61 sat�
 | `vm.oom_kill_allocating_task` | hayır | — | — | behaviour, not performance |
 | `mm.ksm_use_zero_pages` | hayır | — | — | no effect without mergeable memory |
 | `mm.ksm_smart_scan` | hayır | — | — | no effect without mergeable memory |
+| `mm.ksm_pages_to_scan` | hayır | — | — | no effect without mergeable memory |
+| `mm.ksm_sleep_ms` | hayır | — | — | no effect without mergeable memory |
+| `mm.damon_reclaim` | hayır | — | — | reclaims pages idle for 2 min: longer than a run, unmeasurable |
 | `kernel.numa_promote_rate_limit` | hayır | — | — | memory tiering only |
 | `mm.swap_vma_readahead` | evet | load[mem] | ölçüm (joint) |  |
 
@@ -261,13 +264,16 @@ Not: Autotune sütunu "—" olan ve hiçbir yerleşik presette geçmeyen 61 sat�
 | `net.rmem_max` | hayır | — | — | no calibration phase for this group |
 | `net.wmem_max` | hayır | — | — | no calibration phase for this group |
 
-## Devices (25)
+## Devices (28)
 
 | Knob | Kalibrasyon | Faz[test] | Autotune | Ölçülmeme nedeni |
 |---|---|---|---|---|
 | `pci.aspm` | hayır | — | yalnız kural | grup kalibrasyon kapsamı dışında |
 | `pci.aspm_links` | hayır | — | yalnız kural | grup kalibrasyon kapsamı dışında |
 | `pm.mem_sleep` | hayır | — | yalnız kural | grup kalibrasyon kapsamı dışında |
+| `pm.ec_no_wakeup` | hayır | — | — | grup kalibrasyon kapsamı dışında |
+| `pm.freeze_filesystems` | hayır | — | — | grup kalibrasyon kapsamı dışında |
+| `pm.disk_events_poll_ms` | hayır | — | — | grup kalibrasyon kapsamı dışında |
 | `pci.latency_timer` | hayır | — | — | grup kalibrasyon kapsamı dışında |
 | `snd.hda_power_save` | evet (yalnız pilde) | dev[power] | kural + ölçüm |  |
 | `snd.hda_power_save_controller` | evet (yalnız pilde) | dev[power] | kural + ölçüm |  |

@@ -998,6 +998,8 @@ centurion-helpers --bin centurion-calibrate sequential`; the noise/budget sweep 
 | `net.tcp_notsent_lowat`, `net.tcp_fastopen`, `net.gro_flush_timeout`, `net.napi_defer_hard_irqs`, `net.busy_poll`, `net.busy_read`, `net.napi_threaded` | manual (Network group: no network benchmark). Per-interface rows cover every physical interface. NAPI threads are ordinary kthreads: the soft-park partition moves them off the game CCD by itself |
 | `thp.use_zero_page`, `vm.compact_unevictable_allowed` | measured in the load phase (generic flip) |
 | `thp.khp_max_ptes_shared`, `mm.ksm_advisor`, `vm.dirtytime_expire_seconds` | manual (`EXCLUDED`, same reasons as their khugepaged / KSM / dirty-expire siblings) |
+| `mm.ksm_pages_to_scan`, `mm.ksm_sleep_ms`, `mm.damon_reclaim` | manual (`EXCLUDED`): KSM scan pacing (no effect while KSM is off) and DAMON proactive reclaim (acts on pages idle for minutes). Kernel tuning page |
+| `pm.ec_no_wakeup`, `pm.freeze_filesystems`, `pm.disk_events_poll_ms` | manual (Devices group: no idle-power or suspend benchmark). EC wake-ups in s2idle, file-system freeze before suspend, removable-disk media polling |
 
 ## C-state caps
 
