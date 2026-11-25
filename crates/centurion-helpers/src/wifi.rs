@@ -538,25 +538,37 @@ pub fn status(req: &Value) -> Value {
     let (ifaces, iface) = pick(req);
     let Some(iface) = iface else { return json!({"ok": true, "present": false}) };
     let Some(bin) = tool("iw") else { return json!({"ok": true, "present": true, "iface": iface, "ifaces": ifaces, "iw": false}) };
-    let (link, dump) = match (iw(&bin, &iface, &["link"]), iw(&bin, &iface, &["station", "dump"])) {
-        (Ok(l), Ok(s)) => (parse_link(&l), s),
-        (Err(e), _) | (_, Err(e)) => return json!({"ok": false, "present": true, "iface": iface, "ifaces": ifaces, "iw": true, "error": e}),
+    let link = match iw(&bin, &iface, &["link"]) {
+        Ok(l) => parse_link(&l),
+        Err(e) => return json!({"ok": false, "present": true, "iface": iface, "ifaces": ifaces, "iw": true, "error": e}),
     };
-    let mut station = station_for_bssid(&dump, &link.bssid).map(parse_station).unwrap_or_default();
+    let station_sample = if link.connected {
+        iw(&bin, &iface, &["station", "dump"]).ok()
+            .and_then(|dump| station_for_bssid(&dump, &link.bssid).map(parse_station))
+    } else {
+        None
+    };
+    let station_available = station_sample.is_some();
+    let mut station = station_sample.unwrap_or_default();
     station.signal_dbm = station.signal_dbm.or(link.signal_dbm);
     let info = iw(&bin, &iface, &["info"]).map(|t| parse_info(&t)).unwrap_or_default();
     let freq = link.freq.or(info.freq);
+    let same_channel = freq.is_some() && freq == info.freq;
+    let channel_number = if same_channel { info.channel.or_else(|| freq.and_then(channel)) } else { freq.and_then(channel) };
+    let width = info.width_mhz.filter(|_| same_channel);
+    let has_tx_packets = station.tx_packets > 0;
     let tx_mode = if link.tx_mode.is_empty() { &link.rx_mode } else { &link.tx_mode };
     json!({"ok": true, "present": true, "iw": true, "iface": iface, "ifaces": ifaces, "connected": link.connected, "ssid": link.ssid,
-           "bssid": link.bssid, "freq": freq, "channel": info.channel.or(freq.and_then(channel)), "band": freq.map_or("", band),
-           "width_mhz": info.width_mhz, "tx_power_dbm": info.txpower_dbm,
+           "bssid": link.bssid, "freq": freq, "channel": channel_number, "band": freq.map_or("", band),
+           "width_mhz": width, "tx_power_dbm": info.txpower_dbm, "station_available": station_available,
            "standard": standard(tx_mode), "rx_mode": link.rx_mode, "tx_mode": link.tx_mode,
            "signal_dbm": station.signal_dbm, "signal_avg_dbm": station.signal_avg_dbm, "rx_mbps": link.rx_mbps,
            "tx_mbps": station.tx_mbps.or(link.tx_mbps), "expected_mbps": station.expected_mbps,
            "connected_secs": station.connected_secs, "beacon_loss": station.beacon_loss,
            "rx_packets": station.rx_packets, "rx_bytes": station.rx_bytes, "tx_bytes": station.tx_bytes,
            "tx_packets": station.tx_packets, "tx_retries": station.tx_retries, "tx_failed": station.tx_failed,
-           "retry_pct": pct(station.tx_retries, station.tx_packets), "fail_pct": pct(station.tx_failed, station.tx_packets),
+           "retry_pct": has_tx_packets.then(|| pct(station.tx_retries, station.tx_packets)),
+           "fail_pct": has_tx_packets.then(|| pct(station.tx_failed, station.tx_packets)),
            "warn": warnings(&station)})
 }
 
@@ -579,8 +591,12 @@ fn rfkill(phy: u32) -> (Option<bool>, Option<bool>) {
 /// The adapter behind one interface and what the driver and the radio say about themselves. Static, so the
 /// GUI asks once when the page is opened.
 pub fn hardware(req: &Value) -> Value {
-    let (_, iface) = pick(req);
+    let iface = match scan_iface(req) { Ok(iface) => iface, Err(error) => return error };
     let Some(iface) = iface else { return json!({"ok": true, "present": false}) };
+    let before = adapter_stamp(&iface);
+    if req.get("adapter_stamp").is_some_and(|expected| before.is_none() || expected.as_str() != before.as_deref()) {
+        return json!({"ok": false, "iface": iface, "error": "Selected wireless adapter changed"});
+    }
     let dev = PathBuf::from(format!("/sys/class/net/{iface}/device"));
     let bus = link_name(dev.join("subsystem"));
     // PCI and SDIO keep the IDs on the device; a USB interface keeps them (and the product strings) on its parent.
@@ -601,7 +617,10 @@ pub fn hardware(req: &Value) -> Value {
             out["firmware"] = json!(fields(&t).find(|(k, _)| *k == "firmware-version").map(|(_, v)| v).filter(|v| !v.is_empty() && *v != "N/A"));
         }
     }
-    let Some(iw_bin) = tool("iw") else { out["iw"] = json!(false); return out };
+    let Some(iw_bin) = tool("iw") else {
+        out["iw"] = json!(false);
+        return hardware_reply(&iface, before, out);
+    };
     out["iw"] = json!(true);
     let info = iw(&iw_bin, &iface, &["info"]).map(|t| parse_info(&t)).unwrap_or_default();
     out["mac"] = json!(read_trim(format!("/sys/class/net/{iface}/address")).or(Some(info.addr).filter(|a| !a.is_empty())));
@@ -618,6 +637,14 @@ pub fn hardware(req: &Value) -> Value {
             out["modes"] = json!(modes);
         }
     }
+    hardware_reply(&iface, before, out)
+}
+
+fn hardware_reply(iface: &str, before: Option<String>, mut out: Value) -> Value {
+    if before.is_some() && adapter_stamp(iface) != before {
+        return json!({"ok": false, "iface": iface, "error": "Wireless adapter changed during hardware capture"});
+    }
+    out["adapter_stamp"] = json!(before);
     out
 }
 

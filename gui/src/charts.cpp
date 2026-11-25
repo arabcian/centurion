@@ -188,9 +188,22 @@ void exportRows(QWidget *parent,const QString &header,const QList<QStringList> &
 LineChart::LineChart(QWidget *parent) : QWidget(parent) { setAccessibleName(QCoreApplication::translate("LineChart", "Line chart")); setMouseTracking(true); setFocusPolicy(Qt::StrongFocus); }
 
 void LineChart::setPoints(const QVector<Point> &points, const QString &yUnit) {
-    const bool narrowed = yUnit == unit_ && begin_ < end_ && (begin_ > 0 || end_ < points_.size());
+    const auto matchingIndex = [](const QVector<Point> &samples, const Point &target) {
+        return uniqueIndex(samples, [&](const Point &p) { return p.x == target.x && p.label == target.label; });
+    };
+    const bool sameUnit = yUnit == unit_;
+    const bool narrowed = sameUnit && begin_ < end_ && (begin_ > 0 || end_ < points_.size());
     const Point oldFirst = narrowed ? points_.at(begin_) : Point{};
     const Point oldLast = narrowed ? points_.at(end_ - 1) : Point{};
+    const bool stableRange = narrowed && matchingIndex(points_, oldFirst) == begin_
+        && matchingIndex(points_, oldLast) == end_ - 1;
+    Point oldSelection{};
+    bool stableSelection = false;
+    if (keyboardSample_ >= 0) {
+        oldSelection = points_.at(keyboardSample_);
+        stableSelection = sameUnit && matchingIndex(points_, oldSelection) == keyboardSample_;
+        QToolTip::hideText();
+    }
     points_.clear();
     bool gap = false;
     for (const auto &pt : points) {
@@ -199,9 +212,10 @@ void LineChart::setPoints(const QVector<Point> &points, const QString &yUnit) {
         points_.append(copy); gap = false;
     }
     unit_ = yUnit;
-    if (narrowed) {
-        const auto first = uniqueIndex(points_, [&](const Point &p) { return p.x == oldFirst.x && p.label == oldFirst.label; });
-        const auto last = uniqueIndex(points_, [&](const Point &p) { return p.x == oldLast.x && p.label == oldLast.label; });
+    keyboardSample_ = stableSelection ? matchingIndex(points_, oldSelection) : -1;
+    if (stableRange) {
+        const auto first = matchingIndex(points_, oldFirst);
+        const auto last = matchingIndex(points_, oldLast);
         if (first >= 0 && last >= first) {
             setViewRange(first, last + 1);
             return;
@@ -232,8 +246,10 @@ void LineChart::setViewRange(qsizetype begin, qsizetype end) {
     plotted_.clear();
     plottedIndices_.clear();
     hover_ = -1;
-    if (keyboardSample_ >= 0) QToolTip::hideText();
-    keyboardSample_ = -1;
+    if (keyboardSample_ >= 0 && (keyboardSample_ < begin_ || keyboardSample_ >= end_)) {
+        QToolTip::hideText();
+        keyboardSample_ = -1;
+    }
     updateAccessibleDescription();
     update();
 }
@@ -645,11 +661,16 @@ void DayBars::updateAccessibleRange() {
         for (int c : d.kinds) n += std::max(0,c);
         rows << QStringLiteral("%1: %2").arg(d.date).arg(n);
     }
+    const auto selected = std::find_if(days_.cbegin() + begin_, days_.cbegin() + end_,
+        [this](const Day &day) { return day.date == selected_; });
+    if (selected != days_.cbegin() + end_) rows.prepend(tr("Selected day: %1").arg(selected->date));
     setAccessibleDescription(rows.join(QStringLiteral("; ")));
 }
 
 void DayBars::setSelected(const QString &date) {
+    if (selected_ == date) return;
     selected_ = date;
+    updateAccessibleRange();
     update();
 }
 
