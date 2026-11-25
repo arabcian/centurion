@@ -14,6 +14,7 @@
 #include <QDateTime>
 #include <QDir>
 #include <QFileDialog>
+#include <QFileInfo>
 #include <QFrame>
 #include <QGridLayout>
 #include <QHBoxLayout>
@@ -432,7 +433,9 @@ void OverviewPage::report() {
             QMessageBox::warning(this, tr("Diagnostic Report"), tr("The report could not be built: %1").arg(p.value(QStringLiteral("error")).toString()));
             return;
         }
-        ReportPreview dialog(p, this);
+        const bool frozen = p.value(QStringLiteral("frozen")).toBool();
+        const QString reportSnapshot = frozen ? preview.value(QStringLiteral("snapshot")).toString() : QString();
+        ReportPreview dialog(p, reportSnapshot, this);
         if (dialog.exec() != QDialog::Accepted) { reporting_ = false; return; }
 
         QString tag;
@@ -441,19 +444,38 @@ void OverviewPage::report() {
         }
         if (tag.isEmpty()) tag = QStringLiteral("unknown");
         const QString name = QStringLiteral("centurion-report-%1-%2.tar.gz").arg(tag, QDate::currentDate().toString(QStringLiteral("yyyy-MM-dd")));
-        QString path = QFileDialog::getSaveFileName(this, tr("Save diagnostic report"), QDir::homePath() + QLatin1Char('/') + name,
-                                                    tr("Compressed archives (*.tar.gz)"));
+        QFileDialog save(this, tr("Save diagnostic report"), QDir::homePath(), tr("Compressed archives (*.tar.gz)"));
+        save.setAcceptMode(QFileDialog::AcceptSave);
+        save.setOption(QFileDialog::DontConfirmOverwrite);
+        save.setDefaultSuffix(QStringLiteral("tar.gz"));
+        save.selectFile(name);
+        QString path;
+        bool replaceExisting = false;
+        while (save.exec() == QDialog::Accepted) {
+            path = save.selectedFiles().value(0);
+            if (path.isEmpty()) break;
+            if (!path.endsWith(QLatin1String(".tar.gz"))) path += QLatin1String(".tar.gz");
+            const QFileInfo target(path);
+            replaceExisting = target.exists() || target.isSymLink();
+            if (!replaceExisting) break;
+            QMessageBox confirm(QMessageBox::Question, tr("Save diagnostic report"),
+                tr("Replace the existing file at %1?").arg(path), QMessageBox::Yes | QMessageBox::No, this);
+            confirm.setTextFormat(Qt::PlainText);
+            confirm.setDefaultButton(QMessageBox::No);
+            if (confirm.exec() == QMessageBox::Yes) break;
+            save.selectFile(target.fileName());
+            path.clear();
+        }
         if (path.isEmpty()) { reporting_ = false; return; }
-        if (!path.endsWith(QLatin1String(".tar.gz"))) path += QLatin1String(".tar.gz");
 
         QJsonObject out{{QStringLiteral("op"), QStringLiteral("diag_report")},
                               {QStringLiteral("version"), QStringLiteral(CENTURION_VERSION)},
                               {QStringLiteral("dgpu"), preview.value(QStringLiteral("dgpu"))},
                               {QStringLiteral("preview_schema"), 2},
                               {QStringLiteral("selected"), dialog.selection()},
+                              {QStringLiteral("replace_existing"), replaceExisting},
                               {QStringLiteral("out"), path}};
-        if (p.value(QStringLiteral("frozen")).toBool())
-            out.insert(QStringLiteral("snapshot"), preview.value(QStringLiteral("snapshot")));
+        if (frozen) out.insert(QStringLiteral("snapshot"), reportSnapshot);
         userhelper::run(out, this, [this, snapshot](const QJsonObject &w) {
             snapshot->remove();
             reporting_ = false;

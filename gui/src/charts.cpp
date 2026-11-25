@@ -5,7 +5,9 @@
 #include <utility>
 #include <QDialog>
 #include <QDialogButtonBox>
+#include <QProgressBar>
 #include <QTableView>
+#include <QTimer>
 #include <QStandardItemModel>
 #include <QHeaderView>
 #include <QVBoxLayout>
@@ -106,21 +108,36 @@ void LineChart::setPoints(const QVector<Point> &points, const QString &yUnit) {
         auto copy = pt; copy.breakBefore = copy.breakBefore || gap;
         points_.append(copy); gap = false;
     }
-    begin_ = 0; end_ = points_.size();
-    plotted_.clear(); plottedIndices_.clear(); hover_ = -1;
     unit_ = yUnit;
-    // Screen readers cannot see the painting: the description carries the numbers.
-    setAccessibleDescription(points_.isEmpty() ? QString()
-        : QCoreApplication::translate("LineChart", "%1 points, %2 to %3; last value %4 %5")
-              .arg(points_.size()).arg(points_.first().label, points_.last().label).arg(points_.last().y).arg(yUnit));
-    update();
+    resetView();
+}
+
+void LineChart::updateAccessibleDescription() {
+    if (begin_ >= end_) {
+        setAccessibleDescription(QCoreApplication::translate("LineChart", "No recorded samples."));
+        return;
+    }
+    QString description = QCoreApplication::translate("LineChart", "%1 points, %2 to %3; last value %4 %5")
+        .arg(end_ - begin_).arg(points_[begin_].label, points_[end_ - 1].label).arg(points_[end_ - 1].y).arg(unit_);
+    if (keyboardSample_ >= begin_ && keyboardSample_ < end_) {
+        const auto &sample = points_[keyboardSample_];
+        description += QStringLiteral(" · ") + QCoreApplication::translate("LineChart", "Selected sample %1 of %2: %3, %4 %5")
+            .arg(keyboardSample_ + 1).arg(points_.size()).arg(sample.label).arg(sample.y).arg(unit_);
+    }
+    setAccessibleDescription(description);
 }
 
 void LineChart::setViewRange(qsizetype begin, qsizetype end) {
     begin_ = std::clamp(begin, qsizetype(0), points_.size());
     end_ = std::clamp(end, begin_, points_.size());
     if (begin_ == end_ && !points_.isEmpty()) { begin_ = std::min(begin_,points_.size()-1); end_ = begin_+1; }
-    plotted_.clear(); plottedIndices_.clear(); hover_ = -1; update();
+    plotted_.clear();
+    plottedIndices_.clear();
+    hover_ = -1;
+    if (keyboardSample_ >= 0) QToolTip::hideText();
+    keyboardSample_ = -1;
+    updateAccessibleDescription();
+    update();
 }
 
 void LineChart::wheelEvent(QWheelEvent *e) {
@@ -133,6 +150,31 @@ void LineChart::wheelEvent(QWheelEvent *e) {
 }
 void LineChart::keyPressEvent(QKeyEvent *e) {
     if (e->key()==Qt::Key_Home) { resetView(); e->accept(); return; }
+    if (e->key() == Qt::Key_Escape && keyboardSample_ >= 0) {
+        keyboardSample_ = -1;
+        QToolTip::hideText();
+        updateAccessibleDescription();
+        update();
+        e->accept();
+        return;
+    }
+    if (begin_ < end_ && (e->key() == Qt::Key_Up || e->key() == Qt::Key_Down)) {
+        const auto step = e->key() == Qt::Key_Up ? -1 : 1;
+        if (keyboardSample_ < 0) {
+            keyboardSample_ = hover_ >= 0 && hover_ < plottedIndices_.size() ? plottedIndices_.at(hover_) : begin_;
+        } else {
+            keyboardSample_ = std::clamp(keyboardSample_ + step, begin_, end_ - 1);
+        }
+        hover_ = -1;
+        const auto &sample = points_[keyboardSample_];
+        QToolTip::showText(mapToGlobal(QPoint(width() / 2, 0)),
+                           QStringLiteral("%1: %2 %3").arg(sample.label.toHtmlEscaped()).arg(sample.y, 0, 'g', 10)
+                               .arg(unit_.toHtmlEscaped()), this);
+        updateAccessibleDescription();
+        update();
+        e->accept();
+        return;
+    }
     if (e->key()==Qt::Key_Left || e->key()==Qt::Key_Right) {
         const auto count=end_-begin_;
         const auto shift=std::max(qsizetype(1),count/5)*(e->key()==Qt::Key_Left?-1:1);
@@ -220,8 +262,10 @@ void LineChart::paintEvent(QPaintEvent *) {
     p.setPen(Qt::NoPen);
     p.setBrush(colorFrom(theme::ACCENT));
     for (const QPointF &pt : plotted_) p.drawEllipse(pt, 2.5, 2.5);
-    if (hover_ >= 0 && hover_ < plotted_.size()) {
-        const auto pt = plotted_.at(hover_);
+    if ((keyboardSample_ >= begin_ && keyboardSample_ < end_) || (hover_ >= 0 && hover_ < plotted_.size())) {
+        const auto pt = keyboardSample_ >= begin_ && keyboardSample_ < end_
+            ? QPointF(X(points_[keyboardSample_].x), Y(points_[keyboardSample_].y))
+            : plotted_.at(hover_);
         p.setPen(QPen(colorFrom(theme::FG_DIM), 1, Qt::DashLine));
         p.drawLine(QPointF(pt.x(), r.top()), QPointF(pt.x(), r.bottom()));
         p.setPen(QPen(colorFrom(theme::FG), 1)); p.setBrush(colorFrom(theme::ACCENT)); p.drawEllipse(pt, 4, 4);
@@ -234,6 +278,11 @@ void LineChart::mouseMoveEvent(QMouseEvent *e) {
     for (int i=0; i<plotted_.size(); ++i) {
         const auto d = plotted_.at(i) - pos; const double d2=d.x()*d.x()+d.y()*d.y();
         if (d2 < distance) { best=i; distance=d2; }
+    }
+    if (keyboardSample_ >= 0) {
+        keyboardSample_ = -1;
+        updateAccessibleDescription();
+        update();
     }
     if (best != hover_) { hover_=best; update(); }
     if (best >= 0) {
@@ -268,14 +317,51 @@ void LineChart::contextMenuEvent(QContextMenuEvent *e) {
     if (action==reset) { resetView(); return; }
     if (action==zoom) { const auto trim=std::max(qsizetype(1),(end_-begin_)/4); if(end_-begin_<=2) return; setViewRange(begin_+trim,end_-trim); return; }
     if (action!=exportAction && action!=exportVisible) return;
-    const auto frozen=action==exportVisible?points_.mid(begin_,end_-begin_):points_;
-    const QString path=QFileDialog::getSaveFileName(this,QCoreApplication::translate("LineChart", "Export plotted samples"),{},QStringLiteral("CSV (*.csv)"));
+    const auto frozen = points_;
+    const qsizetype first = action == exportVisible ? begin_ : 0;
+    const qsizetype last = action == exportVisible ? end_ : frozen.size();
+    const QString title = QCoreApplication::translate("LineChart", "Export plotted samples");
+    const QString path=QFileDialog::getSaveFileName(this,title,{},QStringLiteral("CSV (*.csv)"));
     if(path.isEmpty())return;
     // Export numeric samples only; labels can contain untrusted spreadsheet formula prefixes.
     QSaveFile f(path);
     if(!f.open(QIODevice::WriteOnly)) {QMessageBox::warning(this,QCoreApplication::translate("LineChart", "Export failed"),f.errorString());return;}
     QTextStream out(&f); out.setRealNumberPrecision(17); out << "x,y,break_before\n";
-    for(const auto &pt:frozen) out<<pt.x<<','<<pt.y<<','<<(pt.breakBefore?1:0)<<'\n';
+    qsizetype index = first;
+    constexpr qsizetype batchSize = 4096;
+    const auto writeBatch = [&] {
+        const auto stop = index + std::min(batchSize, last - index);
+        for (; index < stop && out.status() == QTextStream::Ok; ++index) {
+            const auto &pt = frozen.at(index);
+            out << pt.x << ',' << pt.y << ',' << (pt.breakBefore ? 1 : 0) << '\n';
+        }
+    };
+    if (last - first <= batchSize) {
+        writeBatch();
+    } else {
+        QDialog progress(this);
+        progress.setWindowTitle(title);
+        progress.setMinimumWidth(320);
+        auto *layout = new QVBoxLayout(&progress);
+        auto *progressBar = new QProgressBar;
+        progressBar->setRange(0, 1000);
+        progressBar->setValue(0);
+        layout->addWidget(progressBar);
+        auto *buttons = new QDialogButtonBox(QDialogButtonBox::Cancel);
+        layout->addWidget(buttons);
+        connect(buttons, &QDialogButtonBox::rejected, &progress, &QDialog::reject);
+        QTimer timer;
+        connect(&timer, &QTimer::timeout, &progress, [&] {
+            writeBatch();
+            progressBar->setValue(int(1000.0 * double(index - first) / double(last - first)));
+            if (index == last || out.status() != QTextStream::Ok) {
+                timer.stop();
+                progress.accept();
+            }
+        });
+        timer.start(0);
+        if (progress.exec() != QDialog::Accepted) return;
+    }
     out.flush();
     if(out.status()!=QTextStream::Ok||!f.commit())QMessageBox::warning(this,QCoreApplication::translate("LineChart", "Export failed"),f.errorString());
 }
@@ -305,14 +391,22 @@ void BarChart::setViewRange(qsizetype begin, qsizetype end) {
     refreshView();
 }
 
+QString BarChart::rangeLabel() const {
+    if (bars_.isEmpty()) return {};
+    return QCoreApplication::translate("BarChart", "Rows %1–%2 of %3")
+        .arg(begin_ + 1).arg(end_).arg(bars_.size());
+}
+
 void BarChart::refreshView() {
     QStringList rows;
     for (qsizetype i=begin_; i<end_; ++i) {
         const auto &b=bars_.at(i);
         rows << b.label + QStringLiteral(": ") + (std::isfinite(b.value)?b.text:QCoreApplication::translate("BarChart","Unavailable"));
     }
+    if (!bars_.isEmpty()) rows.prepend(rangeLabel());
     setAccessibleDescription(rows.join(QStringLiteral("; ")));
-    setMinimumHeight(int(end_-begin_) * barRowHeight(fontMetrics()) + 4);
+    const int footer = bars_.isEmpty() ? 0 : fontMetrics().height() + 8;
+    setMinimumHeight(int(end_-begin_) * barRowHeight(fontMetrics()) + footer + 4);
     update();
 }
 
@@ -325,6 +419,7 @@ void BarChart::keyPressEvent(QKeyEvent *e) {
     if (bars_.isEmpty()) { QWidget::keyPressEvent(e); return; }
     const auto count=end_-begin_;
     if (e->key()==Qt::Key_Home) setViewRange(0,bars_.size());
+    else if (e->key()==Qt::Key_End) setViewRange(bars_.size() - count, bars_.size());
     else if (e->key()==Qt::Key_PageUp) { const auto b=std::max<qsizetype>(0,begin_-count); setViewRange(b,b+count); }
     else if (e->key()==Qt::Key_PageDown) { const auto b=std::min(begin_+count,bars_.size()-count); setViewRange(b,b+count); }
     else { QWidget::keyPressEvent(e); return; }
@@ -378,6 +473,9 @@ void BarChart::paintEvent(QPaintEvent *) {
         p.setPen(colorFrom(theme::MUTED));
         p.drawText(QRect(width() - textW, y, textW, rowH), Qt::AlignRight | Qt::AlignVCenter, fm.elidedText(finite ? b.text : QCoreApplication::translate("BarChart", "Unavailable"), Qt::ElideRight, textW));
     }
+    p.setPen(colorFrom(theme::FG_DIM));
+    const QRect footer(0, int(end_ - begin_) * rowH + 4, width(), fm.height() + 4);
+    p.drawText(footer, Qt::AlignCenter, fm.elidedText(rangeLabel(), Qt::ElideRight, footer.width()));
 }
 
 void BarChart::contextMenuEvent(QContextMenuEvent *e) {

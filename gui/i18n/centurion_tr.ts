@@ -4107,6 +4107,7 @@ Kapalı: artık klavyeyi izlemez; kendi parlaklığı buradan ayarlanamaz.</tran
     </context>
     <context>
         <name>LineChart</name>
+        <message><source>Selected sample %1 of %2: %3, %4 %5</source><translation>Seçili örnek %1 / %2: %3, %4 %5</translation></message>
         <message>
             <location filename="work/gui/src/charts.cpp" line="37"/>
             <source>The line appears with the second sample.</source>
@@ -4531,6 +4532,7 @@ Centurion bunda test edilmedi; bazı donanım yazılımı özellikleri eksik ola
     </context>
     <context>
         <name>NetPage</name>
+        <message><source>Only observations within 60 s</source><translation>Yalnızca son 60 saniyedeki gözlemler</translation></message>
         <message>
             <source>Adapter: %1 · Cached scan received: %2. Ages are lower bounds at dialog opening. Width is unknown; markers do not establish channel overlap.</source>
             <translation>Adaptör: %1 · Önbellek taraması alındı: %2. Yaşlar pencere açılışındaki alt sınırlardır. Kanal genişliği bilinmiyor; işaretler kanal çakışmasını kanıtlamaz.</translation>
@@ -5459,8 +5461,8 @@ Daemon çalışıyor olmalı; açmak conntrack bayt sayaçlarını da açar.</tr
         <translation>Yaklaşık %1 sn önce (kernel zaman damgası)</translation>
     </message>
     <message>
-        <source>Adapter: %1 · Cached scan received: %2. Ages refer to dialog opening. Lines show advertised contiguous ranges, not measured spectrum use.</source>
-        <translation>Adaptör: %1 · Önbellekteki taramanın alınma zamanı: %2. Yaşlar pencerenin açıldığı ana aittir. Çizgiler bildirilen bitişik aralıkları gösterir; ölçülmüş spektrum kullanımı değildir.</translation>
+        <source>Adapter: %1 · Cached scan received: %2. Ages refer to dialog opening. Lines show advertised channel ranges.</source>
+        <translation>Adaptör: %1 · Önbellekteki taramanın alınma zamanı: %2. Yaşlar pencerenin açıldığı ana aittir. Çizgiler bildirilen kanal aralıklarını gösterir.</translation>
     </message>
     <message>
         <source>%1 / %2 known; %3 unknown rows</source>
@@ -5469,6 +5471,10 @@ Daemon çalışıyor olmalı; açmak conntrack bayt sayaçlarını da açar.</tr
     <message>
         <source>Advertised %1 MHz (%2–%3 MHz)</source>
         <translation>Bildirilen %1 MHz (%2–%3 MHz)</translation>
+    </message>
+    <message>
+        <source>Advertised 80 + 80 MHz (%1–%2 and %3–%4 MHz)</source>
+        <translation>Bildirilen 80 + 80 MHz (%1–%2 ve %3–%4 MHz)</translation>
     </message>
     <message>
         <source>Width unknown</source>
@@ -5495,8 +5501,8 @@ Daemon çalışıyor olmalı; açmak conntrack bayt sayaçlarını da açar.</tr
         <translation>Son 60 sn içinde görüldü</translation>
     </message>
     <message>
-        <source>Solid marker: age or lower bound below 60 s. Hollow marker: stale or unknown age. Overlaps compare known advertised ranges in the captured list only, regardless of age; not interference or utilization. Unknown-width markers remain points.</source>
-        <translation>Dolu işaret: yaş veya alt sınır 60 sn altında. Boş işaret: eski veya yaşı bilinmiyor. Örtüşmeler yalnızca yakalanan listedeki bilinen bildirilen aralıkları yaşından bağımsız karşılaştırır; girişim veya kullanım ölçümü değildir. Genişliği bilinmeyenler nokta olarak kalır.</translation>
+        <source>Solid markers have a kernel timestamp within 60 s. Hollow markers are stale or have unconfirmed age. Overlap counts describe shared advertised intervals among the rows shown.</source>
+        <translation>Dolu işaretlerin çekirdek zaman damgası son 60 saniye içindedir. İçi boş işaretler eskidir veya yaşı doğrulanamamıştır. Çakışma sayıları, görünen satırlardaki ortak ilan edilen aralıkları gösterir.</translation>
     </message>
     <message>
         <source>Selected adapter no longer matches the cached scan.</source>
@@ -5960,6 +5966,10 @@ Daemon çalışıyor olmalı; açmak conntrack bayt sayaçlarını da açar.</tr
             <translation>Tanılama raporunu kaydet</translation>
         </message>
         <message>
+            <source>Replace the existing file at %1?</source>
+            <translation>%1 konumundaki mevcut dosyanın üzerine yazılsın mı?</translation>
+        </message>
+        <message>
             <location filename="work/gui/src/overviewpage.cpp" line="216"/>
             <source>Compressed archives (*.tar.gz)</source>
             <translation>Sıkıştırılmış arşivler (*.tar.gz)</translation>
@@ -6305,6 +6315,21 @@ Seçilen dosyalar önizlemeyle eşleşti. Otomatik anonimleştirme kesin sonuç 
 </context>
     <context>
         <name>ReportPreview</name>
+        <message><source>Find on this page…</source><translation>Bu sayfada bul…</translation></message>
+        <message><source>Find on this page</source><translation>Bu sayfada bul</translation></message>
+        <message><source>Previous match</source><translation>Önceki eşleşme</translation></message>
+        <message><source>Next match</source><translation>Sonraki eşleşme</translation></message>
+        <message><source>No match on this page</source><translation>Bu sayfada eşleşme yok</translation></message>
+        <message><source>Select complete previews</source><translation>Tam önizlemeleri seç</translation></message>
+        <message><source>Clear file selection</source><translation>Dosya seçimini temizle</translation></message>
+        <message><source>%1 selected</source><translation>%1 seçili</translation></message>
+        <message><source>Select files to save. Automatic redaction is best effort (%1 detected values). Review before sharing. Long files can be reviewed page by page and are excluded by default.</source><translation>Kaydedilecek dosyaları seçin. Otomatik maskeleme tüm özel bilgileri yakalayamayabilir (%1 değer tespit edildi). Paylaşmadan önce inceleyin. Uzun dosyaları sayfa sayfa inceleyebilirsiniz. Bu dosyalar varsayılan olarak seçili değildir.</translation></message>
+        <message><source>Previous page</source><translation>Önceki sayfa</translation></message>
+        <message><source>Next page</source><translation>Sonraki sayfa</translation></message>
+        <message><source>Reading preview page…</source><translation>Önizleme sayfası okunuyor…</translation></message>
+        <message><source>Page %1 of %2</source><translation>Sayfa %1 / %2</translation></message>
+        <message><source>Could not read the preview page.</source><translation>Önizleme sayfası okunamadı.</translation></message>
+        <message><source>Could not read the preview page: %1</source><translation>Önizleme sayfası okunamadı: %1</translation></message>
         <message>
             <location filename="work/gui/src/reportpreview.cpp" line="15"/>
             <source>Diagnostic Report</source>
@@ -14968,6 +14993,7 @@ Bu değişiklikler kararlılığı azaltabilir, sıcaklığı veya boşta güç 
         </context>
     <context>
         <name>BarChart</name>
+        <message><source>Rows %1–%2 of %3</source><translation>Satır %1–%2 / %3</translation></message>
         <message>
             <location filename="../src/charts.cpp"/>
             <source>Bar chart</source>
@@ -18921,9 +18947,14 @@ Günlük okunamıyor, bu yüzden onu tutmak hiçbir şeyi korumaz ve yalnızca b
         <translation>Açık VRR aralığı mevcut değil; genel yenileme aralığı VRR kanıtı değildir.</translation>
     </message>
         <message>
-        <source>Progressive base/CTA detailed timings only; interlaced modes and unknown extensions are not plotted. Mark = timing, band = explicit VRR.</source>
-        <translation>Yalnızca temel/CTA progresif ayrıntılı zamanlamalar; geçmeli modlar ve bilinmeyen uzantılar çizilmez. İşaret = zamanlama, bant = açık VRR.</translation>
+        <source>The table lists verified base and CTA detailed timings. The plot shows progressive timings and the explicit VRR range.</source>
+        <translation>Tablo, temel EDID ve CTA bloklarındaki doğrulanmış ayrıntılı zamanlamaları listeler. Grafik, aşamalı zamanlamaları ve açıkça bildirilen VRR aralığını gösterir.</translation>
     </message>
+    <message><source>Scan mode</source><translation>Tarama modu</translation></message>
+    <message><source>Frame rate (Hz)</source><translation>Kare hızı (Hz)</translation></message>
+    <message><source>Field rate (Hz)</source><translation>Alan hızı (Hz)</translation></message>
+    <message><source>Interlaced</source><translation>Geçmeli</translation></message>
+    <message><source>Progressive</source><translation>Aşamalı</translation></message>
         <message>
         <source>Save captured EDID…</source>
         <translation>Yakalanan EDID’yi kaydet…</translation>
@@ -23073,6 +23104,7 @@ Günlük okunamıyor, bu yüzden onu tutmak hiçbir şeyi korumaz ve yalnızca b
     </context>
     <context>
         <name>diagnostictools</name>
+        <message><source>%1 returned inconsistent EDID data during capture</source><translation>%1 yakalama sırasında tutarsız EDID verisi döndürdü</translation></message>
         <message>
             <source>A general refresh range is not proof of VRR support. Check explicit Adaptive-Sync capability and the compositor or driver.</source>
             <translation>Genel yenileme aralığı VRR desteğinin kanıtı değildir. Açık Adaptive-Sync desteğini ve compositor veya sürücüyü kontrol edin.</translation>
@@ -23913,6 +23945,7 @@ Günlük okunamıyor, bu yüzden onu tutmak hiçbir şeyi korumaz ve yalnızca b
 </context>
     <context>
         <name>DiagReportView</name>
+        <message><source>Inspect selected byte offset…</source><translation>Seçili bayt konumunu incele…</translation></message>
         <message>
             <source>Captured report</source>
             <translation>Yakalanan rapor</translation>
@@ -26699,6 +26732,7 @@ Satırlar sıralamadan bağımsız karşılaştırılır; değişen satırlar si
         <message><source>Discovered options have type checks only, not reviewed driver-specific safety limits. Incorrect values can prevent the GPU driver from starting. Write these changes for the next boot?</source><translation>Keşfedilen seçenekler yalnızca tür açısından doğrulanır; sürücüye özgü güvenlik sınırları incelenmemiştir. Yanlış değerler GPU sürücüsünün başlatılmasını engelleyebilir. Sonraki açılış için değişiklikler yazılsın mı?</translation></message>
 </context>
 <context><name>DiagnosticHistory</name>
+        <message><source>%1 (current boot)</source><translation>%1 (mevcut açılış)</translation></message>
         <message><source>%1 snapshots · %2 rejected records or files · %3 saved log entries (up to 1000 per source)</source><translation>%1 anlık görüntü · %2 reddedilen kayıt veya dosya · %3 kayıtlı günlük girdisi (kaynak başına en çok 1000)</translation></message>
         <message><source>Archive scan limit reached; some files were not read.</source><translation>Arşiv tarama sınırına ulaşıldı; bazı dosyalar okunmadı.</translation></message>
         <message><source>Archived report (capture boot)</source><translation>Arşivlenmiş rapor (yakalama açılışı)</translation></message>
@@ -26707,7 +26741,10 @@ Satırlar sıralamadan bağımsız karşılaştırılır; değişen satırlar si
 </source><translation>Yakalama açılışlarının ilişkisi bilinmiyor.
 </translation></message>
         <message><source>Compare snapshots</source><translation>Anlık görüntüleri karşılaştır</translation></message>
-        <message><source>Comparison requires the same report code and locale.</source><translation>Karşılaştırma için rapor kodu ve dil aynı olmalıdır.</translation></message>
+        <message><source>Choose two different snapshots with the same report code and language.</source><translation>Rapor kodu ve dili aynı olan iki farklı anlık görüntü seçin.</translation></message>
+        <message><source>First snapshot</source><translation>İlk anlık görüntü</translation></message>
+        <message><source>Second snapshot</source><translation>İkinci anlık görüntü</translation></message>
+        <message><source>No compatible snapshot</source><translation>Uyumlu anlık görüntü yok</translation></message>
         <message><source>Cross-Boot Diagnostic History</source><translation>Açılışlar Arası Tanı Geçmişi</translation></message>
         <message><source>All sources</source><translation>Tüm kaynaklar</translation></message>
         <message><source>Archived reports</source><translation>Arşivlenmiş raporlar</translation></message>

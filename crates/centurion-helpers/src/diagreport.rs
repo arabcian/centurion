@@ -6,17 +6,23 @@
 //! Every text passes `sanitize` before it is kept: kernel addresses (health::scrub), the value of any
 //! line whose key names a serial number, UUID or asset tag (the rule of the GUI's SERIAL_RE: "Serial
 //! Number: X", "UUID=X"), MAC addresses, IPv4 and IPv6 addresses, and the user name in /home/<name>
-//! paths. Placeholders that identify nothing ("Not Specified", "None", "0"…) are left as they are.
+//! paths. Saved log boot IDs and known structured identity and credential fields are also masked.
+//! Placeholders that identify nothing ("Not Specified", "None", "0"…) are left as they are.
 //!
 //! stdin:  {"op":"diag_report"}                        preview: each file's status and text
 //!         {"op":"diag_report","out":"/abs/x.tar.gz"}  writes the archive
 //!         optional: "snapshot" (GUI-owned path to preserve preview bytes across requests)
+//!         optional: "replace_existing": false (publish only if the output name is free)
 //!         optional: "version" (the GUI's version string), "dgpu": bool (NVIDIA status when present)
+//!   {"op":"diag_report_page","snapshot":"/abs/snapshot.json","preview_schema":2,
+//!    "selected":[{"name":"kernel.log","sha256":"..."}],"page":1}  reads one reviewed file page
 
 use crate::health;
 use crate::overview;
 use serde_json::{json, Value};
+use std::ffi::CString;
 use std::io::{Read, Seek, SeekFrom, Write};
+use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::{DirBuilderExt, MetadataExt, OpenOptionsExt};
 #[cfg(test)]
 use std::os::unix::fs::PermissionsExt;
@@ -243,21 +249,58 @@ fn mask_home(text: &str) -> (String, u64) {
     (out, n)
 }
 
+// Saved health/kernel lines carry the boot identifier as a separate field.
+fn mask_boot_tags(text: &str) -> (String, u64) {
+    let mut out = String::with_capacity(text.len());
+    let mut cursor = 0;
+    let mut count = 0;
+    for (key, tag) in text.match_indices("boot=") {
+        if key != 0 && !text[..key].ends_with(char::is_whitespace) { continue; }
+        let start = key + tag.len();
+        let rest = &text[start..];
+        let len = rest.find(char::is_whitespace).unwrap_or(rest.len());
+        let value = &rest[..len];
+        if value.is_empty() || is_placeholder(value) || value == "<hidden>" { continue; }
+        out.push_str(&text[cursor..start]);
+        out.push_str("<hidden>");
+        cursor = start + len;
+        count += 1;
+    }
+    out.push_str(&text[cursor..]);
+    (out, count)
+}
+
+fn private_field_name(key: &str) -> bool {
+    // Exact canonical names cover snake_case, camelCase, and labels from
+    // udev without hiding unrelated measurements such as serialEnabled.
+    let name: String = key.chars().filter(|c| !matches!(*c, '_' | '-' | ' '))
+        .map(|c| c.to_ascii_lowercase()).collect();
+    matches!(name.as_str(),
+        "hostname" | "username" | "machineid" | "bootid" | "bootuuid" | "boot" |
+        "ssid" | "bssid" | "mac" | "macaddress" | "permanentmacaddress" | "ipaddress" |
+        "ipv4address" | "ipv6address" | "serial" | "serialnumber" | "deviceserial" |
+        "diskserial" | "idserial" | "idserialshort" | "uuid" | "gpuuuid" | "diskuuid" |
+        "filesystemuuid" | "partuuid" | "assettag" | "wwid" | "idwwn" | "mountpoint" |
+        "password" | "passwd" | "apikey" | "accesstoken" | "refreshtoken" | "authorization" | "psk")
+}
+
 // Structured records can carry private fields without a textual label delimiter.
 fn mask_json_fields(value: &mut Value) -> u64 {
     match value {
         Value::Object(fields) => fields.iter_mut().map(|(key, value)| {
-            let normalized = key.to_ascii_lowercase().replace(['-', ' '], "_");
-            let private = matches!(normalized.as_str(), "hostname" | "host_name" | "username" | "user_name" |
-                "machine_id" | "boot_id" | "boot" | "ssid" | "bssid" | "mac" | "mac_address" |
-                "serial" | "serial_number" | "id_serial" | "id_serial_short" | "uuid" | "gpu_uuid" |
-                "disk_uuid" | "partuuid" | "asset_tag" | "ip_address" | "mountpoint" | "mount_point");
-            if private && !value.is_null() && value.as_str() != Some("<hidden>") {
-                *value = Value::String("<hidden>".to_owned()); 1
-            } else { mask_json_fields(value) }
+            if private_field_name(key) && !value.is_null() && value.as_str() != Some("<hidden>") {
+                *value = Value::String("<hidden>".to_owned());
+                1
+            } else {
+                mask_json_fields(value)
+            }
         }).sum(),
         Value::Array(items) => items.iter_mut().map(mask_json_fields).sum(),
-        Value::String(text) => { let (masked, count) = sanitize(text); *text = masked; count },
+        Value::String(text) => {
+            let (masked, count) = sanitize(text);
+            *text = masked;
+            count
+        }
         _ => 0,
     }
 }
@@ -268,16 +311,30 @@ fn mask_structured(raw: &str) -> Option<(String, u64)> {
     Some((serde_json::to_string(&json).ok()?, count))
 }
 
+fn mask_sleep_log(raw: &str) -> Option<(String, u64)> {
+    let mut out = String::new();
+    let mut count = 0;
+    for line in raw.lines() {
+        // There is no fallback to raw text for a malformed structured record.
+        let Ok(mut record @ Value::Object(_)) = serde_json::from_str::<Value>(line) else { continue };
+        count += mask_json_fields(&mut record);
+        out.push_str(&serde_json::to_string(&record).ok()?);
+        out.push('\n');
+    }
+    (raw.trim().is_empty() || !out.is_empty()).then_some((out, count))
+}
+
 /// Everything a text goes through before it is kept, with the number of values masked.
 pub fn sanitize(text: &str) -> (String, u64) {
     let scrubbed = health::scrub(text);
     let addr = scrubbed.matches("<addr>").count().saturating_sub(text.matches("<addr>").count()) as u64;
-    let (a, serials) = mask_serials(&scrubbed);
+    let (tagged, boots) = mask_boot_tags(&scrubbed);
+    let (a, serials) = mask_serials(&tagged);
     let (b, macs) = mask_macs(&a);
     let (c, ips) = mask_ipv4(&b);
     let (d, ips6) = mask_ipv6(&c);
     let (e, homes) = mask_home(&d);
-    (e, addr + serials + macs + ips + ips6 + homes)
+    (e, addr + boots + serials + macs + ips + ips6 + homes)
 }
 
 // ── collecting ───────────────────────────────────────────────────────────────
@@ -340,11 +397,14 @@ fn read_bounded(path: &Path, cap: u64, lines: Option<usize>, whole: bool) -> (&'
 
 fn entry(name: &str, status: &'static str, raw: Option<String>) -> Entry {
     let (text, masked) = match raw {
-        Some(r) if name.ends_with(".json") => match mask_structured(&r) {
-            Some((text, count)) if text.len() as u64 <= JSON_MAX => (text, count),
-            other => return Entry { name: name.to_owned(), status: if other.is_some() { "too large" } else { "unreadable" }, text: String::new(), masked: 0 },
-        },
-        Some(r) => sanitize(&r),
+        Some(raw) if name.ends_with(".json") || name == "sleep.log" => {
+            let masked = if name == "sleep.log" { mask_sleep_log(&raw) } else { mask_structured(&raw) };
+            match masked {
+                Some((text, count)) if text.len() as u64 <= JSON_MAX => (text, count),
+                other => return Entry { name: name.to_owned(), status: if other.is_some() { "too large" } else { "unreadable" }, text: String::new(), masked: 0 },
+            }
+        }
+        Some(raw) => sanitize(&raw),
         None => (String::new(), 0),
     };
     Entry { name: name.to_owned(), status, text, masked }
@@ -388,13 +448,15 @@ Files
   writes.log        the last 200 writes Centurion made to sysfs / firmware
 
 Best-effort redaction before saving (not a guarantee of anonymity)
+  boot IDs and known private fields      -> <hidden>
   serial numbers, UUIDs and asset tags   -> <hidden>
   MAC addresses                          -> <mac>
   IPv4 and IPv6 addresses                -> <ip>
   user names in home-folder paths        -> <user>
   kernel addresses                       -> <addr>
 Only selected files with matching preview digests are archived.
-Logs are bounded tails; long previews may be incomplete.
+Logs are bounded tails. Malformed sleep records are omitted.
+Long files are shown in pages when a saved snapshot is available.
 Look through the files before you attach them anywhere public.
 ";
 
@@ -426,11 +488,15 @@ pub fn collect(src: &Sources, version: &str, dgpu: bool, now: i64, offset: i64) 
 
 // ── output ───────────────────────────────────────────────────────────────────
 
+fn preview_boundary(text: &str, mut offset: usize) -> usize {
+    while !text.is_char_boundary(offset) { offset -= 1; }
+    offset
+}
+
 /// The file list and each file's text, cut to PREVIEW_BYTES on a character boundary.
 fn preview(entries: &[Entry]) -> Value {
     let files: Vec<Value> = entries.iter().map(|e| {
-        let mut cut = e.text.len().min(PREVIEW_BYTES);
-        while !e.text.is_char_boundary(cut) { cut -= 1; }
+        let cut = preview_boundary(&e.text, e.text.len().min(PREVIEW_BYTES));
         json!({"name": e.name, "status": e.status, "bytes": e.text.len(), "masked": e.masked,
                "sha256": content_digest(&e.text), "truncated": cut < e.text.len(), "text": &e.text[..cut]})
     }).collect();
@@ -472,6 +538,10 @@ fn reviewed_entries(entries: Vec<Entry>, req: &Value) -> Result<Vec<Entry>, &'st
 /// Writes the included entries as <root>/<name> in a private staging folder, packs them with tar and
 /// copies the archive to `out` (created 0600). Returns the archive size in bytes.
 pub fn write_archive(entries: &[Entry], root: &str, out: &Path) -> Result<u64, String> {
+    write_archive_with_policy(entries, root, out, true)
+}
+
+fn write_archive_with_policy(entries: &[Entry], root: &str, out: &Path, replace_existing: bool) -> Result<u64, String> {
     let name = out.file_name().and_then(|n| n.to_str()).unwrap_or("");
     if !out.is_absolute() || !name.ends_with(".tar.gz") {
         return Err("the report must be saved to an absolute path ending in .tar.gz".to_owned());
@@ -484,12 +554,33 @@ pub fn write_archive(entries: &[Entry], root: &str, out: &Path) -> Result<u64, S
     let stage = std::env::temp_dir().join(format!("centurion-report-{}-{nanos}", std::process::id()));
     let dir = stage.join(root);
     std::fs::DirBuilder::new().mode(0o700).create(&stage).map_err(|e| format!("{}: {e}", stage.display()))?;
-    let result = std::fs::create_dir(&dir).map_err(|e| e.to_string()).and_then(|_| pack(entries, root, tar, &stage, &dir, out));
+    let result = std::fs::create_dir(&dir).map_err(|e| e.to_string())
+        .and_then(|_| pack(entries, root, tar, &stage, &dir, out, replace_existing));
     let _ = std::fs::remove_dir_all(&stage);
     result
 }
 
-fn pack(entries: &[Entry], root: &str, tar: &Path, stage: &Path, dir: &Path, out: &Path) -> Result<u64, String> {
+fn publish_archive(tmp: &Path, out: &Path, replace_existing: bool) -> std::io::Result<()> {
+    if replace_existing { return std::fs::rename(tmp, out); }
+    let from = CString::new(tmp.as_os_str().as_bytes())?;
+    let to = CString::new(out.as_os_str().as_bytes())?;
+    // Both paths live in the destination directory. This checks for existence
+    // in the same operation that publishes the completed file.
+    let result = unsafe {
+        libc::syscall(libc::SYS_renameat2, libc::AT_FDCWD, from.as_ptr(), libc::AT_FDCWD,
+            to.as_ptr(), libc::RENAME_NOREPLACE)
+    };
+    if result == 0 { return Ok(()); }
+    let error = std::io::Error::last_os_error();
+    if !matches!(error.raw_os_error(), Some(libc::ENOSYS | libc::EINVAL | libc::EOPNOTSUPP)) {
+        return Err(error);
+    }
+    std::fs::hard_link(tmp, out)?;
+    let _ = std::fs::remove_file(tmp);
+    Ok(())
+}
+
+fn pack(entries: &[Entry], root: &str, tar: &Path, stage: &Path, dir: &Path, out: &Path, replace_existing: bool) -> Result<u64, String> {
     for e in entries.iter().filter(|e| e.status == "included") {
         std::fs::write(dir.join(&e.name), &e.text).map_err(|err| format!("{}: {err}", e.name))?;
     }
@@ -507,7 +598,7 @@ fn pack(entries: &[Entry], root: &str, tar: &Path, stage: &Path, dir: &Path, out
         let bytes = std::io::copy(&mut src, &mut dst).map_err(|e| format!("{}: {e}", tmp.display()))?;
         dst.flush().map_err(|e| e.to_string())?;
         dst.sync_all().map_err(|e| e.to_string())?;
-        std::fs::rename(&tmp, out).map_err(|e| format!("{}: {e}", out.display()))?;
+        publish_archive(&tmp, out, replace_existing).map_err(|e| format!("{}: {e}", out.display()))?;
         Ok(bytes)
     })();
     if result.is_err() { let _ = std::fs::remove_file(&tmp); }
@@ -556,6 +647,32 @@ fn thaw_entries(path: &Path) -> Option<Vec<Entry>> {
     Some(entries.into_iter().map(|(name, text)| Entry { name, text, status: "included", masked: 0 }).collect())
 }
 
+/// Return one page from the same private snapshot and digest used for export.
+pub fn page_request(req: &Value) -> Value {
+    let error = |message| json!({"ok": false, "error": message});
+    if unsafe { libc::geteuid() } == 0 {
+        return error("the report snapshot is read as the user");
+    }
+    let Some(path) = req["snapshot"].as_str() else { return error("missing report snapshot"); };
+    let Some(page) = req["page"].as_u64().and_then(|n| usize::try_from(n).ok()) else {
+        return error("invalid preview page");
+    };
+    if req["selected"].as_array().map(Vec::len) != Some(1) {
+        return error("a preview page requires one selected file");
+    }
+    let Some(entries) = thaw_entries(Path::new(path)) else { return error("invalid or missing report snapshot"); };
+    let entries = match reviewed_entries(entries, req) {
+        Ok(entries) => entries,
+        Err(message) => return error(message),
+    };
+    let text = &entries[0].text;
+    let page_count = text.len().div_ceil(PREVIEW_BYTES).max(1);
+    if page >= page_count { return error("preview page out of range"); }
+    let start = preview_boundary(text, page * PREVIEW_BYTES);
+    let end = preview_boundary(text, ((page + 1) * PREVIEW_BYTES).min(text.len()));
+    json!({"ok": true, "page": page, "page_count": page_count, "text": &text[start..end]})
+}
+
 /// Op "diag_report": a preview without "out", the archive with it.
 pub fn request(req: &Value) -> Value {
     let out = req["out"].as_str();
@@ -582,6 +699,7 @@ pub fn request(req: &Value) -> Value {
                     return json!({"ok": false, "error": format!("could not keep report snapshot: {error}")});
                 }
                 response["frozen"] = json!(true);
+                response["page_bytes"] = json!(PREVIEW_BYTES);
             }
             response
         }
@@ -591,7 +709,13 @@ pub fn request(req: &Value) -> Value {
                 Err(error) => return json!({"ok": false, "error": error}),
             };
             let root = format!("centurion-report-{}", overview::ymd(now, offset));
-            match write_archive(&entries, &root, Path::new(out)) {
+            let output = Path::new(out);
+            let archive = match req.get("replace_existing") {
+                None | Some(Value::Bool(true)) => write_archive(&entries, &root, output),
+                Some(Value::Bool(false)) => write_archive_with_policy(&entries, &root, output, false),
+                Some(_) => return json!({"ok": false, "error": "replace_existing must be a boolean"}),
+            };
+            match archive {
                 Ok(bytes) => json!({"ok": true, "file": out, "bytes": bytes,
                                     "included": entries.iter().filter(|e| e.status == "included").count()}),
                 Err(error) => json!({"ok": false, "error": error}),

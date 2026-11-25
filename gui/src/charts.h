@@ -42,7 +42,9 @@ private:
     QVector<qsizetype> plottedIndices_;
     qsizetype begin_ = 0, end_ = 0;
     int hover_ = -1;
+    qsizetype keyboardSample_ = -1;
     QString unit_;
+    void updateAccessibleDescription();
 };
 
 /// One horizontal bar per row, scaled to the largest value; `text` is printed after the bar.
@@ -63,6 +65,7 @@ private:
     QVector<Bar> bars_;
     qsizetype begin_ = 0, end_ = 0;
     double minV_ = 0, maxV_ = 0;
+    QString rangeLabel() const;
     void refreshView();
 };
 

@@ -1737,6 +1737,7 @@ fn run() -> Value {
         "battery_trend" => return centurion_helpers::trends::battery_request(&req),
         "event_days" => return centurion_helpers::trends::event_request(&req),
         "diag_report" => return centurion_helpers::diagreport::request(&req),
+        "diag_report_page" => return centurion_helpers::diagreport::page_request(&req),
         "hibernate_check" => return centurion_helpers::hibernate::run(std::path::Path::new("/")),
         "mem_snapshot" => return centurion_helpers::memory_spd::aod_snapshot(),
         "nvreg_describe" => return centurion_helpers::nvreg::describe(),

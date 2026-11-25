@@ -21,6 +21,7 @@
 #include <QPushButton>
 #include <QMap>
 #include <QSplitter>
+#include <QSet>
 #include <QTreeWidget>
 #include <QVBoxLayout>
 #include <QHBoxLayout>
@@ -74,8 +75,11 @@ QString describe(const Entry &e) {
     }
     return out;
 }
+bool comparable(const Entry &a, const Entry &b) {
+    return a.id != b.id && a.code == b.code && !a.locale.isEmpty() && a.locale == b.locale;
+}
 QString compare(const Entry&a,const Entry&b) {
-    if(a.code!=b.code || a.locale.isEmpty() || a.locale!=b.locale) return tr("Comparison requires the same report code and locale.");
+    if(!comparable(a,b)) return tr("Choose two different snapshots with the same report code and language.");
     QString out=tr("Same report type; changed records are removed/added. Not a causal or device identity comparison.\n\n");
     switch(relation(a.boot.toStdString(),b.boot.toStdString())) {
     case Relation::SameCaptureBoot:out+=tr("Same capture boot.\n");break;
@@ -133,6 +137,17 @@ void open(QWidget *owner) {
     boots->addItem(tr("Any boot identity"), int(BootScope::All));
     boots->addItem(tr("Full boot identity"), int(BootScope::Identified));
     boots->addItem(tr("Unresolved boot identity"), int(BootScope::Unresolved));
+    constexpr int exactBootRole = Qt::UserRole + 1;
+    QSet<QString> identifiedBoots;
+    for (const auto &entry : archive.entries) if (!entry.boot.isEmpty()) identifiedBoots.insert(entry.boot);
+    for (const auto &event : events) if (!event.boot.isEmpty()) identifiedBoots.insert(event.boot);
+    QStringList bootIds = identifiedBoots.values();
+    bootIds.sort();
+    const auto currentBoot = full(diagsrc::bootId());
+    for (const auto &id : bootIds) {
+        boots->addItem(id == currentBoot ? tr("%1 (current boot)").arg(id) : id, int(BootScope::Identified));
+        boots->setItemData(boots->count() - 1, id, exactBootRole);
+    }
     auto *scopes = new QHBoxLayout;
     auto *sourceLabel = new QLabel(tr("Source:"));
     sourceLabel->setBuddy(sources);
@@ -148,6 +163,9 @@ void open(QWidget *owner) {
     auto *detail=new QPlainTextEdit;detail->setReadOnly(true);split->addWidget(detail);split->setStretchFactor(1,2);
     auto *bar=new QHBoxLayout;auto *left=new QComboBox;auto *right=new QComboBox;auto *diff=new QPushButton(tr("Compare snapshots"));bar->addWidget(left,1);bar->addWidget(right,1);bar->addWidget(diff);layout->addLayout(bar);
     constexpr int recordIdentityRole = Qt::UserRole + 1;
+    left->setAccessibleName(tr("First snapshot"));
+    right->setAccessibleName(tr("Second snapshot"));
+    right->setPlaceholderText(tr("No compatible snapshot"));
     QMap<QString,QTreeWidgetItem*> groups;
     for(qsizetype i=0;i<archive.entries.size();++i) {
         const auto &e=archive.entries.at(i);
@@ -160,7 +178,8 @@ void open(QWidget *owner) {
         const auto label=e.time+QStringLiteral(" · ")+e.code+QStringLiteral(" · ")+e.title;
         auto *item=new QTreeWidgetItem(groups.value(groupKey),{label,tr("Archived report (capture boot)")});item->setData(0,Qt::UserRole,int(i));
         item->setData(0, recordIdentityRole, QStringLiteral("report/") + e.id);
-        left->addItem(label,int(i));right->addItem(label,int(i));
+        left->addItem(label,int(i));
+        left->setItemData(left->count()-1,e.id,recordIdentityRole);
     }
     for(qsizetype i=0;i<events.size();++i) {
         const auto &e=events.at(i);
@@ -174,8 +193,26 @@ void open(QWidget *owner) {
         item->setData(0,Qt::UserRole,-2-int(i));
         item->setData(0, recordIdentityRole, QStringLiteral("event/") + e.id);
     }
-    if(right->count()>1) right->setCurrentIndex(1);
-    diff->setEnabled(left->count()>1);
+    const auto setComparisonTargets = [&](const QString &preferred) {
+        right->clear();
+        int differentBoot = -1;
+        if (left->currentIndex() >= 0) {
+            const auto &first = archive.entries.at(left->currentData().toInt());
+            for (int i = 0; i < left->count(); ++i) {
+                const int index = left->itemData(i).toInt();
+                const auto &candidate = archive.entries.at(index);
+                if (!comparable(first, candidate)) continue;
+                if (differentBoot < 0 && !first.boot.isEmpty() && !candidate.boot.isEmpty() && first.boot != candidate.boot)
+                    differentBoot = right->count();
+                right->addItem(left->itemText(i), index);
+                right->setItemData(right->count()-1, candidate.id, recordIdentityRole);
+            }
+        }
+        const int savedTarget = preferred.isEmpty() ? -1 : right->findData(preferred, recordIdentityRole);
+        right->setCurrentIndex(right->count() == 0 ? -1 : std::max(0, savedTarget >= 0 ? savedTarget : differentBoot));
+        right->setEnabled(right->count() > 0);
+        diff->setEnabled(right->currentIndex() >= 0);
+    };
     QObject::connect(tree,&QTreeWidget::currentItemChanged,&dlg,[&](QTreeWidgetItem *item){
         const int i=item?item->data(0,Qt::UserRole).toInt():-1;
         if(i>=0 && i<archive.entries.size()) detail->setPlainText(describe(archive.entries.at(i)));
@@ -196,6 +233,7 @@ void open(QWidget *owner) {
         const auto q=filter->text().trimmed();
         const auto sourceFilter = static_cast<RecordSource>(sources->currentData().toInt());
         const auto bootFilter = static_cast<BootScope>(boots->currentData().toInt());
+        const auto exactBoot = boots->currentData(exactBootRole).toString();
         for(auto *group:groups) {
             bool any=false;
             for(int i=0;i<group->childCount();++i) {
@@ -204,12 +242,14 @@ void open(QWidget *owner) {
                 if (n >= 0) {
                     const auto &e = archive.entries.at(n);
                     match |= e.reportedBoot.contains(q, Qt::CaseInsensitive) || e.note.contains(q, Qt::CaseInsensitive);
-                    match &= matchesScope(RecordSource::Report, !e.boot.isEmpty(), sourceFilter, bootFilter);
+                    match &= matchesScope(RecordSource::Report, !e.boot.isEmpty(), sourceFilter, bootFilter)
+                        && (exactBoot.isEmpty() || e.boot == exactBoot);
                 } else {
                     const auto &e = events.at(-2 - n);
                     match |= e.reportedBoot.contains(q, Qt::CaseInsensitive) || e.detail.contains(q, Qt::CaseInsensitive)
                         || e.level.contains(q, Qt::CaseInsensitive);
-                    match &= matchesScope(e.source, !e.boot.isEmpty(), sourceFilter, bootFilter);
+                    match &= matchesScope(e.source, !e.boot.isEmpty(), sourceFilter, bootFilter)
+                        && (exactBoot.isEmpty() || e.boot == exactBoot);
                 }
                 item->setHidden(!match);any|=match;
                 if(!match&&tree->currentItem()==item) {tree->setCurrentItem(nullptr);detail->clear();}
@@ -221,9 +261,18 @@ void open(QWidget *owner) {
     const auto key=workspace::key(theme::experimentalEnabled(),QStringLiteral("health/cross-boot-history"));
     workspace::rememberSplitter(split,key+QStringLiteral("/split"));
     const auto saved = workspace::read(key);
+    const auto savedFirst = saved.value("compare_first").toString();
+    const int firstIndex = left->findData(savedFirst, recordIdentityRole);
+    if (firstIndex >= 0) left->setCurrentIndex(firstIndex);
+    setComparisonTargets(saved.value("compare_second").toString());
+    QObject::connect(left, &QComboBox::currentIndexChanged, &dlg, [&] {
+        setComparisonTargets(right->currentData(recordIdentityRole).toString());
+    });
     filter->setText(saved.value("filter").toString());
     sources->setCurrentIndex(std::max(0, sources->findData(saved.value("source").toInt(-1))));
-    boots->setCurrentIndex(std::max(0, boots->findData(saved.value("boot_scope").toInt(-1))));
+    const auto savedBoot = saved.value("boot_id").toString();
+    const int bootIndex = savedBoot.isEmpty() ? -1 : boots->findData(savedBoot, exactBootRole);
+    boots->setCurrentIndex(bootIndex >= 0 ? bootIndex : std::max(0, boots->findData(saved.value("boot_scope").toInt(-1))));
     QObject::connect(filter, &QLineEdit::textChanged, &dlg, applyFilter);
     QObject::connect(sources, &QComboBox::currentIndexChanged, &dlg, applyFilter);
     QObject::connect(boots, &QComboBox::currentIndexChanged, &dlg, applyFilter);
@@ -235,6 +284,9 @@ void open(QWidget *owner) {
     const auto *current = tree->currentItem();
     workspace::write(key, QJsonObject{{"filter", filter->text()}, {"source", sources->currentData().toInt()},
                                       {"boot_scope", boots->currentData().toInt()},
+                                      {"boot_id", boots->currentData(exactBootRole).toString()},
+                                      {"compare_first", left->currentData(recordIdentityRole).toString()},
+                                      {"compare_second", right->currentData(recordIdentityRole).toString()},
                                       {"selected_record", current ? current->data(0, recordIdentityRole).toString() : QString()}});
 }
 }

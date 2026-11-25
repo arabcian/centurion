@@ -478,7 +478,8 @@ private:
 };
 
 // Inspect the frozen report, never re-open a connector or change an EDID override.
-void inspectEdid(QWidget *parent, const diag::Table &bytes, const diag::Table &fields) {
+void inspectEdid(QWidget *parent, const diag::Table &bytes, const diag::Table &fields,
+                 const QString &connector, int selectedOffset) {
     auto tr = [](const char *s) { return QCoreApplication::translate("diag", s); };
     QMap<QString, QByteArray> captures;
     for (const auto &row : bytes.rows) {
@@ -491,6 +492,8 @@ void inspectEdid(QWidget *parent, const diag::Table &bytes, const diag::Table &f
         capture.append(chunk);
     }
     if (captures.isEmpty()) return;
+    if (!connector.isEmpty() && (!captures.contains(connector)
+        || selectedOffset < 0 || selectedOffset >= captures.value(connector).size())) return;
     QDialog dlg(parent); dlg.setWindowTitle(tr("EDID Byte Inspector")); dlg.resize(860, 720);
     auto *layout = new QVBoxLayout(&dlg);
     layout->addWidget(text(tr("Captured bytes only. The connector may have changed since the report was collected.")));
@@ -498,7 +501,8 @@ void inspectEdid(QWidget *parent, const diag::Table &bytes, const diag::Table &f
     auto *summary = text(QString()); layout->addWidget(summary);
     auto *plot = new EdidTimingPlot; layout->addWidget(plot);
     auto *timingTree = new QTreeWidget; timingTree->setRootIsDecorated(false);
-    timingTree->setHeaderLabels({tr("Offset"), tr("Active"), tr("Total"), tr("Pixel Clock (MHz)"), tr("Refresh (Hz)")});
+    timingTree->setHeaderLabels({tr("Offset"), tr("Scan mode"), tr("Active"), tr("Total"), tr("Pixel Clock (MHz)"),
+        tr("Frame rate (Hz)"), tr("Field rate (Hz)")});
     timingTree->header()->setSectionResizeMode(QHeaderView::ResizeToContents);
     auto *split = new QSplitter(Qt::Vertical); split->addWidget(timingTree); layout->addWidget(split, 1);
     auto *bytePanel = new QWidget; auto *byteLayout = new QVBoxLayout(bytePanel); byteLayout->setContentsMargins(0,0,0,0);
@@ -544,21 +548,26 @@ void inspectEdid(QWidget *parent, const diag::Table &bytes, const diag::Table &f
         QStringList lines; for (int i=0;i<capture.size();i+=16) lines << QStringLiteral("0x%1  %2").arg(i,4,16,QLatin1Char('0')).arg(QString::fromLatin1(capture.mid(i,16).toHex(' ')).toUpper());
         raw->setPlainText(lines.join(QLatin1Char('\n')));
         auto decoded=diagnostictools::decodeEdid(capture);
-        auto timings=edidfields::progressiveTimings({reinterpret_cast<const std::uint8_t *>(capture.constData()), std::size_t(capture.size())});
+        auto timings=edidfields::detailedTimings({reinterpret_cast<const std::uint8_t *>(capture.constData()), std::size_t(capture.size())});
         // The source reads one extra byte to detect a cap. A frozen report stores
         // at most 4096 bytes, so it cannot prove completeness at the cap.
         if (capture.size()>=4096 || !decoded.structuralValid) { timings.clear(); decoded.vrrMin=decoded.vrrMax=0; }
         QString status=decoded.vrrMax>0 ? tr("Explicit VRR: %1–%2 Hz (%3)").arg(decoded.vrrMin).arg(decoded.vrrMax).arg(decoded.vrrSource)
             : tr("Explicit VRR range unavailable; a general refresh range is not VRR evidence.");
-        status+=QStringLiteral("\n")+tr("Progressive base/CTA detailed timings only; interlaced modes and unknown extensions are not plotted. Mark = timing, band = explicit VRR.");
-        summary->setText(status); plot->setAccessibleName(status); plot->setData(timings,decoded.vrrMin,decoded.vrrMax);
+        status+=QStringLiteral("\n")+tr("The table lists verified base and CTA detailed timings. The plot shows progressive timings and the explicit VRR range.");
+        summary->setText(status); plot->setAccessibleName(status);
         timingTree->clear();
         for (const auto &t: timings) {
             auto *item=new QTreeWidgetItem(timingTree,{QStringLiteral("0x%1").arg(qulonglong(t.offset),4,16,QLatin1Char('0')),
-                QStringLiteral("%1 × %2").arg(t.hActive).arg(t.vActive),QStringLiteral("%1 × %2").arg(t.hActive+t.hBlank).arg(t.vActive+t.vBlank),
-                QString::number(t.pixelClock10kHz/100.0,'f',2),QString::number(t.refreshHz(),'f',2)});
+                t.interlaced ? tr("Interlaced") : tr("Progressive"),
+                QStringLiteral("%1 × %2").arg(t.hActive).arg(t.frameActiveLines()),
+                QStringLiteral("%1 × %2").arg(t.hActive+t.hBlank).arg(t.frameTotalLines()),
+                QString::number(t.pixelClock10kHz/100.0,'f',2),QString::number(t.refreshHz(),'f',2),
+                t.interlaced ? QString::number(2*t.refreshHz(),'f',2) : QStringLiteral("—")});
             item->setData(0,Qt::UserRole,int(t.offset));
         }
+        std::erase_if(timings, [](const edidfields::Timing &timing) { return timing.interlaced; });
+        plot->setData(std::move(timings),decoded.vrrMin,decoded.vrrMax);
         update();
     };
     QObject::connect(selector,&QComboBox::currentIndexChanged,&dlg,switchConnector);
@@ -572,7 +581,9 @@ void inspectEdid(QWidget *parent, const diag::Table &bytes, const diag::Table &f
         const int pos=cursor.blockNumber()*16+(column-8)/3;
         if(pos>=0 && pos<=offset->maximum() && pos!=offset->value()) offset->setValue(pos);
     });
+    if (!connector.isEmpty()) selector->setCurrentText(connector);
     switchConnector();
+    if (!connector.isEmpty()) offset->setValue(selectedOffset);
     auto *close=new QDialogButtonBox(QDialogButtonBox::Close); layout->addWidget(close);
     auto *exportBinary=close->addButton(tr("Save captured EDID…"), QDialogButtonBox::ActionRole);
     QObject::connect(exportBinary,&QPushButton::clicked,&dlg,[&]{
@@ -819,15 +830,36 @@ void DiagReportView::setReport(const diag::Report &r) {
         findingWidgets_ << card;
         bodyLayout_->addWidget(card);
     }
+    diag::Table edidBytes, edidFields;
+    for (const auto &table : current.tables) {
+        if (table.viewKind == QStringLiteral("edid-bytes")) edidBytes = table;
+        if (table.viewKind == QStringLiteral("edid-fields")) edidFields = table;
+    }
     for (const diag::Table &t : current.tables) {
         auto *w = tableWidget(t, t.viewKind == QStringLiteral("acpi-wmi-tree") ? acpiTreeState_ : hardwareTreeState_);
-        if (auto *tree = w->findChild<QTreeWidget *>()) tables_ << tree;
-        if (t.viewKind == QStringLiteral("edid-bytes")) {
-            diag::Table fields;
-            for (const auto &candidate : current.tables) if (candidate.viewKind == QStringLiteral("edid-fields")) { fields=candidate; break; }
-            auto *inspect = new QPushButton(tr("Inspect captured EDID bytes…"));
+        auto *tree = w->findChild<QTreeWidget *>();
+        if (tree) tables_ << tree;
+        const bool rawEdid = t.viewKind == QStringLiteral("edid-bytes");
+        if (tree && !edidBytes.rows.isEmpty() && (rawEdid || t.viewKind == QStringLiteral("edid-fields")
+                                                  || t.viewKind == QStringLiteral("edid-timings"))) {
+            auto *inspect = new QPushButton(rawEdid ? tr("Inspect captured EDID bytes…") : tr("Inspect selected byte offset…"));
             w->layout()->addWidget(inspect);
-            connect(inspect,&QPushButton::clicked,w,[w,t,fields]{ inspectEdid(w,t,fields); });
+            const auto openEdid = [w, bytes = edidBytes, fields = edidFields, rawEdid](QTreeWidgetItem *item) {
+                if (!item) {
+                    if (rawEdid) inspectEdid(w, bytes, fields, {}, 0);
+                    return;
+                }
+                bool valid = false;
+                const int offset = item->text(rawEdid ? 2 : 1).toInt(&valid, 16);
+                if (valid) inspectEdid(w, bytes, fields, item->text(0), offset);
+            };
+            connect(inspect, &QPushButton::clicked, w, [tree, openEdid] { openEdid(tree->currentItem()); });
+            connect(tree, &QTreeWidget::itemDoubleClicked, w, [openEdid](QTreeWidgetItem *item, int) { openEdid(item); });
+            if (!rawEdid) {
+                const auto update = [tree, inspect] { inspect->setEnabled(tree->currentItem() != nullptr); };
+                connect(tree, &QTreeWidget::currentItemChanged, w, update);
+                update();
+            }
         }
         if(t.viewKind==QStringLiteral("acpi-wmi-tree")) {
             auto *listen=new QPushButton(tr("Live ACPI notifications…"));w->layout()->addWidget(listen);

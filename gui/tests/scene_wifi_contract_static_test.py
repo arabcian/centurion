@@ -24,7 +24,7 @@ class Contract(unittest.TestCase):
     def test_cached_scan_and_revision(self):
         s=src('netpage.cpp')
         view=s.split('auto *channelView =',1)[1].split('vwn->addLayout(rwn);',1)[0]
-        self.assertIn('const QJsonObject snapshot = wifiScanSnapshot_',view)
+        self.assertIn('const QJsonObject snapshot = changed ? QJsonObject{} : wifiScanSnapshot_',view)
         self.assertIn('wifiage::age',view)
         self.assertNotIn('runUser(',view)
         self.assertNotIn('refreshWifiNets()',view)
@@ -41,7 +41,7 @@ class Contract(unittest.TestCase):
         self.assertIn('seen_boottime_ms',view)
         self.assertIn('dump_completed_boottime_ms',view)
         self.assertNotIn('runUser(',view)
-        self.assertIn('iface_index(&iface) != before',helper)
+        self.assertIn('adapter_stamp(&iface).as_deref() != Some(before.as_str())',helper)
         self.assertIn('iface.as_deref() != Some(requested)',helper)
         self.assertIn('let iface = match scan_iface(req)',helper)
         self.assertIn('selectedMatches == 1',gui)

@@ -26,6 +26,7 @@
 #include "advancedhealth.h"
 #include "advanceddiagnostics.h"
 #include "theme.h"
+#include "workspacestate.h"
 #include "toolcatalog.h"
 
 #include <QDateTime>
@@ -265,6 +266,7 @@ HealthTab::HealthTab(QWidget *parent) : QWidget(parent) {
     split->addWidget(pageArea);
     split->setStretchFactor(1, 1);
     split->setSizes({178, 880});
+    workspace::rememberSplitter(split, workspace::key(theme::experimentalEnabled(), QStringLiteral("health/navigation")));
 
     auto addGroup = [this](const QString &label) {
         auto *group = new QTreeWidgetItem(navigation_, {label.toUpper()});

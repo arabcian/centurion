@@ -67,4 +67,22 @@ inline int overlapMHz(const Range &a, const Range &b) {
     const int lo = a.low > b.low ? a.low : b.low, hi = a.high < b.high ? a.high : b.high;
     return hi > lo ? hi-lo : 0;
 }
+struct Ranges { Range first; std::optional<Range> second; };
+inline std::optional<Ranges> split80Ranges(double primary, double firstCenter, double secondCenter) {
+    const auto validCenter = [](double center) {
+        return center == 5210 || center == 5290 || center == 5530 || center == 5610 ||
+            center == 5690 || center == 5775 || center == 5855;
+    };
+    if (!validCenter(firstCenter) || !validCenter(secondCenter) || std::abs(firstCenter-secondCenter) <= 80) return {};
+    const auto first = channelRange(primary, firstCenter, 80);
+    const auto second = channelRange(secondCenter - 30, secondCenter, 80);
+    if (!first || !second) return {};
+    return Ranges{*first, *second};
+}
+inline bool overlaps(const Ranges &a, const Ranges &b) {
+    return overlapMHz(a.first, b.first) > 0 ||
+        (b.second && overlapMHz(a.first, *b.second) > 0) ||
+        (a.second && (overlapMHz(*a.second, b.first) > 0 ||
+                      (b.second && overlapMHz(*a.second, *b.second) > 0)));
+}
 }

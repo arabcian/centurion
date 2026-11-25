@@ -8,6 +8,7 @@
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <sys/stat.h>
 #include <QJsonDocument>
 #include <QRegularExpression>
 #include <QSet>
@@ -325,6 +326,7 @@ Report displays(const QString &root) {
     bytes.note = tr("Read-only bytes from the kernel. EDID may contain a display serial number; review before exporting.");
     Table timingDetails;
     timingDetails.title = tr("Progressive Timing Details");
+    timingDetails.viewKind = QStringLiteral("edid-timings");
     timingDetails.headers = {tr("Connector"), tr("Offset"), tr("Active H/V"), tr("Blanking H/V"), tr("Total H/V"), tr("Pixel Clock (MHz)"), tr("Refresh (Hz)")};
     Table fields;
     fields.title = tr("EDID Field Map");
@@ -335,13 +337,35 @@ Report displays(const QString &root) {
     for (const QString &conn : diagsrc::dir(root + QStringLiteral("/sys/class/drm"))) {
         if (!conn.contains(QLatin1Char('-'))) continue;
         const QString b = root + QStringLiteral("/sys/class/drm/") + conn + QLatin1Char('/');
-        if (diagsrc::read(b + QStringLiteral("status")) != QStringLiteral("connected")) continue;
+        const QString statusPath = b + QStringLiteral("status");
+        const QString connectedStatus = QStringLiteral("connected");
+        if (diagsrc::read(statusPath) != connectedStatus) continue;
         ++connected;
         const QString port = conn.section(QLatin1Char('-'), 1);
+        const QString connectorPath = QFileInfo(b).canonicalFilePath();
         QFile f(b + QStringLiteral("edid"));
-        const QByteArray raw = f.open(QIODevice::ReadOnly) ? f.read(32 * 128 + 1) : QByteArray();
-        if (diagsrc::read(b + QStringLiteral("status")) != QStringLiteral("connected")) {
+        constexpr qint64 edidLimit = 32 * 128 + 1;
+        const QByteArray raw = f.open(QIODevice::ReadOnly) ? f.read(edidLimit) : QByteArray();
+
+        // A connector name and a "connected" status can both survive a
+        // monitor swap. Reopen the attribute and compare the bounded capture
+        // before publishing decoded capabilities or exportable bytes.
+        bool sameCapture = true;
+        if (!raw.isEmpty()) {
+            QFile second(f.fileName());
+            struct stat firstStat{}, secondStat{};
+            sameCapture = f.error() == QFileDevice::NoError && ::fstat(f.handle(), &firstStat) == 0
+                && second.open(QIODevice::ReadOnly) && ::fstat(second.handle(), &secondStat) == 0
+                && firstStat.st_dev == secondStat.st_dev && firstStat.st_ino == secondStat.st_ino
+                && second.read(edidLimit) == raw && second.error() == QFileDevice::NoError;
+        }
+        if (diagsrc::read(statusPath) != connectedStatus || connectorPath.isEmpty()
+            || QFileInfo(b).canonicalFilePath() != connectorPath) {
             r.add(Level::Unknown, tr("%1 changed connection state during capture").arg(port));
+            continue;
+        }
+        if (!sameCapture) {
+            r.add(Level::Unknown, tr("%1 returned inconsistent EDID data during capture").arg(port));
             continue;
         }
         for (int off = 0; off < std::min<qsizetype>(raw.size(), 4096); off += 16) {

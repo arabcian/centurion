@@ -69,12 +69,16 @@ pub struct Bss {
     pub seen_ms: Option<u64>,
     pub seen_boottime_ms: Option<u64>,
     pub channel_range: Option<ChannelRange>,
+    pub channel_80p80: Option<SplitChannel>,
     pub associated: bool,
 }
 
 /// Nominal advertised contiguous channel, not observed spectral occupancy.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ChannelRange { pub center_mhz: u32, pub width_mhz: u32, pub source: &'static str }
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SplitChannel { pub primary_center_mhz: u32, pub secondary_center_mhz: u32 }
 
 #[derive(Default)]
 struct Operation {
@@ -113,13 +117,28 @@ impl Operation {
             _ => {}
         }
     }
-    fn range(&self, freq: u32) -> Option<ChannelRange> {
+    fn primary_channel(&self, freq: u32) -> Option<u32> {
         if self.invalid || self.unsupported || !matches!(band(freq), "2.4" | "5") { return None; }
         let ch = self.primary?;
         let primary = if band(freq) == "2.4" && (1..=13).contains(&ch) { 2407 + 5*ch }
             else if band(freq) == "5" && (((36..=64).contains(&ch) || (100..=144).contains(&ch)) && ch % 4 == 0 || (149..=177).contains(&ch) && ch % 4 == 1) { 5000 + 5*ch }
             else { return None; };
-        if primary != freq { return None; }
+        (primary == freq).then_some(ch)
+    }
+
+    fn split_range(&self, freq: u32) -> Option<SplitChannel> {
+        let primary = self.primary_channel(freq)?;
+        if band(freq) != "5" || !self.vht || !matches!(self.width?, 1 | 3) { return None; }
+        let first = self.seg1?;
+        let second = self.seg2?;
+        const CENTERS: [u32; 7] = [42, 58, 106, 122, 138, 155, 171];
+        if !CENTERS.contains(&first) || !CENTERS.contains(&second) || first.abs_diff(second) <= 16
+            || !matches!(primary.abs_diff(first), 2 | 6) { return None; }
+        Some(SplitChannel { primary_center_mhz: 5000 + 5 * first, secondary_center_mhz: 5000 + 5 * second })
+    }
+
+    fn range(&self, freq: u32) -> Option<ChannelRange> {
+        let ch = self.primary_channel(freq)?;
         let (center, width, source) = if self.vht && self.width? != 0 {
             if band(freq) != "5" { return None; }
             let a = self.seg1?; let b = self.seg2?;
@@ -287,7 +306,12 @@ fn security(auth: Option<&str>, wpa: bool, privacy: bool) -> &'static str {
 /// authentication suites; everything else is a plain `key: value` line one tab deep.
 pub fn parse_scan(text: &str) -> Vec<Bss> {
     struct Raw { bss: Bss, auth: Option<String>, wpa: bool, privacy: bool, operation: Operation }
-    let done = |r: Raw| Bss { security: security(r.auth.as_deref(), r.wpa, r.privacy), channel_range: r.operation.range(r.bss.freq), ..r.bss };
+    let done = |r: Raw| Bss {
+        security: security(r.auth.as_deref(), r.wpa, r.privacy),
+        channel_range: r.operation.range(r.bss.freq),
+        channel_80p80: r.operation.split_range(r.bss.freq),
+        ..r.bss
+    };
     let mut out: Vec<Bss> = Vec::new();
     let mut cur: Option<Raw> = None;
     let mut in_rsn = false;
@@ -550,8 +574,27 @@ fn scan_iface(req: &Value) -> Result<Option<String>, Value> {
     Ok(iface)
 }
 
-fn iface_index(iface: &str) -> Option<u32> {
-    std::fs::read_to_string(Path::new("/sys/class/net").join(iface).join("ifindex")).ok()?.trim().parse::<u32>().ok().filter(|n| *n > 0)
+fn adapter_stamp(iface: &str) -> Option<String> {
+    use std::os::unix::fs::MetadataExt;
+
+    let path = Path::new("/sys/class/net").join(iface);
+    let before = std::fs::metadata(&path).ok()?;
+    let index = std::fs::read_to_string(path.join("ifindex")).ok()?.trim().parse::<u32>().ok()?;
+    let after = std::fs::metadata(&path).ok()?;
+    if index == 0 || (before.dev(), before.ino()) != (after.dev(), after.ino()) { return None; }
+    Some(format!("{}:{}:{index}", before.dev(), before.ino()))
+}
+
+fn scan_adapter_stamp(req: &Value, iface: &str) -> Result<String, Value> {
+    let stamp = adapter_stamp(iface).ok_or_else(|| json!({
+        "ok": false, "iface": iface, "error": "Wireless adapter identity is unavailable"
+    }))?;
+    if let Some(expected) = req.get("adapter_stamp") {
+        if expected.as_str() != Some(stamp.as_str()) {
+            return Err(json!({"ok": false, "iface": iface, "error": "Selected wireless adapter has changed"}));
+        }
+    }
+    Ok(stamp)
 }
 
 /// Nearby networks from the kernel's cached scan results (NetworkManager and wpa_supplicant keep them fresh).
@@ -559,21 +602,23 @@ pub fn scan(req: &Value) -> Value {
     let iface = match scan_iface(req) { Ok(i) => i, Err(e) => return e };
     let Some(iface) = iface else { return json!({"ok": true, "present": false}) };
     let Some(bin) = tool("iw") else { return json!({"ok": true, "present": true, "iw": false}) };
-    let before = iface_index(&iface);
-    if before.is_none() { return json!({"ok": false, "iface": iface, "error": "Wireless adapter identity is unavailable"}); }
+    let before = match scan_adapter_stamp(req, &iface) { Ok(stamp) => stamp, Err(error) => return error };
     let text = match iw(&bin, &iface, &["scan", "dump"]) {
         Ok(t) => t,
         Err(e) => return json!({"ok": false, "present": true, "iface": iface, "error": e}),
     };
     let dump_completed_boottime_ms = boot_ms();
-    if iface_index(&iface) != before { return json!({"ok": false, "iface": iface, "error": "Wireless adapter changed during scan dump"}); }
+    if adapter_stamp(&iface).as_deref() != Some(before.as_str()) { return json!({"ok": false, "iface": iface, "error": "Wireless adapter changed during scan dump"}); }
     let list = parse_scan(&text);
     let load = channel_load(&list).map(|(ch, same, overlap)| json!({"channel": ch, "same": same, "overlap": overlap}));
     let nets: Vec<Value> = list.iter().take(64).map(|b| json!({
         "bssid": b.bssid, "ssid": b.ssid, "freq": b.freq, "channel": channel(b.freq), "band": band(b.freq),
         "signal_dbm": b.signal_dbm, "security": b.security, "seen_ms": b.seen_ms, "associated": b.associated,
-        "seen_boottime_ms": b.seen_boottime_ms, "channel_range": b.channel_range.map(|r| json!({"center_mhz": r.center_mhz, "width_mhz": r.width_mhz, "source": r.source}))})).collect();
-    json!({"ok": true, "present": true, "iw": true, "iface": iface, "networks": nets, "total": list.len(), "load": load, "dump_completed_boottime_ms": dump_completed_boottime_ms,
+        "seen_boottime_ms": b.seen_boottime_ms,
+        "channel_range": b.channel_range.map(|r| json!({"center_mhz": r.center_mhz, "width_mhz": r.width_mhz, "source": r.source})),
+        "channel_80p80": b.channel_80p80.map(|r| json!({"primary_center_mhz": r.primary_center_mhz,
+            "secondary_center_mhz": r.secondary_center_mhz}))})).collect();
+    json!({"ok": true, "present": true, "iw": true, "iface": iface, "adapter_stamp": before, "networks": nets, "total": list.len(), "load": load, "dump_completed_boottime_ms": dump_completed_boottime_ms,
            "can_rescan": tool("nmcli").is_some()})
 }
 
@@ -582,8 +627,11 @@ pub fn rescan(req: &Value) -> Value {
     let iface = match scan_iface(req) { Ok(i) => i, Err(e) => return e };
     let Some(iface) = iface else { return json!({"ok": true, "present": false}) };
     let Some(bin) = tool("nmcli") else { return json!({"ok": false, "error": "nmcli (NetworkManager) is not installed"}) };
+    let before = match scan_adapter_stamp(req, &iface) { Ok(stamp) => stamp, Err(error) => return error };
     match run(&bin, &["device", "wifi", "rescan", "ifname", &iface]) {
-        Ok(_) => json!({"ok": true, "iface": iface}),
+        Ok(_) if adapter_stamp(&iface).as_deref() == Some(before.as_str()) =>
+            json!({"ok": true, "iface": iface, "adapter_stamp": before}),
+        Ok(_) => json!({"ok": false, "iface": iface, "error": "Wireless adapter changed during rescan"}),
         Err(e) => json!({"ok": false, "iface": iface, "error": e}),
     }
 }

@@ -12,6 +12,8 @@
 #include "processidentity.h"
 #include "klogview.h"
 
+#include <sys/stat.h>
+
 #include <QCheckBox>
 #include <QCollator>
 #include <QComboBox>
@@ -188,6 +190,22 @@ static QTreeWidget *makeTree(const QStringList &cols) {
     return t;
 }
 
+static QString wifiAdapterStamp(const QString &iface) {
+    if (iface.isEmpty() || iface == QLatin1String(".") || iface == QLatin1String("..")
+        || iface.contains(QLatin1Char('/')) || iface.contains(QChar::Null)) return {};
+    const QString path = QStringLiteral("/sys/class/net/") + iface;
+    const QByteArray encoded = QFile::encodeName(path);
+    struct stat before{}, after{};
+    if (::stat(encoded.constData(), &before) != 0) return {};
+    QFile indexFile(path + QStringLiteral("/ifindex"));
+    if (!indexFile.open(QIODevice::ReadOnly)) return {};
+    bool valid = false;
+    const uint index = indexFile.read(32).trimmed().toUInt(&valid);
+    if (!valid || !index || ::stat(encoded.constData(), &after) != 0
+        || before.st_dev != after.st_dev || before.st_ino != after.st_ino) return {};
+    return QStringLiteral("%1:%2:%3").arg(qulonglong(before.st_dev)).arg(qulonglong(before.st_ino)).arg(index);
+}
+
 static std::optional<wifiage::Tick> wifiBootTick() {
     timespec ts{};
     if (::clock_gettime(CLOCK_BOOTTIME, &ts) != 0 || ts.tv_sec < 0 || ts.tv_nsec < 0 || ts.tv_nsec >= 1000000000) return {};
@@ -202,15 +220,26 @@ static bool wifiSignal(const QJsonValue &value) {
     return value.isDouble() && wifiage::validSignal(value.toDouble());
 }
 
-static std::optional<wifiage::Range> wifiRange(const QJsonObject &network) {
+static std::optional<wifiage::Ranges> wifiRange(const QJsonObject &network) {
+    const auto primary = network.value(QStringLiteral("freq"));
+    if (!primary.isDouble()) return {};
     const auto op = network.value(QStringLiteral("channel_range")).toObject();
+    const auto split = network.value(QStringLiteral("channel_80p80")).toObject();
+    if (!split.isEmpty()) {
+        const auto first = split.value(QStringLiteral("primary_center_mhz"));
+        const auto second = split.value(QStringLiteral("secondary_center_mhz"));
+        if (!op.isEmpty() || !first.isDouble() || !second.isDouble()) return {};
+        return wifiage::split80Ranges(primary.toDouble(), first.toDouble(), second.toDouble());
+    }
     const auto source = str(op,"source");
     if (source != QStringLiteral("HT operation") && source != QStringLiteral("VHT operation")) return {};
-    const auto p = network.value(QStringLiteral("freq")), c = op.value(QStringLiteral("center_mhz")), w = op.value(QStringLiteral("width_mhz"));
-    if (!p.isDouble() || !c.isDouble() || !w.isDouble()) return {};
+    const auto c = op.value(QStringLiteral("center_mhz")), w = op.value(QStringLiteral("width_mhz"));
+    if (!c.isDouble() || !w.isDouble()) return {};
     if ((source == QStringLiteral("HT operation") && w.toDouble() > 40) ||
         (source == QStringLiteral("VHT operation") && w.toDouble() < 80)) return {};
-    return wifiage::channelRange(p.toDouble(),c.toDouble(),w.toDouble());
+    const auto range = wifiage::channelRange(primary.toDouble(),c.toDouble(),w.toDouble());
+    if (!range) return {};
+    return wifiage::Ranges{*range, std::nullopt};
 }
 
 NetPage::NetPage(QWidget *parent) : QWidget(parent) {
@@ -459,7 +488,9 @@ NetPage::NetPage(QWidget *parent) : QWidget(parent) {
     connect(channelView, &QPushButton::clicked, this, [this] {
         QDialog dlg(this); dlg.setWindowTitle(tr("Wi-Fi Channel View")); dlg.resize(780, 560);
         auto *layout = new QVBoxLayout(&dlg);
-        const QJsonObject snapshot = wifiScanSnapshot_;
+        const auto stamp = str(wifiScanSnapshot_, "adapter_stamp");
+        const bool changed = !stamp.isEmpty() && stamp != wifiAdapterStamp(str(wifiScanSnapshot_, "iface"));
+        const QJsonObject snapshot = changed ? QJsonObject{} : wifiScanSnapshot_;
         const auto now = wifiBootTick();
         const auto dump = wifiSeen(snapshot.value(QStringLiteral("dump_completed_boottime_ms")));
         auto ageOf = [&](const QJsonObject &o) { return wifiage::ageFromSnapshot(
@@ -467,87 +498,125 @@ NetPage::NetPage(QWidget *parent) : QWidget(parent) {
         auto ageText = [&](const wifiage::Age &a) { return !a.ms ? tr("Age unknown") : a.observed
             ? tr("About %1 s old (kernel timestamp)").arg(static_cast<qulonglong>(*a.ms/1000))
             : tr("At least %1 s old").arg(static_cast<qulonglong>(*a.ms/1000)); };
-        auto *info = new QLabel(tr("Adapter: %1 · Cached scan received: %2. Ages refer to dialog opening. Lines show advertised contiguous ranges, not measured spectrum use.")
+        auto *info = new QLabel(tr("Adapter: %1 · Cached scan received: %2. Ages refer to dialog opening. Lines show advertised channel ranges.")
             .arg(str(snapshot,"iface").isEmpty() ? tr("Unknown") : str(snapshot,"iface"),
-                 wifiScanReceived_.isValid() ? wifiScanReceived_.toString(Qt::ISODate) : tr("Unknown")));
+                 !changed && wifiScanReceived_.isValid() ? wifiScanReceived_.toString(Qt::ISODate) : tr("Unknown")));
         info->setTextFormat(Qt::PlainText);
         info->setWordWrap(true); layout->addWidget(info);
+        auto *recentOnly = new QCheckBox(tr("Only observations within 60 s"));
+        layout->addWidget(recentOnly);
         auto *scene = new QGraphicsScene(&dlg);
         auto *view = new QGraphicsView(scene); view->setMinimumHeight(155); layout->addWidget(view,1);
         const QPen axis{QColor(theme::FG_DIM)}, marker{QColor(theme::ACCENT)};
-        const auto nets = snapshot.value(QStringLiteral("networks")).toArray();
-        // Compare only unique captured BSSID/frequency rows with known intervals.
-        // A duplicate key is ambiguous and not counted as another access point.
-        auto key = [](const QJsonObject &o) { return str(o,"bssid").toLower() + QLatin1Char('/') + QString::number(o.value(QStringLiteral("freq")).toDouble()); };
-        QHash<QString,int> occurrences;
-        for (const auto &v : nets) ++occurrences[key(v.toObject())];
-        auto overlapText = [&](const QJsonObject &o) {
-            const auto a = wifiRange(o); const auto id = key(o);
-            if (!a || str(o,"bssid").isEmpty() || occurrences.value(id) != 1) return tr("Unknown");
-            int overlaps = 0, known = 0, unknown = 0;
-            for (const auto &v : nets) {
-                const auto other = v.toObject(); const auto otherId = key(other);
-                if (otherId == id || wifiage::band(other.value(QStringLiteral("freq")).toDouble()) != a->bandIndex) continue;
-                if (str(other,"bssid").isEmpty() || occurrences.value(otherId) != 1) { ++unknown; continue; }
-                const auto b = wifiRange(other);
-                if (!b) { ++unknown; continue; }
-                ++known; if (wifiage::overlapMHz(*a,*b) > 0) ++overlaps;
-            }
-            return tr("%1 / %2 known; %3 unknown rows").arg(overlaps).arg(known).arg(unknown);
-        };
-        for (int bandIndex = 0; bandIndex < 3; ++bandIndex) {
-            const int lower = bandIndex == 0 ? 2400 : bandIndex == 1 ? 5150 : 5925;
-            const int upper = bandIndex == 0 ? 2500 : bandIndex == 1 ? 5895 : 7125;
-            const int left = bandIndex * 220 + 30;
-            scene->addLine(left, 120, left+190,120,axis);
-            scene->addLine(left, 15, left,120,axis);
-            for (int db : {-120,-60,0}) {
-                const double y = 120 - (db+127)*105.0/127;
-                scene->addLine(left-3,y,left+190,y,QPen(QColor(theme::BORDER_SOFT)));
-                if (bandIndex == 0) { auto *tick = scene->addText(QString::number(db)); tick->setDefaultTextColor(QColor(theme::FG_DIM)); tick->setPos(left-38,y-10); }
-            }
-            auto *label = scene->addText(QStringLiteral("%1–%2 MHz").arg(lower).arg(upper)); label->setDefaultTextColor(QColor(theme::FG)); label->setPos(left,123);
-            for (const auto &v : nets) {
-                const auto o = v.toObject(); const auto f = o.value(QStringLiteral("freq"));
-                const auto signal = o.value(QStringLiteral("signal_dbm"));
-                if (!f.isDouble() || wifiage::band(f.toDouble()) != bandIndex || !wifiSignal(signal)) continue;
-                const double x = left + 190.0*(f.toDouble()-lower)/(upper-lower), y = 120-(signal.toDouble()+127)*105.0/127;
-                const auto age = ageOf(o);
-                const bool recent = age.ms && *age.ms < wifiage::staleMs;
-                const auto range = wifiRange(o);
-                const auto tip = QStringLiteral("%1 · %2 · %3 MHz · %4 dBm · %5 · %6")
-                    .arg(str(o,"ssid"),str(o,"bssid")).arg(f.toInt()).arg(signal.toDouble())
-                    .arg(ageText(age),range ? tr("Advertised %1 MHz (%2–%3 MHz)").arg(range->width).arg(range->low).arg(range->high) : tr("Width unknown"));
-                if (range) {
-                    QPen span{QColor(theme::ACCENT)}; span.setWidthF(2.0); if (!recent) span.setStyle(Qt::DashLine);
-                    const double lo = left+190.0*(range->low-lower)/(upper-lower), hi = left+190.0*(range->high-lower)/(upper-lower);
-                    auto *line = scene->addLine(lo,y,hi,y,span); line->setToolTip(tip.toHtmlEscaped());
-                }
-                auto *dot = scene->addEllipse(x-3,y-3,6,6,marker,recent ? QBrush(QColor(theme::ACCENT)) : QBrush(Qt::NoBrush));
-                dot->setToolTip(tip.toHtmlEscaped());
-            }
-        }
         auto *tree = makeTree({tr("Network"), tr("Address (BSSID)"), tr("Band"), tr("Channel"), tr("Frequency (MHz)"), tr("Signal"), tr("Age"), tr("Freshness"), tr("Width"), tr("Center (MHz)"), tr("Range source"), tr("Nominal overlaps")});
         layout->addWidget(tree,1);
-        for (const auto &v : nets) {
-            const auto o = v.toObject();
-            const auto f = o.value(QStringLiteral("freq")); const auto sig = o.value(QStringLiteral("signal_dbm"));
-            const auto age = ageOf(o); const auto range = wifiRange(o);
-            const bool validFreq = f.isDouble() && wifiage::band(f.toDouble()) >= 0;
-            auto *item = new SortItem({str(o,"ssid").isEmpty() ? tr("(hidden network)") : str(o,"ssid"), str(o,"bssid"), validFreq ? str(o,"band") : tr("Unknown"),
-                o.value(QStringLiteral("channel")).isDouble() ? QString::number(o.value(QStringLiteral("channel")).toInt()) : tr("Unknown"),
-                validFreq ? QString::number(f.toInt()) : tr("Unknown"), wifiSignal(sig) ? QString::number(sig.toDouble()) + QStringLiteral(" dBm") : tr("Unknown"),
-                ageText(age), !age.ms ? tr("Unknown") : *age.ms >= wifiage::staleMs ? tr("Stale (≥ 60 s)") : age.observed ? tr("Observed within 60 s") : tr("Age bound below 60 s"),
-                range ? QString::number(range->width) + QStringLiteral(" MHz") : tr("Unknown"),
-                range ? QString::number(range->center) : tr("Unknown"),
-                range ? str(o.value(QStringLiteral("channel_range")).toObject(),"source") : tr("Unknown"), overlapText(o)});
-            if (validFreq) item->setData(4, SortRole, f.toDouble());
-            if (age.ms) item->setData(6, SortRole, static_cast<qulonglong>(*age.ms));
-            if (range) { item->setData(8, SortRole, range->width); item->setData(9, SortRole, range->center); }
-            tree->addTopLevelItem(item);
-        }
-        tree->setSortingEnabled(true); tree->sortByColumn(4, Qt::AscendingOrder);
-        auto *legend = new QLabel(tr("Solid marker: age or lower bound below 60 s. Hollow marker: stale or unknown age. Overlaps compare known advertised ranges in the captured list only, regardless of age; not interference or utilization. Unknown-width markers remain points."));
+        tree->sortByColumn(4, Qt::AscendingOrder);
+        const auto captured = snapshot.value(QStringLiteral("networks")).toArray();
+        const auto render = [&] {
+            scene->clear();
+            tree->setSortingEnabled(false);
+            tree->clear();
+            QJsonArray nets;
+            for (const auto &network : captured) {
+                const auto age = ageOf(network.toObject());
+                if (!recentOnly->isChecked() || (age.observed && age.ms && *age.ms < wifiage::staleMs))
+                    nets.append(network);
+            }
+            // Compare only unique captured BSSID/frequency rows with known intervals.
+            // A duplicate key is ambiguous and not counted as another access point.
+            auto key = [](const QJsonObject &o) { return str(o,"bssid").toLower() + QLatin1Char('/') + QString::number(o.value(QStringLiteral("freq")).toDouble()); };
+            QHash<QString,int> occurrences;
+            for (const auto &v : nets) ++occurrences[key(v.toObject())];
+            auto overlapText = [&](const QJsonObject &o) {
+                const auto a = wifiRange(o); const auto id = key(o);
+                if (!a || str(o,"bssid").isEmpty() || occurrences.value(id) != 1) return tr("Unknown");
+                int overlaps = 0, known = 0, unknown = 0;
+                for (const auto &v : nets) {
+                    const auto other = v.toObject(); const auto otherId = key(other);
+                    if (otherId == id || wifiage::band(other.value(QStringLiteral("freq")).toDouble()) != a->first.bandIndex) continue;
+                    if (str(other,"bssid").isEmpty() || occurrences.value(otherId) != 1) { ++unknown; continue; }
+                    const auto b = wifiRange(other);
+                    if (!b) { ++unknown; continue; }
+                    ++known;
+                    if (wifiage::overlaps(*a,*b)) ++overlaps;
+                }
+                return tr("%1 / %2 known; %3 unknown rows").arg(overlaps).arg(known).arg(unknown);
+            };
+            for (int bandIndex = 0; bandIndex < 3; ++bandIndex) {
+                const int lower = bandIndex == 0 ? 2400 : bandIndex == 1 ? 5150 : 5925;
+                const int upper = bandIndex == 0 ? 2500 : bandIndex == 1 ? 5895 : 7125;
+                const int left = bandIndex * 220 + 30;
+                scene->addLine(left, 120, left+190,120,axis);
+                scene->addLine(left, 15, left,120,axis);
+                for (int db : {-120,-60,0}) {
+                    const double y = 120 - (db+127)*105.0/127;
+                    scene->addLine(left-3,y,left+190,y,QPen(QColor(theme::BORDER_SOFT)));
+                    if (bandIndex == 0) { auto *tick = scene->addText(QString::number(db)); tick->setDefaultTextColor(QColor(theme::FG_DIM)); tick->setPos(left-38,y-10); }
+                }
+                auto *label = scene->addText(QStringLiteral("%1–%2 MHz").arg(lower).arg(upper)); label->setDefaultTextColor(QColor(theme::FG)); label->setPos(left,123);
+                for (const auto &v : nets) {
+                    const auto o = v.toObject(); const auto f = o.value(QStringLiteral("freq"));
+                    const auto signal = o.value(QStringLiteral("signal_dbm"));
+                    if (!f.isDouble() || wifiage::band(f.toDouble()) != bandIndex || !wifiSignal(signal)) continue;
+                    const double x = left + 190.0*(f.toDouble()-lower)/(upper-lower), y = 120-(signal.toDouble()+127)*105.0/127;
+                    const auto age = ageOf(o);
+                    const bool recent = age.observed && age.ms && *age.ms < wifiage::staleMs;
+                    const auto range = wifiRange(o);
+                    QString rangeText = tr("Width unknown");
+                    if (range) {
+                        const auto &a = range->first;
+                        rangeText = range->second
+                            ? tr("Advertised 80 + 80 MHz (%1–%2 and %3–%4 MHz)")
+                                .arg(a.low).arg(a.high).arg(range->second->low).arg(range->second->high)
+                            : tr("Advertised %1 MHz (%2–%3 MHz)").arg(a.width).arg(a.low).arg(a.high);
+                    }
+                    const auto tip = QStringLiteral("%1 · %2 · %3 MHz · %4 dBm · %5 · %6")
+                        .arg(str(o,"ssid"),str(o,"bssid")).arg(f.toInt()).arg(signal.toDouble())
+                        .arg(ageText(age),rangeText);
+                    if (range) {
+                        QPen span{QColor(theme::ACCENT)}; span.setWidthF(2.0); if (!recent) span.setStyle(Qt::DashLine);
+                        const auto addSegment = [&](const wifiage::Range &segment) {
+                            const double lo = left+190.0*(segment.low-lower)/(upper-lower);
+                            const double hi = left+190.0*(segment.high-lower)/(upper-lower);
+                            scene->addLine(lo,y,hi,y,span)->setToolTip(tip.toHtmlEscaped());
+                        };
+                        addSegment(range->first);
+                        if (range->second) addSegment(*range->second);
+                    }
+                    auto *dot = scene->addEllipse(x-3,y-3,6,6,marker,recent ? QBrush(QColor(theme::ACCENT)) : QBrush(Qt::NoBrush));
+                    dot->setToolTip(tip.toHtmlEscaped());
+                }
+            }
+            for (const auto &v : nets) {
+                const auto o = v.toObject();
+                const auto f = o.value(QStringLiteral("freq")); const auto sig = o.value(QStringLiteral("signal_dbm"));
+                const auto age = ageOf(o); const auto range = wifiRange(o);
+                const bool validFreq = f.isDouble() && wifiage::band(f.toDouble()) >= 0;
+                QString width = tr("Unknown"), centers = width, source = width;
+                if (range) {
+                    width = range->second ? QStringLiteral("80 + 80 MHz") : QStringLiteral("%1 MHz").arg(range->first.width);
+                    centers = QString::number(range->first.center);
+                    if (range->second) centers += QStringLiteral(" / %1").arg(range->second->center);
+                    source = range->second ? QStringLiteral("VHT operation") : str(o.value(QStringLiteral("channel_range")).toObject(),"source");
+                }
+                auto *item = new SortItem({str(o,"ssid").isEmpty() ? tr("(hidden network)") : str(o,"ssid"), str(o,"bssid"), validFreq ? str(o,"band") : tr("Unknown"),
+                    o.value(QStringLiteral("channel")).isDouble() ? QString::number(o.value(QStringLiteral("channel")).toInt()) : tr("Unknown"),
+                    validFreq ? QString::number(f.toInt()) : tr("Unknown"), wifiSignal(sig) ? QString::number(sig.toDouble()) + QStringLiteral(" dBm") : tr("Unknown"),
+                    ageText(age), !age.ms ? tr("Unknown") : *age.ms >= wifiage::staleMs ? tr("Stale (≥ 60 s)") : age.observed ? tr("Observed within 60 s") : tr("Age bound below 60 s"),
+                    width, centers, source, overlapText(o)});
+                if (validFreq) item->setData(4, SortRole, f.toDouble());
+                if (age.ms) item->setData(6, SortRole, static_cast<qulonglong>(*age.ms));
+                if (range) {
+                    item->setData(8, SortRole, range->first.width + (range->second ? range->second->width : 0));
+                    item->setData(9, SortRole, range->first.center);
+                }
+                tree->addTopLevelItem(item);
+            }
+            tree->setSortingEnabled(true);
+        };
+        connect(recentOnly, &QCheckBox::toggled, &dlg, render);
+        render();
+        auto *legend = new QLabel(tr("Solid markers have a kernel timestamp within 60 s. Hollow markers are stale or have unconfirmed age. Overlap counts describe shared advertised intervals among the rows shown."));
         legend->setWordWrap(true); layout->addWidget(legend);
         auto *buttons = new QDialogButtonBox(QDialogButtonBox::Close); layout->addWidget(buttons);
         connect(buttons,&QDialogButtonBox::rejected,&dlg,&QDialog::reject); dlg.exec();
@@ -1715,7 +1784,13 @@ static int wifiEventsThisBoot() {
 }
 
 QJsonObject NetPage::wifiReq(const char *op) const {
-    return {{"op", QLatin1String(op)}, {"iface", wifiIface_->currentText()}};
+    const auto iface = wifiIface_->currentText();
+    QJsonObject request{{"op", QLatin1String(op)}, {"iface", iface}};
+    if (QLatin1String(op) == QLatin1String("wifi_scan") || QLatin1String(op) == QLatin1String("wifi_rescan")) {
+        const auto stamp = wifiAdapterStamp(iface);
+        if (!stamp.isEmpty()) request.insert(QStringLiteral("adapter_stamp"), stamp);
+    }
+    return request;
 }
 
 void NetPage::refreshWifi() {
@@ -1759,7 +1834,16 @@ void NetPage::applyWifi(const QJsonObject &w) {
       for (int i = 0; i < wifiIface_->count(); ++i) have << wifiIface_->itemText(i);
       if (have != names) { wifiIface_->clear(); wifiIface_->addItems(names); }
       wifiIface_->setCurrentText(str(w, "iface")); }
-    if (previousIface != wifiIface_->currentText()) { ++wifiScanRevision_; wifiScanSnapshot_ = {}; wifiScanReceived_ = {}; wifiScanTick_.reset(); wifiNets_->clear(); }
+    const auto scanStamp = str(wifiScanSnapshot_, "adapter_stamp");
+    const bool adapterChanged = !scanStamp.isEmpty() && scanStamp != wifiAdapterStamp(wifiIface_->currentText());
+    if (previousIface != wifiIface_->currentText() || adapterChanged) {
+        ++wifiScanRevision_;
+        wifiScanSnapshot_ = {};
+        wifiScanReceived_ = {};
+        wifiScanTick_.reset();
+        wifiNets_->clear();
+        if (adapterChanged && isVisible() && wifiPages_->currentIndex() == 2) refreshWifiNets();
+    }
     wifiIface_->setVisible(names.size() > 1);
     wifiIfaceLabel_->setVisible(names.size() > 1);
     if (!w.value(QLatin1String("ok")).toBool()) {
@@ -1884,12 +1968,21 @@ void NetPage::applyWifiHw(const QJsonObject &h) {
 void NetPage::refreshWifiNets() {
     const auto rev = ++wifiScanRevision_;
     const QString iface = wifiIface_->currentText();
-    runUser(wifiReq("wifi_scan"), [this, rev, iface](const QJsonObject &n) {
+    const auto request = wifiReq("wifi_scan");
+    const auto expected = str(request, "adapter_stamp");
+    runUser(request, [this, rev, iface, expected](const QJsonObject &n) {
         if (rev != wifiScanRevision_ || iface != wifiIface_->currentText()) return;
-        const bool wrongAdapter = !iface.isEmpty() && n.value(QStringLiteral("ok")).toBool() && n.value(QStringLiteral("iw")).toBool() && str(n,"iface") != iface;
+        const auto reportedIface = str(n, "iface");
+        const auto reportedStamp = str(n, "adapter_stamp");
+        const auto live = wifiAdapterStamp(reportedIface);
+        const bool wrongAdapter = n.value(QStringLiteral("ok")).toBool() && n.value(QStringLiteral("iw")).toBool()
+            && ((!iface.isEmpty() && reportedIface != iface) || (!expected.isEmpty() && live != expected)
+                || (!reportedStamp.isEmpty() && live != reportedStamp));
         const bool usable = n.value(QStringLiteral("ok")).toBool() && n.value(QStringLiteral("present")).toBool()
             && n.value(QStringLiteral("iw")).toBool() && !str(n,"iface").isEmpty() && !wrongAdapter;
         wifiScanSnapshot_ = usable ? n : QJsonObject();
+        if (usable && reportedStamp.isEmpty() && !expected.isEmpty())
+            wifiScanSnapshot_.insert(QStringLiteral("adapter_stamp"), expected);
         wifiScanReceived_ = wifiScanSnapshot_.isEmpty() ? QDateTime() : QDateTime::currentDateTimeUtc();
         wifiScanTick_ = wifiScanSnapshot_.isEmpty() ? std::nullopt : wifiBootTick();
         if (wrongAdapter) { applyWifiNets(QJsonObject{{QStringLiteral("ok"),false},{QStringLiteral("error"),tr("Selected adapter no longer matches the cached scan.")}}); return; }
@@ -1971,14 +2064,23 @@ void NetPage::rescanWifi() {
     wifiNetInfo_->setText(tr("Scanning…"));
     const auto rev = ++wifiScanRevision_;
     const QString iface = wifiIface_->currentText();
-    runUser(wifiReq("wifi_rescan"), [this, rev, iface](const QJsonObject &r) {
+    const auto request = wifiReq("wifi_rescan");
+    const auto expected = str(request, "adapter_stamp");
+    runUser(request, [this, rev, iface, expected](const QJsonObject &r) {
         if (rev != wifiScanRevision_ || iface != wifiIface_->currentText()) return;
         wifiRescan_->setEnabled(true);
         if (!r.value(QLatin1String("ok")).toBool()) {
             wifiNetInfo_->setText(r.isEmpty() ? tr("No answer from the helper.") : str(r, "error").toHtmlEscaped());
             return;
         }
-        QTimer::singleShot(4000, this, [this, rev, iface] { if (rev == wifiScanRevision_ && iface == wifiIface_->currentText() && isVisible() && wifiPages_->currentIndex() == 2) refreshWifiNets(); });
+        const auto reported = str(r, "adapter_stamp");
+        const auto stamp = reported.isEmpty() ? expected : reported;
+        const auto target = iface.isEmpty() ? str(r, "iface") : iface;
+        QTimer::singleShot(4000, this, [this, rev, iface, target, stamp] {
+            if (rev == wifiScanRevision_ && iface == wifiIface_->currentText()
+                && (stamp.isEmpty() || stamp == wifiAdapterStamp(target))
+                && isVisible() && wifiPages_->currentIndex() == 2) refreshWifiNets();
+        });
     }, 15000);
 }
 
