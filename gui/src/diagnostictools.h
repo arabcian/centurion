@@ -9,6 +9,8 @@
 #include <QString>
 #include <QStringList>
 
+namespace edidfields { enum class Kind; }
+
 namespace diagnostictools {
 
 // S01. The inventory compared against the baseline: no serial numbers, MACs or UUIDs; boot parameters
@@ -39,6 +41,7 @@ struct Edid {
     double maxNits = 0, minNits = 0;  // HDR static metadata: peak and black level, cd/m²
 };
 Edid decodeEdid(const QByteArray &data);
+QString edidFieldName(edidfields::Kind kind);
 diag::Report displays(const QString &root = {});
 
 // S06.

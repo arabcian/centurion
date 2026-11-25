@@ -62,7 +62,7 @@ ReportPreview::ReportPreview(const QJsonObject &preview, const QString &snapshot
     const auto files = preview.value(QStringLiteral("files")).toArray();
     QHash<QString, int> nameCounts;
     for (const auto &file : files) ++nameCounts[file.toObject().value(QStringLiteral("name")).toString()];
-    const QRegularExpression digestPattern(QStringLiteral("^[0-9a-f]{64}$"));
+    const QRegularExpression digestPattern(QStringLiteral("\\A[0-9a-f]{64}\\z"));
     for (const QJsonValue &f : files) {
         const QJsonObject o = f.toObject();
         const QString name = o.value(QStringLiteral("name")).toString();
@@ -193,14 +193,20 @@ ReportPreview::ReportPreview(const QJsonObject &preview, const QString &snapshot
     previousPage_ = new QPushButton(tr("Previous page"));
     nextPage_ = new QPushButton(tr("Next page"));
     jumpPage_ = new QPushButton(tr("Go to page…"));
-    for (auto *button : {previousPage_, nextPage_, jumpPage_}) button->setAutoDefault(false);
+    unopenedPage_ = new QPushButton(tr("Next unopened page"));
+    retryPage_ = new QPushButton(tr("Retry page"));
+    for (auto *button : {previousPage_, nextPage_, jumpPage_, unopenedPage_, retryPage_}) button->setAutoDefault(false);
     navigation->addWidget(pageStatus_, 1);
+    navigation->addWidget(retryPage_);
     navigation->addWidget(previousPage_);
     navigation->addWidget(nextPage_);
     navigation->addWidget(jumpPage_);
+    navigation->addWidget(unopenedPage_);
     v->addWidget(pager_);
     connect(previousPage_, &QPushButton::clicked, this, [this] { showPage(page_ - 1); });
     connect(nextPage_, &QPushButton::clicked, this, [this] { showPage(page_ + 1); });
+    connect(unopenedPage_, &QPushButton::clicked, this, [this] { showPage(nextUnopenedPage()); });
+    connect(retryPage_, &QPushButton::clicked, this, [this] { showPage(failedPage_); });
     connect(jumpPage_, &QPushButton::clicked, this, [this] {
         if (loadingPage_ || pageCount_ <= 1 || pageCount_ > std::numeric_limits<int>::max()) return;
         const auto generation = generation_;
@@ -274,18 +280,32 @@ ReportPreview::ReportPreview(const QJsonObject &preview, const QString &snapshot
 void ReportPreview::selectFile(QListWidgetItem *item) {
     ++generation_;
     loadingPage_ = false;
+    failedPage_ = -1;
     page_ = 0;
     pageCount_ = item ? qMax<qint64>(1, item->data(PageCountRole).toLongLong()) : 1;
     text_->setPlainText(item ? item->data(TextRole).toString() : QString());
-    markPageShown(item);
+    const auto review = reviews_.constFind(item);
+    const auto lastPage = review == reviews_.cend() ? 0 : review->lastPage;
+    if (lastPage > 0) showPage(lastPage);
+    else markPageShown(item);
     updatePageControls();
 }
 
 void ReportPreview::markPageShown(QListWidgetItem *item) {
     if (!item || pageCount_ <= 1) return;
-    auto &pages = shownPages_[item];
-    pages.insert(page_);
-    item->setData(ShownPageCountRole, qint64(pages.size()));
+    auto &review = reviews_[item];
+    review.lastPage = page_;
+    review.shown.insert(page_);
+    item->setData(ShownPageCountRole, qint64(review.shown.size()));
+}
+
+qint64 ReportPreview::nextUnopenedPage() const {
+    if (pageCount_ <= 1) return -1;
+    const auto review = reviews_.constFind(list_->currentItem());
+    if (review == reviews_.cend()) return -1;
+    for (qint64 page = 0; page < pageCount_; ++page)
+        if (!review->shown.contains(page)) return page;
+    return -1;
 }
 
 void ReportPreview::updatePageControls() {
@@ -293,14 +313,20 @@ void ReportPreview::updatePageControls() {
     previousPage_->setEnabled(!loadingPage_ && page_ > 0);
     nextPage_->setEnabled(!loadingPage_ && page_ + 1 < pageCount_);
     jumpPage_->setEnabled(!loadingPage_ && pageCount_ > 1 && pageCount_ <= std::numeric_limits<int>::max());
+    unopenedPage_->setEnabled(!loadingPage_ && nextUnopenedPage() >= 0);
+    retryPage_->setVisible(failedPage_ >= 0);
     pageStatus_->setText(loadingPage_ ? tr("Reading preview page…") : tr("Page %1 of %2").arg(page_ + 1).arg(pageCount_));
 }
 
 void ReportPreview::showPage(qint64 page) {
-    const auto *item = list_->currentItem();
+    auto *item = list_->currentItem();
     if (!item || loadingPage_ || page < 0 || page >= pageCount_ || page == page_) return;
+    failedPage_ = -1;
     if (page == 0) {
-        selectFile(list_->currentItem());
+        page_ = 0;
+        text_->setPlainText(item->data(TextRole).toString());
+        markPageShown(item);
+        updatePageControls();
         return;
     }
     const QJsonObject file{{QStringLiteral("name"), item->data(NameRole).toString()},
@@ -332,10 +358,11 @@ void ReportPreview::showPage(qint64 page) {
             updatePageControls();
             return;
         }
+        failedPage_ = page;
         updatePageControls();
         const auto error = reply.value(QStringLiteral("error")).toString();
-        pageStatus_->setText(error.isEmpty() ? tr("Could not read the preview page.")
-                                             : tr("Could not read the preview page: %1").arg(error));
+        pageStatus_->setText(error.isEmpty() ? tr("Could not read page %1.").arg(page + 1)
+                                             : tr("Could not read page %1: %2").arg(page + 1).arg(error));
     });
 }
 

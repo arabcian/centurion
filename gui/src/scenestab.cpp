@@ -593,7 +593,9 @@ ScenesTab::ScenesTab(MainWindow *win) : win_(win), eng_(win->scenes()) {
     connect(eng_, &SceneEngine::activeSceneChanged, this, [this](const QString &n, bool game) {
         reloadList(loaded_.name);  // marks the active scene
         updatePowerLabel();
-        setStatus((game ? "Game scene '" : "Scene '") + n + "' is now active (switched by centurion-gamemode).", theme::FG_DIM);
+        setStatus(n.isEmpty() ? tr("No active scene is recorded.")
+                             : game ? tr("Game scene '%1' is now active.").arg(n)
+                                    : tr("Scene '%1' is now active.").arg(n), theme::FG_DIM);
     });
 
     fillOptions();

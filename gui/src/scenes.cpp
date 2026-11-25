@@ -89,13 +89,19 @@ bool validName(const QString &n) {
 static QJsonObject readObject(const QString &path) {
     QFile f(path);
     if (!f.open(QIODevice::ReadOnly) || f.size() > MAX_FILE) return {};
-    return QJsonDocument::fromJson(f.readAll()).object();
+    const auto bytes = f.read(MAX_FILE + 1);
+    if (bytes.size() > MAX_FILE || f.error() != QFileDevice::NoError || !f.atEnd()) return {};
+    return QJsonDocument::fromJson(bytes).object();
 }
 
 static bool writeObject(const QString &path, const QJsonObject &o, QString *err) {
+    const auto bytes = QJsonDocument(o).toJson();
+    if (bytes.size() > MAX_FILE) {
+        if (err) *err = QCoreApplication::translate("SceneEngine", "Scene data exceeds the file size limit.");
+        return false;
+    }
     if (!QDir().mkpath(QFileInfo(path).absolutePath())) { if (err) *err = "cannot create " + QFileInfo(path).absolutePath(); return false; }
     QSaveFile f(path);
-    const auto bytes = QJsonDocument(o).toJson();
     if (!f.open(QIODevice::WriteOnly) || f.write(bytes) != bytes.size() || !f.commit()) {
         if (err) *err = f.errorString();
         return false;
@@ -741,8 +747,7 @@ void SceneEngine::externalStateChanged() {
     const bool changedPartial = partial != seenPartial_;
     seenActive_ = now;
     seenPartial_ = partial;
-    if (now.isEmpty()) return;
-    if (!sameScene) Q_EMIT activeSceneChanged(now, !state.value("game_scene").toString().isEmpty());
+    if (!sameScene) Q_EMIT activeSceneChanged(now, !now.isEmpty() && !state.value("game_scene").toString().isEmpty());
     else if (changedPartial) Q_EMIT activeScenePartialChanged();
 }
 

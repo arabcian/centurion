@@ -507,8 +507,7 @@ private:
 };
 
 // Inspect the frozen report, never re-open a connector or change an EDID override.
-void inspectEdid(QWidget *parent, const diag::Table &bytes, const diag::Table &fields,
-                 const QString &connector, int selectedOffset) {
+void inspectEdid(QWidget *parent, const diag::Table &bytes, const QString &connector, int selectedOffset) {
     auto tr = [](const char *s) { return QCoreApplication::translate("diag", s); };
     QMap<QString, QByteArray> captures;
     QSet<QString> invalidConnectors;
@@ -553,17 +552,21 @@ void inspectEdid(QWidget *parent, const diag::Table &bytes, const diag::Table &f
     auto *raw = new QPlainTextEdit; raw->setReadOnly(true); raw->setLineWrapMode(QPlainTextEdit::NoWrap);
     raw->setFont(QFontDatabase::systemFont(QFontDatabase::FixedFont)); byteLayout->addWidget(raw, 1);
     split->addWidget(bytePanel); split->setSizes({170,300});
+    QHash<QString, int> lastOffset;
+    edidfields::Inspection inspection;
     auto update = [&] {
-        const auto capture = captures.value(selector->currentText()); const int pos = offset->value();
+        const auto name = selector->currentText();
+        const auto capture = captures.value(name);
+        const int pos = offset->value();
         if (pos < 0 || pos >= capture.size()) return;
-        const auto inspection = edidfields::inspect({reinterpret_cast<const std::uint8_t *>(capture.constData()), std::size_t(capture.size())});
+        lastOffset.insert(name, pos);
         QString info = tr("Byte %1 · block %2 · value %3").arg(pos).arg(pos/128).arg(QStringLiteral("0x%1").arg(quint8(capture.at(pos)),2,16,QLatin1Char('0')));
-        for (const auto &row : fields.rows) {
-            if (row.value(0) != selector->currentText()) continue;
-            bool startOk=false, lenOk=false; const int start=row.value(1).toInt(&startOk,16), len=row.value(2).toInt(&lenOk);
-            if (startOk && lenOk && start>=0 && len>0 && pos>=start && pos-start<len) {
-                info += QStringLiteral("\n%1 · %2 + %3").arg(row.value(3),row.value(1),row.value(2)); break;
-            }
+        for (const auto &field : inspection.fields) {
+            const auto index = std::size_t(pos);
+            if (index < field.offset || index - field.offset >= field.length) continue;
+            info += QStringLiteral("\n%1 · 0x%2 + %3").arg(diagnostictools::edidFieldName(field.kind))
+                .arg(qulonglong(field.offset), 4, 16, QLatin1Char('0')).arg(qulonglong(field.length));
+            break;
         }
         if (std::size_t(pos/128)<inspection.blocks.size()) {
             const auto &block=inspection.blocks[std::size_t(pos/128)];
@@ -583,13 +586,16 @@ void inspectEdid(QWidget *parent, const diag::Table &bytes, const diag::Table &f
         }
     };
     auto switchConnector = [&] {
-        const auto capture=captures.value(selector->currentText());
+        const auto name = selector->currentText();
+        const auto capture = captures.value(name);
+        const auto data = std::span(reinterpret_cast<const std::uint8_t *>(capture.constData()), std::size_t(capture.size()));
+        inspection = edidfields::inspect(data);
         const QSignalBlocker blocker(offset), rawBlock(raw), treeBlock(timingTree);
-        offset->setRange(0,int(capture.size())-1); offset->setValue(0);
+        offset->setRange(0,int(capture.size())-1); offset->setValue(lastOffset.value(name));
         QStringList lines; for (int i=0;i<capture.size();i+=16) lines << QStringLiteral("0x%1  %2").arg(i,4,16,QLatin1Char('0')).arg(QString::fromLatin1(capture.mid(i,16).toHex(' ')).toUpper());
         raw->setPlainText(lines.join(QLatin1Char('\n')));
         auto decoded=diagnostictools::decodeEdid(capture);
-        auto timings=edidfields::detailedTimings({reinterpret_cast<const std::uint8_t *>(capture.constData()), std::size_t(capture.size())});
+        auto timings=edidfields::detailedTimings(data);
         // The source reads one extra byte to detect a cap. A frozen report stores
         // at most 4096 bytes, so it cannot prove completeness at the cap.
         if (capture.size()>=4096 || !decoded.structuralValid) { timings.clear(); decoded.vrrMin=decoded.vrrMax=0; }
@@ -622,9 +628,12 @@ void inspectEdid(QWidget *parent, const diag::Table &bytes, const diag::Table &f
         const int pos=cursor.blockNumber()*16+(column-8)/3;
         if(pos>=0 && pos<=offset->maximum() && pos!=offset->value()) offset->setValue(pos);
     });
-    if (!connector.isEmpty()) selector->setCurrentText(connector);
+    if (!connector.isEmpty()) {
+        const QSignalBlocker blocker(selector);
+        selector->setCurrentText(connector);
+        lastOffset.insert(connector, selectedOffset);
+    }
     switchConnector();
-    if (!connector.isEmpty()) offset->setValue(selectedOffset);
     auto *close=new QDialogButtonBox(QDialogButtonBox::Close); layout->addWidget(close);
     auto *exportBinary=close->addButton(tr("Save captured EDID…"), QDialogButtonBox::ActionRole);
     QObject::connect(exportBinary,&QPushButton::clicked,&dlg,[&]{
@@ -871,10 +880,9 @@ void DiagReportView::setReport(const diag::Report &r) {
         findingWidgets_ << card;
         bodyLayout_->addWidget(card);
     }
-    diag::Table edidBytes, edidFields;
+    diag::Table edidBytes;
     for (const auto &table : current.tables) {
         if (table.viewKind == QStringLiteral("edid-bytes")) edidBytes = table;
-        if (table.viewKind == QStringLiteral("edid-fields")) edidFields = table;
     }
     for (const diag::Table &t : current.tables) {
         auto *w = tableWidget(t, t.viewKind == QStringLiteral("acpi-wmi-tree") ? acpiTreeState_ : hardwareTreeState_);
@@ -885,14 +893,14 @@ void DiagReportView::setReport(const diag::Report &r) {
                                                   || t.viewKind == QStringLiteral("edid-timings"))) {
             auto *inspect = new QPushButton(rawEdid ? tr("Inspect captured EDID bytes…") : tr("Inspect selected byte offset…"));
             w->layout()->addWidget(inspect);
-            const auto openEdid = [w, bytes = edidBytes, fields = edidFields, rawEdid](QTreeWidgetItem *item) {
+            const auto openEdid = [w, bytes = edidBytes, rawEdid](QTreeWidgetItem *item) {
                 if (!item) {
-                    if (rawEdid) inspectEdid(w, bytes, fields, {}, 0);
+                    if (rawEdid) inspectEdid(w, bytes, {}, 0);
                     return;
                 }
                 bool valid = false;
                 const int offset = item->text(rawEdid ? 2 : 1).toInt(&valid, 16);
-                if (valid) inspectEdid(w, bytes, fields, item->text(0), offset);
+                if (valid) inspectEdid(w, bytes, item->text(0), offset);
             };
             connect(inspect, &QPushButton::clicked, w, [tree, openEdid] { openEdid(tree->currentItem()); });
             connect(tree, &QTreeWidget::itemDoubleClicked, w, [openEdid](QTreeWidgetItem *item, int) { openEdid(item); });

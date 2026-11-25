@@ -26,6 +26,7 @@ private:
     void showPage(qint64 page);
     void updatePageControls();
     void markPageShown(QListWidgetItem *item);
+    qint64 nextUnopenedPage() const;
 
     QListWidget *list_;
     QPlainTextEdit *text_;
@@ -33,12 +34,19 @@ private:
     QPushButton *previousPage_;
     QPushButton *nextPage_;
     QPushButton *jumpPage_;
+    QPushButton *unopenedPage_;
+    QPushButton *retryPage_;
     QLabel *pageStatus_;
     const QString snapshotPath_;
     const qint64 pageBytes_;
-    QHash<QListWidgetItem *, QSet<qint64>> shownPages_;
+    struct ReviewProgress {
+        QSet<qint64> shown;
+        qint64 lastPage = 0;
+    };
+    QHash<const QListWidgetItem *, ReviewProgress> reviews_;
     qint64 page_ = 0;
     qint64 pageCount_ = 1;
+    qint64 failedPage_ = -1;
     quint64 generation_ = 0;
     bool loadingPage_ = false;
 };

@@ -2,13 +2,14 @@
 
 #include <QRegularExpression>
 #include <QDate>
+#include <QTime>
 #include <QStringList>
 #include <algorithm>
 #include <utility>
 
 namespace klogview {
 
-static const QRegularExpression SAVED(QStringLiteral(R"(^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})\s+boot=(\S+)\s+seq=(\d+)\s+(\S+)\s+\[[^\]]*\]\s?(.*)$)"));
+static const QRegularExpression SAVED(QStringLiteral(R"(^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})\s+boot=(\S+)\s+seq=(\d+)\s+(\S+)\s+\[[ \t]*\d+(?:\.\d{1,6})?\]\s?(.*)$)"));
 static const QRegularExpression DIGITS(QStringLiteral(R"(\d+)"));
 
 bool fullBootId(const QString &id) {
@@ -57,7 +58,8 @@ std::optional<Line> parse(const QString &saved) {
     Line l;
     l.text = text;
     l.time = m.captured(1);
-    if (!QDate::fromString(l.time.left(10),Qt::ISODate).isValid()) return std::nullopt;
+    if (!QDate::fromString(l.time.left(10), Qt::ISODate).isValid()
+        || !QTime::fromString(l.time.mid(11), QStringLiteral("HH:mm:ss")).isValid()) return std::nullopt;
     l.boot = m.captured(2).toLower();
     if (!fullBootId(l.boot) && !legacyBootId(l.boot)) return std::nullopt;
     bool seqOk=false;
@@ -93,6 +95,9 @@ ContextWindow::ContextWindow(QString boot, quint64 seq, int before, int after)
 
 void ContextWindow::append(const Line &line) {
     if (line.boot != boot_) return;
+    if (std::any_of(lines_.cbegin(), lines_.cend(), [&](const Line &saved) {
+        return saved.seq == line.seq && saved.text == line.text;
+    })) return;
     if (mark_ >= 0) {
         if (int(lines_.size()) - mark_ - 1 < after_ && line.seq != seq_) lines_.push_back(line);
         return;
