@@ -3,6 +3,8 @@
 #define CENTURION_HELPER_DIR "/usr/libexec/centurion"
 #endif
 #include "autotunereport.h"
+#include "diagnostichistory.h"
+#include "diagsources.h"
 #include <QDateTime>
 #include <QMap>
 #include <QDialog>
@@ -17,6 +19,7 @@
 #include <QPlainTextEdit>
 #include <QPushButton>
 #include <QScrollArea>
+#include <QSet>
 #include <QStandardPaths>
 #include <QVBoxLayout>
 #include <algorithm>
@@ -28,11 +31,6 @@ QByteArray readFile(const QString &path, qint64 max = 4 * 1024 * 1024) {
     QFile f(path);
     if (!f.open(QIODevice::ReadOnly) || f.size() > max) return {};
     return f.read(max);
-}
-QString rootState() {
-    const QString base = qEnvironmentVariableIsEmpty("XDG_STATE_HOME")
-        ? QDir::homePath() + QStringLiteral("/.local/state") : qEnvironmentVariable("XDG_STATE_HOME");
-    return base + QStringLiteral("/centurion/");
 }
 QString human(const QJsonValue &v) {
     if (v.isNull() || v.isUndefined()) return QStringLiteral("unknown");
@@ -230,7 +228,11 @@ QWidget *capabilityPage(QWidget *parent) {
 QStringList incident(const QJsonObject &event, const QString &bootId) {
     QStringList out{QStringLiteral("HARDWARE INCIDENT TIMELINE"),
         QStringLiteral("Time proximity suggests correlation, never establishes root cause."), QString()};
-    const QString b = bootId.trimmed();
+    const QString b = bootId.trimmed().toLower();
+    const auto canonicalBoot = [](const QString &id) {
+        return QString::fromStdString(diagnostichistory::fullBoot(id.toStdString()));
+    };
+    const auto identity = canonicalBoot(b);
     const QString kind = event.value("kind").toString();
     const QString title = event.value("title").toString();
     const double ts = event.value("ts_us").toDouble();
@@ -243,6 +245,12 @@ QStringList incident(const QJsonObject &event, const QString &bootId) {
     struct Entry { qint64 time; QString source, detail; };
     QList<Entry> timeline;
     auto append = [&](qint64 time, const QString &source, const QString &detail) { if(time > 0) timeline.append({time,source,detail}); };
+    const auto appendNearest = [&](QList<Entry> &entries, qsizetype limit) {
+        std::stable_sort(entries.begin(), entries.end(), [&](const Entry &a, const Entry &b) {
+            return std::abs(a.time - when) < std::abs(b.time - when);
+        });
+        for (qsizetype i = 0; i < qMin(limit, entries.size()); ++i) timeline.append(entries.at(i));
+    };
     // Current boot kernel timestamps are monotonic-since-boot; translate only if boot IDs match.
     const QString curBoot = firstLine("/proc/sys/kernel/random/boot_id");
     if (!when && !b.isEmpty() && b == curBoot && ts > 0) {
@@ -266,25 +274,28 @@ QStringList incident(const QJsonObject &event, const QString &bootId) {
     const QStringList journals = QString::fromUtf8(readFile("/var/lib/centurion/oc-journal.jsonl", 512 * 1024)).split('\n');
     for (const QString &line : journals) {
         const QJsonObject j = QJsonDocument::fromJson(line.toUtf8()).object();
-        if (b.size()<32 || j.value("boot").toString() != b) continue;
+        if (identity.isEmpty() || canonicalBoot(j.value("boot").toString()) != identity) continue;
         const qint64 t = validTime(j.value("t").toDouble());
         if (when && t && t <= when && when - t <= 7200)
             append(t, QStringLiteral("CURVE"), QStringLiteral("%1 = %2").arg(j.value("kind").toString(), j.value("state").toString()));
     }
     const QString ring = (b == curBoot) ? QStringLiteral("/var/lib/centurion/flight.ring") : QStringLiteral("/var/lib/centurion/flight-prev.ring");
-    const QByteArray bytes = readFile(ring, 4 * 1024 * 1024);
+    const auto bytes = diagsrc::readRecord(ring, 4 * 1024 * 1024).value_or(QByteArray{});
     QList<QJsonObject> samples;
-    QString ringBoot;
-    for (const QByteArray &line : bytes.split('\n')) {
-        const QJsonObject o = QJsonDocument::fromJson(line.trimmed()).object();
-        if (o.value("boot").isString()) ringBoot = o.value("boot").toString();
-        if (o.value("s").isDouble() && o.value("t").isDouble()) samples << o;
-    }
-    if (ringBoot != b || b.size()<32) {
+    auto lines = bytes.split('\n');
+    if (!lines.isEmpty()) lines.removeLast();  // final empty or interrupted slot
+    const auto header = lines.isEmpty() ? QJsonObject{} : QJsonDocument::fromJson(lines.takeFirst().trimmed()).object();
+    if (identity.isEmpty() || canonicalBoot(header.value("boot").toString()) != identity
+        || header.value("interval").toInteger() <= 0) {
         out << QStringLiteral("No matching flight ring for this boot; no cross-boot sample mixing.");
     } else if (!when) {
         out << QStringLiteral("Event time unavailable; flight samples cannot be aligned.");
     } else {
+        for (const auto &slot : lines) {
+            const auto sample = QJsonDocument::fromJson(slot.trimmed()).object();
+            if (!sample.contains("boot") && sample.value("s").toInteger(-1) >= 0 && sample.value("t").isDouble())
+                samples.append(sample);
+        }
         std::sort(samples.begin(), samples.end(), [](const QJsonObject &a, const QJsonObject &b) { return a.value("t").toDouble() < b.value("t").toDouble(); });
         int count = 0;
         for (const auto &s : samples) {
@@ -297,25 +308,39 @@ QStringList incident(const QJsonObject &event, const QString &bootId) {
         if (!count) out << QStringLiteral("No sensor samples within ±180 seconds of the fault (sampling interval may be too long).");
     }
     // Transactions are recorded with boot IDs. Do not infer causality from a neighboring action.
-    if (when && b.size()>=32) {
-        const QString tx = QString::fromUtf8(readFile(rootState() + "scene-transactions.jsonl", 768 * 1024));
-        int n = 0;
-        for (const QString &l : tx.split('\n')) {
-            const QJsonObject rec = QJsonDocument::fromJson(l.toUtf8()).object();
+    if (when && !identity.isEmpty()) {
+        QList<Entry> transactions;
+        diagsrc::scanSavedLog(diagsrc::SavedLog::SceneTransactions, 768 * 1024, [&](const QString &line, bool) {
+            const auto rec = QJsonDocument::fromJson(line.toUtf8()).object();
             const qint64 t = validTime(rec.value("t").toDouble());
-            if (rec.value("boot").toString() != b || !t || std::abs(t - when) > 1800 || n++ >= 50) continue;
-            append(t,QStringLiteral("SCENE"), QStringLiteral("%1 · %2").arg(rec.value("scene").toString(), rec.value("outcome").isString() ? rec.value("outcome").toString() : rec.value("ok").isBool() ? (rec.value("ok").toBool() ? QStringLiteral("legacy helper success, unverified") : QStringLiteral("failure / rollback")) : QStringLiteral("unknown")));
-        }
+            if (!t || !rec.value("scene").isString()) return false;
+            if (canonicalBoot(rec.value("boot").toString()) != identity || std::abs(t - when) > 1800) return true;
+            const auto outcome = rec.value("outcome").isString() ? rec.value("outcome").toString()
+                : rec.value("ok").isBool() ? (rec.value("ok").toBool() ? QStringLiteral("legacy helper success, unverified")
+                                                                     : QStringLiteral("failure / rollback")) : QStringLiteral("unknown");
+            transactions.append({t, QStringLiteral("SCENE"), QStringLiteral("%1 · %2").arg(rec.value("scene").toString(), outcome)});
+            return true;
+        });
+        appendNearest(transactions, 50);
     }
-    // The saved health log includes a boot-id prefix for cross-reboot disambiguation.
-    if (when && !b.isEmpty()) {
-        int n = 0;
-        for (const QString &line : QString::fromUtf8(readFile(rootState() + "health.log", 8 * 1024 * 1024)).split('\n')) {
-            if (!line.contains(QStringLiteral("boot=") + b.left(8)) || line.size() < 19) continue;
-            const QDateTime t = QDateTime::fromString(line.left(19), "yyyy-MM-dd HH:mm:ss");
-            if (!t.isValid() || std::abs(t.toSecsSinceEpoch() - when) > 300 || n++ >= 12) continue;
-            append(t.toSecsSinceEpoch(), QStringLiteral("KERNEL (boot prefix only)"), line.mid(19, 180).trimmed());
-        }
+    if (when && !identity.isEmpty()) {
+        QList<Entry> healthEvents;
+        QSet<quint64> seen;
+        const auto selected = event.value("seq").toInteger(-1);
+        diagsrc::scanSavedLog(diagsrc::SavedLog::Health, 8 * 1024 * 1024, [&](const QString &line, bool) {
+            const auto record = diagsrc::parseLine(line);
+            if (!record || record->kind.isEmpty()) return false;
+            if (record->boot != identity || (selected >= 0 && record->seq == quint64(selected))) return true;
+            const auto timestamp = QDateTime::fromString(record->time, QStringLiteral("yyyy-MM-dd HH:mm:ss"));
+            if (!timestamp.isValid()) return false;
+            const auto t = timestamp.toSecsSinceEpoch();
+            if (std::abs(t - when) <= 300 && !seen.contains(record->seq)) {
+                seen.insert(record->seq);
+                healthEvents.append({t, QStringLiteral("HEALTH"), QStringLiteral("%1 · %2").arg(record->title, record->text.left(180))});
+            }
+            return true;
+        });
+        appendNearest(healthEvents, 12);
     }
     std::stable_sort(timeline.begin(), timeline.end(), [](const Entry &a,const Entry &b){return a.time<b.time;});
     if (!timeline.isEmpty()) out << QString() << QStringLiteral("CHRONOLOGICAL RECORDS (source / offset from selected event)");

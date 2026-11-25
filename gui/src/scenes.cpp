@@ -11,6 +11,7 @@
 #include "optimizetab.h"
 #include "platformprofile.h"
 #include "driftwatch.h"
+#include "diagsources.h"
 #include "privileged.h"
 #include "ryzentab.h"
 #include "userhelper.h"
@@ -1514,24 +1515,18 @@ void SceneEngine::finish() {
     lastOutcome_ = QString::fromLatin1(outcome.data(), static_cast<qsizetype>(outcome.size()));
     Q_EMIT transactionState(transactionId_, current_, {}, lastOutcome_, {});
     // Local append-only transaction history for Incident Timeline; never log request secrets or command arguments.
-    const QString stateBase = qEnvironmentVariableIsEmpty("XDG_STATE_HOME") ? QDir::homePath() + QStringLiteral("/.local/state") : qEnvironmentVariable("XDG_STATE_HOME");
-    const QString path = stateBase + QStringLiteral("/centurion/scene-transactions.jsonl");
-    QDir().mkpath(QFileInfo(path).absolutePath());
-    if (QFileInfo(path).size() > (512LL << 10)) {
-        QFile::remove(path + QStringLiteral(".1"));
-        QFile::rename(path, path + QStringLiteral(".1"));
+    QJsonObject record{{"boot", diagsrc::bootId()}, {"t", QDateTime::currentSecsSinceEpoch()}, {"scene", current_},
+                       {"previous", priorScene_}, {"ok", ok_}, {"rolled_back", false},
+                       {"transaction_id", transactionId_}, {"outcome", lastOutcome_},
+                       {"partial", !ok_ || incomplete_}, {"game_took_over", gameOwns},
+                       {"steps", QJsonArray::fromStringList(log_)}};
+    auto recordBytes = QJsonDocument(record).toJson(QJsonDocument::Compact);
+    if (recordBytes.size() > diagsrc::SceneTransactionRecordLimit) {
+        record["steps"] = QJsonArray{};
+        record["steps_truncated"] = true;
+        recordBytes = QJsonDocument(record).toJson(QJsonDocument::Compact);
     }
-    QFile tx(path);
-    if (tx.open(QIODevice::Append | QIODevice::Text)) {
-        QFile bootIdFile(QStringLiteral("/proc/sys/kernel/random/boot_id"));
-        const QString currentBootId = bootIdFile.open(QIODevice::ReadOnly) ? QString::fromUtf8(bootIdFile.readAll()).trimmed() : QString();
-        const QJsonObject record{{"boot", currentBootId}, {"t", double(QDateTime::currentSecsSinceEpoch())}, {"scene", current_},
-                                 {"previous", priorScene_}, {"ok", ok_}, {"rolled_back", false},
-                                 {"transaction_id", transactionId_}, {"outcome", lastOutcome_},
-                                 {"partial", !ok_ || incomplete_}, {"game_took_over", gameOwns},
-                                 {"steps", QJsonArray::fromStringList(log_)}};
-        tx.write(QJsonDocument(record).toJson(QJsonDocument::Compact) + '\n');
-    }
+    diagsrc::appendSavedLog(diagsrc::SavedLog::SceneTransactions, recordBytes + '\n', 512LL << 10);
     const QString outcomeReceipt = lastOutcome_;
     auto tracked = std::exchange(trackedDone_, {});
     trackedCpuLease_ = 0;

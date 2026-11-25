@@ -37,7 +37,8 @@ struct LogLine {
     QString key() const { return boot + QLatin1Char('/') + QString::number(seq); }
 };
 std::optional<LogLine> parseLine(const QString &line);
-enum class SavedLog { Health, Kernel };
+enum class SavedLog { Health, Kernel, SceneTransactions };
+constexpr qsizetype SceneTransactionRecordLimit = 64 * 1024;
 QString savedLogPath(SavedLog source);
 bool appendSavedLog(SavedLog source, const QByteArray &records, qint64 rotateAfter);
 bool clearSavedLog(SavedLog source);

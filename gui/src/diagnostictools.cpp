@@ -409,10 +409,14 @@ Report displays(const QString &root) {
             for (int i = 0; i < 128; ++i) sum += u8(raw, block * 128 + i);
             const int remainder = sum % 256;
             const QString kind = block == 0 ? tr("Base block") : e.extensions.value(block - 1, QStringLiteral("—"));
+            const auto &blockInfo = inspection.blocks.at(std::size_t(block));
+            QString status = remainder == 0 ? tr("Checksum matches") : tr("Checksum mismatch");
+            if (!blockInfo.declared) status += QStringLiteral(" · ") + tr("Block not declared");
+            if (!blockInfo.structure) status += QStringLiteral(" · ") + tr("Invalid block structure");
             blocks.add({conn, QString::number(block), kind,
                         QStringLiteral("0x%1").arg(u8(raw, block * 128 + 127), 2, 16, QLatin1Char('0')),
-                        QString::number(remainder), remainder == 0 ? tr("Checksum matches") : tr("Checksum mismatch")},
-                       remainder == 0 ? Level::Info : Level::Review);
+                        QString::number(remainder), status},
+                       blockInfo.checksum && blockInfo.structure && blockInfo.declared ? Level::Info : Level::Review);
         }
         for (const QString &timing : e.timings) modesTable.add({conn, timing});
         {

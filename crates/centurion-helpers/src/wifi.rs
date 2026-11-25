@@ -233,9 +233,16 @@ fn bitrate_mbps(value: &str) -> Option<f64> {
     (rate.is_finite() && rate >= 0.0).then_some(rate)
 }
 
+fn valid_bssid(value: &str) -> bool {
+    value.len() == 17 && value.split(':').all(|octet| {
+        octet.len() == 2 && octet.bytes().all(|byte| byte.is_ascii_hexdigit())
+    })
+}
+
 pub fn parse_link(text: &str) -> Link {
-    let mut l = Link { connected: text.trim_start().starts_with("Connected to"), ..Link::default() };
-    if let Some(b) = text.trim_start().strip_prefix("Connected to ").and_then(|t| t.split_whitespace().next()) { l.bssid = b.to_owned(); }
+    let Some(bssid) = text.trim_start().strip_prefix("Connected to ")
+        .and_then(|t| t.split_whitespace().next()).filter(|bssid| valid_bssid(bssid)) else { return Link::default(); };
+    let mut l = Link { connected: true, bssid: bssid.to_ascii_lowercase(), ..Link::default() };
     for (k, v) in fields(text) {
         match k {
             "SSID" => l.ssid = v.to_owned(),
@@ -341,7 +348,8 @@ fn security(auth: Option<&str>, wpa: bool, privacy: bool) -> &'static str {
         Some(a) if a.contains("802.1X") => "Enterprise",
         Some(a) if a.contains("SAE") && a.contains("PSK") => "WPA2/WPA3",
         Some(a) if a.contains("SAE") => "WPA3",
-        Some(_) => "WPA2",
+        Some(a) if a.contains("PSK") => "WPA2",
+        Some(_) => "Unknown (RSN)",
         None if wpa => "WPA",
         None if privacy => "WEP",
         None => "Open",
@@ -365,8 +373,9 @@ pub fn parse_scan(text: &str) -> Vec<Bss> {
         if let Some(rest) = line.strip_prefix("BSS ") {
             if let Some(r) = cur.take() { out.push(done(r)); }
             in_rsn = false;
-            let bssid = rest.split(|c: char| c == '(' || c.is_whitespace()).next().unwrap_or("").to_owned();
-            cur = Some(Raw { bss: Bss { bssid, associated: line.contains("-- associated"), ..Bss::default() }, auth: None, wpa: false, privacy: false, operation: Operation::default() });
+            let bssid = rest.split(|c: char| c == '(' || c.is_whitespace()).next().unwrap_or("");
+            if !valid_bssid(bssid) { continue; }
+            cur = Some(Raw { bss: Bss { bssid: bssid.to_ascii_lowercase(), associated: line.trim_end().ends_with("-- associated"), ..Bss::default() }, auth: None, wpa: false, privacy: false, operation: Operation::default() });
             continue;
         }
         let Some(r) = cur.as_mut() else { continue };
@@ -661,7 +670,14 @@ pub fn scan(req: &Value) -> Value {
     if adapter_stamp(&iface).as_deref() != Some(before.as_str()) { return json!({"ok": false, "iface": iface, "error": "Wireless adapter changed during scan dump"}); }
     let list = parse_scan(&text);
     let load = channel_load(&list).map(|(ch, same, overlap)| json!({"channel": ch, "same": same, "overlap": overlap}));
-    let nets: Vec<Value> = list.iter().take(64).map(|b| json!({
+    let mut visible: Vec<_> = list.iter().take(64).collect();
+    let mut associated = list.iter().enumerate().filter(|(_, bss)| bss.associated);
+    let outside_limit = associated.next().filter(|(index, _)| *index >= visible.len() && associated.next().is_none());
+    if let Some((_, network)) = outside_limit {
+        visible.pop();
+        visible.push(network);
+    }
+    let nets: Vec<Value> = visible.into_iter().map(|b| json!({
         "bssid": b.bssid, "ssid": b.ssid, "freq": b.freq, "channel": channel(b.freq), "band": band(b.freq),
         "signal_dbm": b.signal_dbm, "security": b.security, "seen_ms": b.seen_ms, "associated": b.associated,
         "seen_boottime_ms": b.seen_boottime_ms,
