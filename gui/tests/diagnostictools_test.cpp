@@ -70,13 +70,18 @@ int main(int argc, char **argv) {
     put(fwBase + "max_value", "150"); put(fwBase + "scalar_increment", "1");
     bool seenTarget = false;
     for (const auto &table : systemdiagnostics::powerLimits(root).tables) {
-        if (table.title != "Firmware Power Target Evidence") continue;
-        CHECK(table.rows.size() == 1);
-        CHECK(table.rows.first().value(2) == "140" && table.rows.first().value(3) == "120");
-        CHECK(table.rows.first().value(5) == "Reported target (not enforcement)");
-        seenTarget = true;
+        // One grouped table: no flat copy and no separate firmware table repeat the same rows.
+        CHECK(table.title == "Limits and Their Sources" && !table.parents.isEmpty());
+        for (const auto &row : table.rows) {
+            if (!row.value(1).contains("ppt_pl1_spl")) continue;
+            CHECK(!seenTarget);
+            CHECK(row.value(2) == "140" && row.value(3) == "30 … 150 (step 1)" && row.value(4) == "120");
+            CHECK(row.value(5) == "Reported target (not enforcement)");
+            seenTarget = true;
+        }
     }
     CHECK(seenTarget);
+    CHECK(systemdiagnostics::powerLimits(root).tables.size() == 1);
     QDir(root + QStringLiteral("/sys/class/firmware-attributes")).removeRecursively();
     QDir(root + QStringLiteral("/sys/bus/event_source")).removeRecursively();
 

@@ -387,14 +387,14 @@ Report powerLimits(const QString &root) {
                  "profile, cpufreq caps, RAPL, and the power source.");
     r.limits << tr("The SMU's live limits (STAPM, fast / slow PPT in effect) are not exported by the kernel; the firmware settings here are the targets it was given.")
              << tr("The NVIDIA GPU's power limit needs nvidia-smi, which wakes the GPU: see the NVIDIA tab.");
+    // One table, grouped by source. Firmware rows also carry the reported default and what the reading proves.
     Table t;
     t.title = tr("Limits and Their Sources");
-    t.headers = {tr("Source"), tr("Setting"), tr("Value"), tr("Range")};
+    t.headers = {tr("Source"), tr("Setting"), tr("Value"), tr("Range"), tr("Reported default"), tr("Evidence")};
     const QString profile = rd(root, QStringLiteral("/sys/firmware/acpi/platform_profile"));
     if (!profile.isEmpty()) t.add({tr("ACPI platform profile"), QStringLiteral("platform_profile"), profile, rd(root, QStringLiteral("/sys/firmware/acpi/platform_profile_choices"))});
-    Table fw; fw.title = tr("Firmware Power Target Evidence");
-    fw.headers = {tr("Provider"), tr("Attribute"), tr("Current target"), tr("Reported default"), tr("Reported range"), tr("Evidence"), tr("Captured at"), tr("Source path")};
-    fw.note = tr("Firmware native units unless explicitly reported. A default is metadata, not a measured stock limit. A target is not evidence of enforcement. No direct WMI commands are issued.");
+    QString fwNote;
+    int fwRows = 0;
     // Firmware power attributes (lenovo-wmi-other, asus-armoury, …): integers only, never authentication.
     for (const QString &prov : ls(root, QStringLiteral("/sys/class/firmware-attributes"))) {
         const QString base = QStringLiteral("/sys/class/firmware-attributes/") + prov + QStringLiteral("/attributes/");
@@ -405,7 +405,8 @@ Report powerLimits(const QString &root) {
                 continue;
             if (a == QStringLiteral("dgpu_enable") || a == QStringLiteral("dgpu_didvid") || a == QStringLiteral("gpu_mode")) continue;
             if (rd(root, base + a + QStringLiteral("/type")) != QStringLiteral("integer")) continue;
-            if (fw.rows.size() >= 4096) break;
+            if (fwRows >= 4096) break;
+            ++fwRows;
             const QString v = evidenceRead(root, base + a + QStringLiteral("/current_value"), 64);
             const QString mn = evidenceRead(root, base + a + QStringLiteral("/min_value"), 64), mx = evidenceRead(root, base + a + QStringLiteral("/max_value"), 64);
             const QString disp = rd(root, base + a + QStringLiteral("/display_name"), 200);
@@ -417,17 +418,16 @@ Report powerLimits(const QString &root) {
             const QString rangeText = range ? QStringLiteral("%1 … %2 (%3 %4)").arg(mn, mx, tr("step"), step) : tr("unknown");
             const bool outside = current && range && !range->contains(*current);
             const QString evidence = !current ? tr("Current target unavailable") : outside ? tr("Target outside reported range") : !range ? tr("Range unavailable") : tr("Reported target (not enforcement)");
-            t.add({tr("Firmware (%1)").arg(prov), disp.isEmpty() ? a : QStringLiteral("%1 (%2)").arg(disp, a), current ? v : tr("unreadable"), rangeText}, !current || outside ? Level::Unknown : Level::Info);
-            fw.add({prov, a, current ? v : tr("unknown"), factory ? def : tr("unknown"), rangeText, evidence,
-                    QDateTime::currentDateTimeUtc().toString(Qt::ISODateWithMs), base + a + QStringLiteral("/current_value")},
-                   !current || outside || !range ? Level::Unknown : Level::Info);
+            t.add({tr("Firmware (%1)").arg(prov), disp.isEmpty() ? a : QStringLiteral("%1 (%2)").arg(disp, a), current ? v : tr("unreadable"), rangeText,
+                   factory ? def : tr("unknown"), evidence}, !current || outside ? Level::Unknown : Level::Info);
         }
     }
     const QString profileAfter = rd(root, QStringLiteral("/sys/firmware/acpi/platform_profile"));
-    if (profile.isEmpty() || profileAfter.isEmpty() || profileAfter != profile) {
-        fw.note += QLatin1Char(' ') + tr("Platform profile unavailable or changed during capture; do not compare these targets as a single profile.");
+    if (fwRows) {
+        fwNote = tr("Firmware native units unless explicitly reported. A default is metadata, not a measured stock limit. A target is not evidence of enforcement. No direct WMI commands are issued.");
+        if (profile.isEmpty() || profileAfter.isEmpty() || profileAfter != profile)
+            fwNote += QLatin1Char(' ') + tr("Platform profile unavailable or changed during capture; do not compare these targets as a single profile.");
     }
-    if (!fw.rows.isEmpty()) r.tables << fw;
     // cpufreq: a scaling cap below the hardware maximum.
     const qint64 hwMax = rd(root, QStringLiteral("/sys/devices/system/cpu/cpu0/cpufreq/cpuinfo_max_freq")).toLongLong();
     qint64 capMin = 0;
@@ -486,18 +486,19 @@ Report powerLimits(const QString &root) {
     t.add({tr("NVIDIA Dynamic Boost"), QStringLiteral("nvidia-powerd"), powerd ? tr("running") : tr("not running"), QString()});
     if (powerd) r.add(Level::Info, tr("NVIDIA Dynamic Boost is active"),
                       tr("nvidia-powerd shifts the shared power budget between CPU and GPU: CPU limits measured under a GPU load are lower than at a CPU-only load."));
-    r.tables << t;
-    Table hierarchy; hierarchy.title = tr("Power Limit Sources");
+    Table hierarchy; hierarchy.title = t.title;
     hierarchy.headers = t.headers;
     hierarchy.note = tr("Grouped by reported source, not a causal enforcement order. Firmware attribute units are not inferred; live SMU limits may differ.");
+    if (!fwNote.isEmpty()) hierarchy.note += QLatin1Char(' ') + fwNote;
     QMap<QString, int> sourceRows;
-    for (const auto &row : t.rows) {
+    for (qsizetype i = 0; i < t.rows.size(); ++i) {
+        const QStringList &row = t.rows.at(i);
         const QString source = row.value(0);
         if (!sourceRows.contains(source)) {
             sourceRows.insert(source, int(hierarchy.rows.size()));
             hierarchy.parents << -1; hierarchy.add({source});
         }
-        hierarchy.parents << sourceRows.value(source); hierarchy.add(row);
+        hierarchy.parents << sourceRows.value(source); hierarchy.add(row, t.levels.at(i));
     }
     r.tables << hierarchy;
     if (cpus == 0 || readableCpus != cpus || (boost != QStringLiteral("0") && boost != QStringLiteral("1"))) r.add(Level::Unknown, tr("CPU cap or boost state is incomplete"));
