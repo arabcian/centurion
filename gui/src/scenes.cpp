@@ -902,7 +902,7 @@ void SceneEngine::checkGameEnd() {
     orphanPruneActive_ = true;
     Q_EMIT finished(QString(), true, {QStringLiteral("the game launcher exited without its POST hook — leaving the game scene")});
     // Ends the dead session and restores the game tuning (tune-helper prune).
-    privileged::runUntilExit(privileged::helperPath("tune-profile-helper"), QJsonObject{{"op", "prune"}}, this,
+    privileged::run(privileged::helperPath("tune-profile-helper"), QJsonObject{{"op", "prune"}}, this,
         [this, before, generation, localTransaction](const privileged::Result &) {
             orphanPruneActive_ = false;
             if (!pending_.isEmpty() && !pendingAuto_) {

@@ -30,8 +30,11 @@ class Contract(unittest.TestCase):
         self.assertNotIn('runUser(',view)
         self.assertNotIn('refreshWifiNets()',view)
         rescan=s.split('void NetPage::rescanWifi()',1)[1].split('void NetPage::blacklistNetwork',1)[0]
-        self.assertIn('rev != wifiScanRevision_ || iface != wifiIface_->currentText()',rescan)
-        self.assertIn('rev == wifiScanRevision_ && iface == wifiIface_->currentText()',rescan)
+        self.assertIn('rev != wifiAdapterRevision_ || iface != wifiIface_->currentText()',rescan)
+        self.assertIn('rev == wifiAdapterRevision_ && iface == wifiIface_->currentText()',rescan)
+        reset=s.split('void NetPage::resetWifiAdapterView()',1)[1].split('void NetPage::refreshWifi()',1)[0]
+        self.assertIn('++wifiAdapterRevision_',reset)
+        self.assertIn('++wifiScanRevision_',reset)
         self.assertIn('CLOCK_BOOTTIME',s)
     def test_channel_interval_and_adapter_contract(self):
         gui=src('netpage.cpp')
