@@ -23,7 +23,8 @@
 
 namespace {
 
-enum Section { Core, Pulse, Wp, Alsa };
+// Stream: stream.properties, written for Pulse programs (pipewire-pulse.conf.d) and native ones (client.conf.d).
+enum Section { Core, Pulse, Wp, Alsa, Stream };
 enum class Kind { Bool, Int, Float, Choice, List, Frac };
 
 struct Opt {
@@ -60,12 +61,81 @@ const Opt OPTS[] = {
     {Core, "log.level", Kind::Choice, "2", "0|1|2|3|4|5", false,
      QT_TRANSLATE_NOOP("PipewireConfig", "Log level"),
      QT_TRANSLATE_NOOP("PipewireConfig", "0 off, 1 errors, 2 warnings, 3 info, 4 debug, 5 trace. Raise it to 3 or 4 only while hunting a problem; the log is long.")},
+    {Core, "default.clock.quantum-limit", Kind::Int, "8192", "1024:65536", false,
+     QT_TRANSLATE_NOOP("PipewireConfig", "Buffer size limit"),
+     QT_TRANSLATE_NOOP("PipewireConfig", "The hard upper limit for any buffer size a program or the graph may use. Raise it (16384) only for a program that needs very large buffers; the largest buffer above must stay below it.")},
+    {Core, "default.clock.quantum-floor", Kind::Int, "4", "1:8192", false,
+     QT_TRANSLATE_NOOP("PipewireConfig", "Buffer size floor"),
+     QT_TRANSLATE_NOOP("PipewireConfig", "The hard lower limit for buffer sizes, below even the smallest buffer. Leave it unless a program asks for absurdly small buffers.")},
+    {Core, "mem.allow-mlock", Kind::Bool, "true", "", false,
+     QT_TRANSLATE_NOOP("PipewireConfig", "Lock audio buffers in memory"),
+     QT_TRANSLATE_NOOP("PipewireConfig", "Lets PipeWire lock its buffers in RAM so they are never swapped out, which avoids dropouts under memory pressure. Needs a memlock limit for the user (usually set by the distribution).")},
+    {Core, "mem.mlock-all", Kind::Bool, "false", "", false,
+     QT_TRANSLATE_NOOP("PipewireConfig", "Lock all PipeWire memory"),
+     QT_TRANSLATE_NOOP("PipewireConfig", "Locks the whole PipeWire process in RAM, not only its buffers. Helps very low-latency setups on a machine that swaps; costs some RAM.")},
+    {Core, "cpu.zero.denormals", Kind::Bool, "false", "", false,
+     QT_TRANSLATE_NOOP("PipewireConfig", "Flush denormal numbers to zero"),
+     QT_TRANSLATE_NOOP("PipewireConfig", "Treats tiny floating-point values as zero in the audio threads. Some filters and effects slow down a lot on denormals (a CPU spike and crackling as a sound fades out); this avoids it at no audible cost.")},
     {Pulse, "pulse.min.req", Kind::Frac, "", "", false,
      QT_TRANSLATE_NOOP("PipewireConfig", "Pulse clients: smallest request"),
      QT_TRANSLATE_NOOP("PipewireConfig", "Smallest request size for PulseAudio programs, written samples/rate, for example 256/48000 (5 ms). Raise it if a browser or game crackles.")},
     {Pulse, "pulse.min.quantum", Kind::Frac, "", "", false,
      QT_TRANSLATE_NOOP("PipewireConfig", "Pulse clients: smallest buffer"),
      QT_TRANSLATE_NOOP("PipewireConfig", "Smallest buffer the Pulse server asks the graph for, written samples/rate, for example 512/48000.")},
+    {Pulse, "pulse.default.req", Kind::Frac, "", "", false,
+     QT_TRANSLATE_NOOP("PipewireConfig", "Pulse clients: default request"),
+     QT_TRANSLATE_NOOP("PipewireConfig", "Request size a PulseAudio program gets when it does not ask for one, written samples/rate (built-in 960/48000, 20 ms).")},
+    {Pulse, "pulse.min.frag", Kind::Frac, "", "", false,
+     QT_TRANSLATE_NOOP("PipewireConfig", "Pulse clients: smallest fragment"),
+     QT_TRANSLATE_NOOP("PipewireConfig", "Smallest fragment for recording PulseAudio programs, written samples/rate (built-in 256/48000).")},
+    {Pulse, "pulse.default.frag", Kind::Frac, "", "", false,
+     QT_TRANSLATE_NOOP("PipewireConfig", "Pulse clients: default fragment"),
+     QT_TRANSLATE_NOOP("PipewireConfig", "Default fragment for recording PulseAudio programs, written samples/rate (built-in 96000/48000, 2 s).")},
+    {Pulse, "pulse.default.tlength", Kind::Frac, "", "", false,
+     QT_TRANSLATE_NOOP("PipewireConfig", "Pulse clients: default target length"),
+     QT_TRANSLATE_NOOP("PipewireConfig", "Default playback buffer length for PulseAudio programs, written samples/rate (built-in 96000/48000, 2 s).")},
+    {Pulse, "pulse.idle.timeout", Kind::Int, "0", "0:3600", false,
+     QT_TRANSLATE_NOOP("PipewireConfig", "Pulse clients: pause after underrun (s)"),
+     QT_TRANSLATE_NOOP("PipewireConfig", "Seconds after which a PulseAudio stream that keeps underrunning is paused, so it stops waking the device. 0 never pauses it.")},
+    {Pulse, "pulse.default.format", Kind::Choice, "F32", "F32|S16|S24|S32", false,
+     QT_TRANSLATE_NOOP("PipewireConfig", "Pulse clients: default sample format"),
+     QT_TRANSLATE_NOOP("PipewireConfig", "The sample format a PulseAudio program gets when it does not ask for one. F32 (32-bit float) is PipeWire's own internal format.")},
+    {Pulse, "pulse.allow-module-loading", Kind::Bool, "true", "", false,
+     QT_TRANSLATE_NOOP("PipewireConfig", "Pulse clients: allow loading modules"),
+     QT_TRANSLATE_NOOP("PipewireConfig", "Lets PulseAudio programs (pactl load-module, some audio tools) load PipeWire modules. Turn it off to stop programs from adding sinks or network modules.")},
+    {Stream, "resample.quality", Kind::Int, "4", "0:14", false,
+     QT_TRANSLATE_NOOP("PipewireConfig", "Resampler quality"),
+     QT_TRANSLATE_NOOP("PipewireConfig", "Quality of the sample-rate converter for streams that do not run at the device rate: 0 fastest, 14 best. 4 is the default; 10 is transparent for music at a little more CPU time.")},
+    {Stream, "node.latency", Kind::Frac, "", "", false,
+     QT_TRANSLATE_NOOP("PipewireConfig", "Default stream latency"),
+     QT_TRANSLATE_NOOP("PipewireConfig", "The buffer a stream asks for when the program does not say, written samples/rate, for example 512/48000 (about 11 ms). Raise it if games or browsers crackle.")},
+    {Stream, "channelmix.normalize", Kind::Bool, "false", "", false,
+     QT_TRANSLATE_NOOP("PipewireConfig", "Normalize when mixing channels"),
+     QT_TRANSLATE_NOOP("PipewireConfig", "Scales the volume when channels are mixed together (5.1 to stereo, for example) so the result cannot clip. Makes downmixed sound quieter.")},
+    {Stream, "channelmix.mix-lfe", Kind::Bool, "true", "", false,
+     QT_TRANSLATE_NOOP("PipewireConfig", "Mix the subwoofer channel"),
+     QT_TRANSLATE_NOOP("PipewireConfig", "Mixes the LFE (subwoofer) channel into the other channels when the output has no subwoofer.")},
+    {Stream, "channelmix.upmix", Kind::Bool, "true", "", false,
+     QT_TRANSLATE_NOOP("PipewireConfig", "Upmix stereo to more speakers"),
+     QT_TRANSLATE_NOOP("PipewireConfig", "Spreads stereo sound to surround speakers when the output has more channels than the stream.")},
+    {Stream, "channelmix.upmix-method", Kind::Choice, "psd", "psd|simple|none", false,
+     QT_TRANSLATE_NOOP("PipewireConfig", "Upmix method"),
+     QT_TRANSLATE_NOOP("PipewireConfig", "psd derives the centre and rear channels from the stereo signal; simple copies the front channels; none leaves extra speakers silent.")},
+    {Stream, "channelmix.lfe-cutoff", Kind::Int, "150", "0:1000", false,
+     QT_TRANSLATE_NOOP("PipewireConfig", "Subwoofer cut-off (Hz)"),
+     QT_TRANSLATE_NOOP("PipewireConfig", "When upmixing, frequencies below this go to the subwoofer. 0 sends no upmixed sound to it.")},
+    {Stream, "channelmix.fc-cutoff", Kind::Int, "12000", "0:24000", false,
+     QT_TRANSLATE_NOOP("PipewireConfig", "Centre channel cut-off (Hz)"),
+     QT_TRANSLATE_NOOP("PipewireConfig", "When upmixing, the upper frequency limit of what goes to the centre speaker.")},
+    {Stream, "channelmix.rear-delay", Kind::Float, "12", "0:100", false,
+     QT_TRANSLATE_NOOP("PipewireConfig", "Rear channel delay (ms)"),
+     QT_TRANSLATE_NOOP("PipewireConfig", "When upmixing, delay of the rear speakers, which makes the front sound more localized.")},
+    {Stream, "channelmix.stereo-widen", Kind::Float, "0", "0:1", false,
+     QT_TRANSLATE_NOOP("PipewireConfig", "Stereo widening"),
+     QT_TRANSLATE_NOOP("PipewireConfig", "Widens the stereo image by removing part of the centre signal from the left and right channels (0 off, 1 most).")},
+    {Stream, "dither.noise", Kind::Int, "0", "0:16", false,
+     QT_TRANSLATE_NOOP("PipewireConfig", "Dither noise (bits)"),
+     QT_TRANSLATE_NOOP("PipewireConfig", "Adds this many bits of noise when converting to a lower bit depth, which masks quantization distortion on 16-bit outputs. 0 off.")},
     {Wp, "bluetooth.autoswitch-to-headset-profile", Kind::Bool, "true", "", false,
      QT_TRANSLATE_NOOP("PipewireConfig", "Bluetooth: switch to headset mode"),
      QT_TRANSLATE_NOOP("PipewireConfig", "Switch a Bluetooth headset to its call profile (with microphone, lower sound quality) when a program records. Turn it off to keep the music profile.")},
@@ -84,19 +154,65 @@ const Opt OPTS[] = {
     {Wp, "linking.pause-playback", Kind::Bool, "true", "", false,
      QT_TRANSLATE_NOOP("PipewireConfig", "Pause players when their output disappears"),
      QT_TRANSLATE_NOOP("PipewireConfig", "Pause media players whose output device was removed.")},
+    {Wp, "bluetooth.use-persistent-storage", Kind::Bool, "true", "", false,
+     QT_TRANSLATE_NOOP("PipewireConfig", "Bluetooth: remember headset mode"),
+     QT_TRANSLATE_NOOP("PipewireConfig", "Remember whether a Bluetooth headset was in headset (call) or music mode and restore it.")},
+    {Wp, "device.restore-profile", Kind::Bool, "true", "", false,
+     QT_TRANSLATE_NOOP("PipewireConfig", "Remember device profiles"),
+     QT_TRANSLATE_NOOP("PipewireConfig", "Remember the profile chosen for each sound card (analog, HDMI, off) and restore it.")},
+    {Wp, "device.restore-routes", Kind::Bool, "true", "", false,
+     QT_TRANSLATE_NOOP("PipewireConfig", "Remember device routes and volumes"),
+     QT_TRANSLATE_NOOP("PipewireConfig", "Remember the port (speakers, headphones) and its volume for each device and restore them.")},
+    {Wp, "device.routes.default-source-volume", Kind::Float, "1", "0:1", false,
+     QT_TRANSLATE_NOOP("PipewireConfig", "Volume of a new input"),
+     QT_TRANSLATE_NOOP("PipewireConfig", "The volume (0 to 1) a microphone or other input gets the first time it is seen.")},
+    {Wp, "linking.follow-default-target", Kind::Bool, "true", "", false,
+     QT_TRANSLATE_NOOP("PipewireConfig", "Streams follow the default device"),
+     QT_TRANSLATE_NOOP("PipewireConfig", "Streams playing on the default device move with it when the default changes.")},
+    {Wp, "linking.role-based.duck-level", Kind::Float, "0.3", "0:1", false,
+     QT_TRANSLATE_NOOP("PipewireConfig", "Ducking volume"),
+     QT_TRANSLATE_NOOP("PipewireConfig", "The volume other streams drop to while a higher-priority stream (a call, a notification) plays, when role-based linking is used.")},
+    {Wp, "node.stream.restore-props", Kind::Bool, "true", "", false,
+     QT_TRANSLATE_NOOP("PipewireConfig", "Remember stream volumes"),
+     QT_TRANSLATE_NOOP("PipewireConfig", "Remember each program's volume and mute state and restore them the next time it plays.")},
+    {Wp, "node.stream.restore-target", Kind::Bool, "true", "", false,
+     QT_TRANSLATE_NOOP("PipewireConfig", "Remember stream devices"),
+     QT_TRANSLATE_NOOP("PipewireConfig", "Remember which device each program played on and send it there again.")},
+    {Wp, "node.stream.default-playback-volume", Kind::Float, "1", "0:1", false,
+     QT_TRANSLATE_NOOP("PipewireConfig", "Volume of a new program"),
+     QT_TRANSLATE_NOOP("PipewireConfig", "The volume (0 to 1) a program gets the first time it plays.")},
+    {Wp, "node.stream.default-capture-volume", Kind::Float, "1", "0:1", false,
+     QT_TRANSLATE_NOOP("PipewireConfig", "Recording volume of a new program"),
+     QT_TRANSLATE_NOOP("PipewireConfig", "The volume (0 to 1) a program gets the first time it records.")},
+    {Wp, "node.restore-default-targets", Kind::Bool, "true", "", false,
+     QT_TRANSLATE_NOOP("PipewireConfig", "Remember the default devices"),
+     QT_TRANSLATE_NOOP("PipewireConfig", "Remember the default output and input and restore them.")},
+    {Wp, "node.features.audio.mono", Kind::Bool, "false", "", false,
+     QT_TRANSLATE_NOOP("PipewireConfig", "Mono output"),
+     QT_TRANSLATE_NOOP("PipewireConfig", "Play everything in mono on every output: for one-sided hearing, or a single speaker.")},
+    {Wp, "monitor.alsa.autodetect-hdmi-channels", Kind::Bool, "false", "", false,
+     QT_TRANSLATE_NOOP("PipewireConfig", "Detect HDMI channel layout"),
+     QT_TRANSLATE_NOOP("PipewireConfig", "Read the channel count and positions an HDMI display or receiver supports (experimental).")},
     {Alsa, "session.suspend-timeout-seconds", Kind::Int, "5", "0:3600", false,
      QT_TRANSLATE_NOOP("PipewireConfig", "Idle suspend delay (s)"),
      QT_TRANSLATE_NOOP("PipewireConfig", "Seconds an idle sound device waits before it is suspended. 0 keeps it open: it ends the pop or the cut-off first second some speakers and DACs give after silence, and costs a little power.")},
     {Alsa, "api.alsa.headroom", Kind::Int, "0", "0:65536", false,
      QT_TRANSLATE_NOOP("PipewireConfig", "Device buffer headroom (samples)"),
      QT_TRANSLATE_NOOP("PipewireConfig", "Extra samples of safety margin in the sound device's buffer. It can reduce crackling on some hardware, and adds that much delay.")},
+    {Alsa, "api.alsa.period-size", Kind::Int, "", "32:8192", false,
+     QT_TRANSLATE_NOOP("PipewireConfig", "Device period size (samples)"),
+     QT_TRANSLATE_NOOP("PipewireConfig", "The period the sound device interrupts at. Larger values (1024) can stop crackling on troublesome hardware, at more latency; the driver chooses when unset.")},
+    {Alsa, "api.alsa.disable-batch", Kind::Bool, "false", "", false,
+     QT_TRANSLATE_NOOP("PipewireConfig", "Ignore batch mode"),
+     QT_TRANSLATE_NOOP("PipewireConfig", "Some devices (many USB DACs) report batch mode, which adds a period of latency. Ignoring it lowers latency on devices that handle it; turn it back off if they crackle.")},
 };
 constexpr int NOPTS = int(sizeof(OPTS) / sizeof(OPTS[0]));
 
 QString tx(const char *s) { return QCoreApplication::translate("PipewireConfig", s); }
 
 QString pathOf(Section s) {
-    static const char *const DIRS[] = {"pipewire/pipewire.conf.d", "pipewire/pipewire-pulse.conf.d", "wireplumber/wireplumber.conf.d", "wireplumber/wireplumber.conf.d"};
+    static const char *const DIRS[] = {"pipewire/pipewire.conf.d", "pipewire/pipewire-pulse.conf.d", "wireplumber/wireplumber.conf.d",
+                                       "wireplumber/wireplumber.conf.d", "pipewire/client.conf.d"};
     return QStandardPaths::writableLocation(QStandardPaths::GenericConfigLocation) + QLatin1Char('/') + QLatin1String(DIRS[s]) + QStringLiteral("/50-centurion.conf");
 }
 
@@ -109,7 +225,7 @@ QString block(Section s, const QStringList &lines) {
         for (const QString &l : lines) out += QStringLiteral("        ") + l + QLatin1Char('\n');
         return out + QStringLiteral("      }\n    }\n  }\n]\n");
     }
-    static const char *const OPEN[] = {"context.properties = {", "pulse.properties = {", "wireplumber.settings = {"};
+    static const char *const OPEN[] = {"context.properties = {", "pulse.properties = {", "wireplumber.settings = {", "", "stream.properties = {"};
     out = QLatin1String(OPEN[s]) + QLatin1Char('\n');
     for (const QString &l : lines) out += QStringLiteral("    ") + l + QLatin1Char('\n');
     return out + QStringLiteral("}\n");
@@ -249,9 +365,10 @@ PipewireConfigDialog::PipewireConfigDialog(QWidget *parent) : QDialog(parent) {
 }
 
 void PipewireConfigDialog::load() {
-    static const char *const WHERE[] = {"pipewire.conf", "pipewire-pulse.conf", "wireplumber settings", "wireplumber ALSA rule"};
-    QString text[4];
-    for (int s = 0; s < 4; ++s) {
+    static const char *const WHERE[] = {"pipewire.conf", "pipewire-pulse.conf", "wireplumber settings", "wireplumber ALSA rule",
+                                        "stream properties (Pulse and native programs)"};
+    QString text[5];
+    for (int s = 0; s < 5; ++s) {
         QFile f(pathOf(Section(s)));
         if (f.open(QIODevice::ReadOnly)) text[s] = QString::fromUtf8(f.read(1 << 20));
     }
@@ -285,8 +402,8 @@ void PipewireConfigDialog::load() {
 }
 
 void PipewireConfigDialog::save() {
-    QStringList lines[4];
-    int quantum[3] = {32, 1024, 2048};  // min, default, max: the order PipeWire requires
+    QStringList lines[5];
+    int quantum[4] = {32, 1024, 2048, 8192};  // min, default, max, limit: the order PipeWire requires
     for (int i = 0; i < NOPTS; ++i) {
         const Opt &o = OPTS[i];
         const QWidget *w = table_->cellWidget(i, 2);
@@ -303,15 +420,21 @@ void PipewireConfigDialog::save() {
         if (k == QLatin1String("default.clock.min-quantum")) quantum[0] = val.toInt();
         else if (k == QLatin1String("default.clock.quantum")) quantum[1] = val.toInt();
         else if (k == QLatin1String("default.clock.max-quantum")) quantum[2] = val.toInt();
+        else if (k == QLatin1String("default.clock.quantum-limit")) quantum[3] = val.toInt();
+    }
+    if (quantum[2] > quantum[3]) {
+        status_->setText(tr("The largest buffer (%1) must not be above the buffer size limit (%2).").arg(quantum[2]).arg(quantum[3]));
+        return;
     }
     if (quantum[0] > quantum[1] || quantum[1] > quantum[2]) {
         status_->setText(tr("The buffer sizes must satisfy: smallest ≤ buffer size ≤ largest (now %1, %2, %3).").arg(quantum[0]).arg(quantum[1]).arg(quantum[2]));
         return;
     }
     const QString wp = block(Wp, lines[Wp]) + block(Alsa, lines[Alsa]);
-    const QString texts[3] = {block(Core, lines[Core]), block(Pulse, lines[Pulse]), wp};
-    const Section files[3] = {Core, Pulse, Wp};
-    for (int i = 0; i < 3; ++i) {
+    // Stream properties go to both servers' clients: Pulse programs (pipewire-pulse) and native PipeWire programs.
+    const QString texts[4] = {block(Core, lines[Core]), block(Pulse, lines[Pulse]) + block(Stream, lines[Stream]), wp, block(Stream, lines[Stream])};
+    const Section files[4] = {Core, Pulse, Wp, Stream};
+    for (int i = 0; i < 4; ++i) {
         const QString err = writeFile(pathOf(files[i]), texts[i].isEmpty() ? QString() : QString::fromUtf8(HEADER) + texts[i]);
         if (!err.isEmpty()) { status_->setText(tr("%1: %2").arg(pathOf(files[i]), err)); return; }
     }
@@ -319,7 +442,7 @@ void PipewireConfigDialog::save() {
 }
 
 void PipewireConfigDialog::removeAll() {
-    for (Section s : {Core, Pulse, Wp}) {
+    for (Section s : {Core, Pulse, Wp, Stream}) {
         const QString err = writeFile(pathOf(s), QString());
         if (!err.isEmpty()) { status_->setText(tr("%1: %2").arg(pathOf(s), err)); return; }
     }

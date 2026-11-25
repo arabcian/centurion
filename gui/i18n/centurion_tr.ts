@@ -25281,6 +25281,10 @@ Satırlar sıralamadan bağımsız karşılaştırılır; değişen satırlar si
             <source>%1: %2</source>
             <translation>%1: %2</translation>
         </message>
+        <message>
+            <source>The largest buffer (%1) must not be above the buffer size limit (%2).</source>
+            <translation>En büyük tampon (%1), tampon boyutu sınırının (%2) üstünde olamaz.</translation>
+        </message>
     </context>
     <context>
         <name>sysadmin</name>
@@ -27079,6 +27083,310 @@ Satırlar sıralamadan bağımsız karşılaştırılır; değişen satırlar si
         <message>
             <source>Extra samples of safety margin in the sound device&apos;s buffer. It can reduce crackling on some hardware, and adds that much delay.</source>
             <translation>Ses aygıtının arabelleğinde fazladan güvenlik payı örnekleri. Bazı donanımlarda cızırtıyı azaltabilir ve o kadar gecikme ekler.</translation>
+        </message>
+        <message>
+            <source>Buffer size limit</source>
+            <translation>Tampon boyutu sınırı</translation>
+        </message>
+        <message>
+            <source>The hard upper limit for any buffer size a program or the graph may use. Raise it (16384) only for a program that needs very large buffers; the largest buffer above must stay below it.</source>
+            <translation>Bir programın ya da ses grafiğinin kullanabileceği tampon boyutunun kesin üst sınırı. Yalnızca çok büyük tampon isteyen bir program için yükseltin (16384); yukarıdaki en büyük tampon bunun altında kalmalıdır.</translation>
+        </message>
+        <message>
+            <source>Buffer size floor</source>
+            <translation>Tampon boyutu tabanı</translation>
+        </message>
+        <message>
+            <source>The hard lower limit for buffer sizes, below even the smallest buffer. Leave it unless a program asks for absurdly small buffers.</source>
+            <translation>Tampon boyutlarının, en küçük tamponun bile altındaki kesin alt sınırı. Bir program saçma derecede küçük tampon istemiyorsa dokunmayın.</translation>
+        </message>
+        <message>
+            <source>Lock audio buffers in memory</source>
+            <translation>Ses tamponlarını bellekte kilitle</translation>
+        </message>
+        <message>
+            <source>Lets PipeWire lock its buffers in RAM so they are never swapped out, which avoids dropouts under memory pressure. Needs a memlock limit for the user (usually set by the distribution).</source>
+            <translation>PipeWire'ın tamponlarını RAM'de kilitlemesine izin verir; böylece hiç takasa yazılmazlar ve bellek baskısında kesinti olmaz. Kullanıcı için bir memlock sınırı gerekir (genellikle dağıtım ayarlar).</translation>
+        </message>
+        <message>
+            <source>Lock all PipeWire memory</source>
+            <translation>Tüm PipeWire belleğini kilitle</translation>
+        </message>
+        <message>
+            <source>Locks the whole PipeWire process in RAM, not only its buffers. Helps very low-latency setups on a machine that swaps; costs some RAM.</source>
+            <translation>Yalnızca tamponları değil, tüm PipeWire sürecini RAM'de kilitler. Takas kullanan bir makinede çok düşük gecikmeli kurulumlara yardımcı olur; biraz RAM'e mal olur.</translation>
+        </message>
+        <message>
+            <source>Flush denormal numbers to zero</source>
+            <translation>Alt normal sayıları sıfıra yuvarla</translation>
+        </message>
+        <message>
+            <source>Treats tiny floating-point values as zero in the audio threads. Some filters and effects slow down a lot on denormals (a CPU spike and crackling as a sound fades out); this avoids it at no audible cost.</source>
+            <translation>Ses iş parçacıklarında çok küçük kayan noktalı değerleri sıfır sayar. Bazı filtre ve efektler alt normal sayılarda çok yavaşlar (ses sönerken CPU sıçraması ve cızırtı); bu, duyulur bir bedeli olmadan bunu önler.</translation>
+        </message>
+        <message>
+            <source>Pulse clients: default request</source>
+            <translation>Pulse istemcileri: varsayılan istek</translation>
+        </message>
+        <message>
+            <source>Request size a PulseAudio program gets when it does not ask for one, written samples/rate (built-in 960/48000, 20 ms).</source>
+            <translation>Bir PulseAudio programı istemediğinde aldığı istek boyutu, örnek/hız biçiminde (yerleşik 960/48000, 20 ms).</translation>
+        </message>
+        <message>
+            <source>Pulse clients: smallest fragment</source>
+            <translation>Pulse istemcileri: en küçük parça</translation>
+        </message>
+        <message>
+            <source>Smallest fragment for recording PulseAudio programs, written samples/rate (built-in 256/48000).</source>
+            <translation>Kayıt yapan PulseAudio programları için en küçük parça, örnek/hız biçiminde (yerleşik 256/48000).</translation>
+        </message>
+        <message>
+            <source>Pulse clients: default fragment</source>
+            <translation>Pulse istemcileri: varsayılan parça</translation>
+        </message>
+        <message>
+            <source>Default fragment for recording PulseAudio programs, written samples/rate (built-in 96000/48000, 2 s).</source>
+            <translation>Kayıt yapan PulseAudio programları için varsayılan parça, örnek/hız biçiminde (yerleşik 96000/48000, 2 sn).</translation>
+        </message>
+        <message>
+            <source>Pulse clients: default target length</source>
+            <translation>Pulse istemcileri: varsayılan hedef uzunluk</translation>
+        </message>
+        <message>
+            <source>Default playback buffer length for PulseAudio programs, written samples/rate (built-in 96000/48000, 2 s).</source>
+            <translation>PulseAudio programları için varsayılan çalma tamponu uzunluğu, örnek/hız biçiminde (yerleşik 96000/48000, 2 sn).</translation>
+        </message>
+        <message>
+            <source>Pulse clients: pause after underrun (s)</source>
+            <translation>Pulse istemcileri: boşalmadan sonra duraklat (sn)</translation>
+        </message>
+        <message>
+            <source>Seconds after which a PulseAudio stream that keeps underrunning is paused, so it stops waking the device. 0 never pauses it.</source>
+            <translation>Sürekli boşalan bir PulseAudio akışının kaç saniye sonra duraklatılacağı; böylece aygıtı uyandırmayı bırakır. 0 hiç duraklatmaz.</translation>
+        </message>
+        <message>
+            <source>Pulse clients: default sample format</source>
+            <translation>Pulse istemcileri: varsayılan örnek biçimi</translation>
+        </message>
+        <message>
+            <source>The sample format a PulseAudio program gets when it does not ask for one. F32 (32-bit float) is PipeWire's own internal format.</source>
+            <translation>Bir PulseAudio programı istemediğinde aldığı örnek biçimi. F32 (32 bit kayan nokta), PipeWire'ın kendi iç biçimidir.</translation>
+        </message>
+        <message>
+            <source>Pulse clients: allow loading modules</source>
+            <translation>Pulse istemcileri: modül yüklemeye izin ver</translation>
+        </message>
+        <message>
+            <source>Lets PulseAudio programs (pactl load-module, some audio tools) load PipeWire modules. Turn it off to stop programs from adding sinks or network modules.</source>
+            <translation>PulseAudio programlarının (pactl load-module, bazı ses araçları) PipeWire modülleri yüklemesine izin verir. Programların çıkış ya da ağ modülü eklemesini engellemek için kapatın.</translation>
+        </message>
+        <message>
+            <source>Resampler quality</source>
+            <translation>Yeniden örnekleyici kalitesi</translation>
+        </message>
+        <message>
+            <source>Quality of the sample-rate converter for streams that do not run at the device rate: 0 fastest, 14 best. 4 is the default; 10 is transparent for music at a little more CPU time.</source>
+            <translation>Aygıt hızında çalışmayan akışlar için örnekleme hızı dönüştürücüsünün kalitesi: 0 en hızlı, 14 en iyi. 4 varsayılandır; 10, biraz daha CPU zamanıyla müzik için şeffaftır.</translation>
+        </message>
+        <message>
+            <source>Default stream latency</source>
+            <translation>Varsayılan akış gecikmesi</translation>
+        </message>
+        <message>
+            <source>The buffer a stream asks for when the program does not say, written samples/rate, for example 512/48000 (about 11 ms). Raise it if games or browsers crackle.</source>
+            <translation>Program belirtmediğinde bir akışın istediği tampon, örnek/hız biçiminde; örneğin 512/48000 (yaklaşık 11 ms). Oyunlar ya da tarayıcılar cızırdıyorsa yükseltin.</translation>
+        </message>
+        <message>
+            <source>Normalize when mixing channels</source>
+            <translation>Kanallar karıştırılırken normalleştir</translation>
+        </message>
+        <message>
+            <source>Scales the volume when channels are mixed together (5.1 to stereo, for example) so the result cannot clip. Makes downmixed sound quieter.</source>
+            <translation>Kanallar birlikte karıştırılırken (örneğin 5.1'den stereoya) sonuç kırpılmasın diye ses düzeyini ölçekler. Aşağı karıştırılan sesi kısar.</translation>
+        </message>
+        <message>
+            <source>Mix the subwoofer channel</source>
+            <translation>Subwoofer kanalını karıştır</translation>
+        </message>
+        <message>
+            <source>Mixes the LFE (subwoofer) channel into the other channels when the output has no subwoofer.</source>
+            <translation>Çıkışta subwoofer yoksa LFE (subwoofer) kanalını diğer kanallara karıştırır.</translation>
+        </message>
+        <message>
+            <source>Upmix stereo to more speakers</source>
+            <translation>Stereoyu daha fazla hoparlöre yay</translation>
+        </message>
+        <message>
+            <source>Spreads stereo sound to surround speakers when the output has more channels than the stream.</source>
+            <translation>Çıkışta akıştan daha fazla kanal varsa stereo sesi çevre hoparlörlerine yayar.</translation>
+        </message>
+        <message>
+            <source>Upmix method</source>
+            <translation>Yukarı karıştırma yöntemi</translation>
+        </message>
+        <message>
+            <source>psd derives the centre and rear channels from the stereo signal; simple copies the front channels; none leaves extra speakers silent.</source>
+            <translation>psd merkez ve arka kanalları stereo sinyalden türetir; simple ön kanalları kopyalar; none fazladan hoparlörleri sessiz bırakır.</translation>
+        </message>
+        <message>
+            <source>Subwoofer cut-off (Hz)</source>
+            <translation>Subwoofer kesim frekansı (Hz)</translation>
+        </message>
+        <message>
+            <source>When upmixing, frequencies below this go to the subwoofer. 0 sends no upmixed sound to it.</source>
+            <translation>Yukarı karıştırırken bunun altındaki frekanslar subwoofer'a gider. 0, ona hiç ses göndermez.</translation>
+        </message>
+        <message>
+            <source>Centre channel cut-off (Hz)</source>
+            <translation>Merkez kanal kesim frekansı (Hz)</translation>
+        </message>
+        <message>
+            <source>When upmixing, the upper frequency limit of what goes to the centre speaker.</source>
+            <translation>Yukarı karıştırırken merkez hoparlöre gidenin üst frekans sınırı.</translation>
+        </message>
+        <message>
+            <source>Rear channel delay (ms)</source>
+            <translation>Arka kanal gecikmesi (ms)</translation>
+        </message>
+        <message>
+            <source>When upmixing, delay of the rear speakers, which makes the front sound more localized.</source>
+            <translation>Yukarı karıştırırken arka hoparlörlerin gecikmesi; öndeki sesin yönünü daha belirgin kılar.</translation>
+        </message>
+        <message>
+            <source>Stereo widening</source>
+            <translation>Stereo genişletme</translation>
+        </message>
+        <message>
+            <source>Widens the stereo image by removing part of the centre signal from the left and right channels (0 off, 1 most).</source>
+            <translation>Merkez sinyalin bir kısmını sol ve sağ kanallardan çıkararak stereo görüntüyü genişletir (0 kapalı, 1 en fazla).</translation>
+        </message>
+        <message>
+            <source>Dither noise (bits)</source>
+            <translation>Titreşim gürültüsü (bit)</translation>
+        </message>
+        <message>
+            <source>Adds this many bits of noise when converting to a lower bit depth, which masks quantization distortion on 16-bit outputs. 0 off.</source>
+            <translation>Daha düşük bit derinliğine dönüştürürken bu kadar bitlik gürültü ekler; 16 bit çıkışlarda niceleme bozulmasını maskeler. 0 kapalı.</translation>
+        </message>
+        <message>
+            <source>Bluetooth: remember headset mode</source>
+            <translation>Bluetooth: kulaklık modunu hatırla</translation>
+        </message>
+        <message>
+            <source>Remember whether a Bluetooth headset was in headset (call) or music mode and restore it.</source>
+            <translation>Bir Bluetooth kulaklığın kulaklık (arama) ya da müzik modunda olduğunu hatırlar ve geri yükler.</translation>
+        </message>
+        <message>
+            <source>Remember device profiles</source>
+            <translation>Aygıt profillerini hatırla</translation>
+        </message>
+        <message>
+            <source>Remember the profile chosen for each sound card (analog, HDMI, off) and restore it.</source>
+            <translation>Her ses kartı için seçilen profili (analog, HDMI, kapalı) hatırlar ve geri yükler.</translation>
+        </message>
+        <message>
+            <source>Remember device routes and volumes</source>
+            <translation>Aygıt yollarını ve ses düzeylerini hatırla</translation>
+        </message>
+        <message>
+            <source>Remember the port (speakers, headphones) and its volume for each device and restore them.</source>
+            <translation>Her aygıt için bağlantı noktasını (hoparlör, kulaklık) ve ses düzeyini hatırlar ve geri yükler.</translation>
+        </message>
+        <message>
+            <source>Volume of a new input</source>
+            <translation>Yeni bir girişin ses düzeyi</translation>
+        </message>
+        <message>
+            <source>The volume (0 to 1) a microphone or other input gets the first time it is seen.</source>
+            <translation>Bir mikrofonun ya da başka bir girişin ilk görüldüğünde aldığı ses düzeyi (0 ile 1 arası).</translation>
+        </message>
+        <message>
+            <source>Streams follow the default device</source>
+            <translation>Akışlar varsayılan aygıtı izlesin</translation>
+        </message>
+        <message>
+            <source>Streams playing on the default device move with it when the default changes.</source>
+            <translation>Varsayılan aygıtta çalan akışlar, varsayılan değiştiğinde onunla birlikte taşınır.</translation>
+        </message>
+        <message>
+            <source>Ducking volume</source>
+            <translation>Kısma ses düzeyi</translation>
+        </message>
+        <message>
+            <source>The volume other streams drop to while a higher-priority stream (a call, a notification) plays, when role-based linking is used.</source>
+            <translation>Rol tabanlı bağlama kullanılırken, daha öncelikli bir akış (bir arama, bir bildirim) çalarken diğer akışların düştüğü ses düzeyi.</translation>
+        </message>
+        <message>
+            <source>Remember stream volumes</source>
+            <translation>Akış ses düzeylerini hatırla</translation>
+        </message>
+        <message>
+            <source>Remember each program's volume and mute state and restore them the next time it plays.</source>
+            <translation>Her programın ses düzeyini ve sessiz durumunu hatırlar, bir sonraki çalışında geri yükler.</translation>
+        </message>
+        <message>
+            <source>Remember stream devices</source>
+            <translation>Akış aygıtlarını hatırla</translation>
+        </message>
+        <message>
+            <source>Remember which device each program played on and send it there again.</source>
+            <translation>Her programın hangi aygıtta çaldığını hatırlar ve onu yine oraya gönderir.</translation>
+        </message>
+        <message>
+            <source>Volume of a new program</source>
+            <translation>Yeni bir programın ses düzeyi</translation>
+        </message>
+        <message>
+            <source>The volume (0 to 1) a program gets the first time it plays.</source>
+            <translation>Bir programın ilk çalışında aldığı ses düzeyi (0 ile 1 arası).</translation>
+        </message>
+        <message>
+            <source>Recording volume of a new program</source>
+            <translation>Yeni bir programın kayıt ses düzeyi</translation>
+        </message>
+        <message>
+            <source>The volume (0 to 1) a program gets the first time it records.</source>
+            <translation>Bir programın ilk kayıt yaptığında aldığı ses düzeyi (0 ile 1 arası).</translation>
+        </message>
+        <message>
+            <source>Remember the default devices</source>
+            <translation>Varsayılan aygıtları hatırla</translation>
+        </message>
+        <message>
+            <source>Remember the default output and input and restore them.</source>
+            <translation>Varsayılan çıkışı ve girişi hatırlar ve geri yükler.</translation>
+        </message>
+        <message>
+            <source>Mono output</source>
+            <translation>Mono çıkış</translation>
+        </message>
+        <message>
+            <source>Play everything in mono on every output: for one-sided hearing, or a single speaker.</source>
+            <translation>Her şeyi her çıkışta mono çalar: tek taraflı işitme için ya da tek bir hoparlör için.</translation>
+        </message>
+        <message>
+            <source>Detect HDMI channel layout</source>
+            <translation>HDMI kanal düzenini algıla</translation>
+        </message>
+        <message>
+            <source>Read the channel count and positions an HDMI display or receiver supports (experimental).</source>
+            <translation>Bir HDMI ekranın ya da alıcının desteklediği kanal sayısını ve konumlarını okur (deneysel).</translation>
+        </message>
+        <message>
+            <source>Device period size (samples)</source>
+            <translation>Aygıt periyot boyutu (örnek)</translation>
+        </message>
+        <message>
+            <source>The period the sound device interrupts at. Larger values (1024) can stop crackling on troublesome hardware, at more latency; the driver chooses when unset.</source>
+            <translation>Ses aygıtının kesme ürettiği periyot. Daha büyük değerler (1024) sorunlu donanımda cızırtıyı durdurabilir ama gecikmeyi artırır; ayarlanmadığında sürücü seçer.</translation>
+        </message>
+        <message>
+            <source>Ignore batch mode</source>
+            <translation>Toplu (batch) modu yok say</translation>
+        </message>
+        <message>
+            <source>Some devices (many USB DACs) report batch mode, which adds a period of latency. Ignoring it lowers latency on devices that handle it; turn it back off if they crackle.</source>
+            <translation>Bazı aygıtlar (birçok USB DAC) toplu mod bildirir; bu bir periyotluk gecikme ekler. Yok saymak, bunu kaldırabilen aygıtlarda gecikmeyi düşürür; cızırdarlarsa geri kapatın.</translation>
         </message>
     </context>
     <context>
