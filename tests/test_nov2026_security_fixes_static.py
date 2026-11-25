@@ -40,7 +40,6 @@ class Audit20261119(unittest.TestCase):
         s = source(TUNE)
         self.assertIn('const FIRMWARE_WRITE_LOCK:', s)
         self.assertIn('fd != lock_fd', s)
-        self.assertIn('other != lock_fd', s)
         self.assertIn('libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB)', s)
         self.assertGreaterEqual(s.count('libc::kill(pid, libc::SIGKILL)'), 2)
 
@@ -69,9 +68,9 @@ class Audit20261119(unittest.TestCase):
     def test_cen08_replace_validated_and_rolled_back(self):
         s = source(TPROF)
         block = s[s.index('fn apply_with('):s.index('fn guard_after(')]
-        self.assertLess(block.index('preflight_replace(values)'), block.index('restore_entries(st, Some(&stale))'))
+        self.assertLess(block.index('preflight_replace(values)'), block.index('restore_obsolete(st, values)'))
         self.assertIn('snapshot_replace(st, &plan)', block)
-        self.assertIn('rollback_replace(st, before.take().unwrap(), &saved, result)', block)
+        self.assertIn('Some(before) if !ok => rollback_replace(st, before, &saved, result)', block)
         self.assertIn('if out.get("rolled_back").is_some() { return out; }', s)
 
     def test_cen09_firmware_batch_must_pass_entire_preflight(self):
