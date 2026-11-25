@@ -97,6 +97,7 @@ protected:
 private:
     QRectF plotRect() const;
     int columnAt(const QPointF &p) const;
+    void updateAccessibleRange();
 
     QVector<Day> days_;
     qsizetype begin_=0,end_=0;

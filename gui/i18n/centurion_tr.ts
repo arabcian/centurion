@@ -1574,6 +1574,10 @@ Bir adım geri alınamadı; "Lenovo logosuna dön" varsayılanı geri getirir.</
     <context>
         <name>HealthTab</name>
         <message>
+            <source>Some saved history is outside the scan or display limits, or could not be read.</source>
+            <translation>Bazı geçmiş kayıtları tarama veya gösterim sınırının dışında kaldı ya da okunamadı.</translation>
+        </message>
+        <message>
             <location filename="work/gui/src/healthtab.cpp" line="106"/>
             <source>Monitor</source>
             <translation>İzleme</translation>
@@ -4712,9 +4716,9 @@ Daemon çalışıyor olmalı; açmak conntrack bayt sayaçlarını da açar.</tr
             <translation>Bağlantı sağlıklı görünüyor.</translation>
         </message>
         <message numerus="yes">
-            <source>The Wi-Fi firmware crashed and restarted %n time(s) since boot (Health → Monitor).</source>
+            <source>%n Wi-Fi firmware event(s) from this boot found in saved logs (Health → Monitor).</source>
             <translation>
-                <numerusform>Wi-Fi yazılımı açılıştan beri %n kez çöküp yeniden başladı (Health → Monitor).</numerusform>
+                <numerusform>Kayıtlı günlüklerde bu açılışa ait %n Wi-Fi aygıt yazılımı olayı bulundu (Sağlık → İzleyici).</numerusform>
             </translation>
         </message>
         <message>
@@ -18838,6 +18842,14 @@ Günlük okunamıyor, bu yüzden onu tutmak hiçbir şeyi korumaz ve yalnızca b
     </context>
     <context>
         <name>diag</name>
+        <message>
+            <source>The requested EDID bytes are missing or invalid.</source>
+            <translation>İstenen EDID baytları eksik veya geçersiz.</translation>
+        </message>
+        <message>
+            <source>Some connector captures contain invalid byte rows and were omitted.</source>
+            <translation>Geçersiz bayt satırları içeren bağlantı noktası kayıtları gösterilmedi.</translation>
+        </message>
         <message>
             <source>Needs attention</source>
             <translation>İlgilenilmeli</translation>

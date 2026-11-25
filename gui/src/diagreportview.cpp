@@ -482,21 +482,32 @@ void inspectEdid(QWidget *parent, const diag::Table &bytes, const diag::Table &f
                  const QString &connector, int selectedOffset) {
     auto tr = [](const char *s) { return QCoreApplication::translate("diag", s); };
     QMap<QString, QByteArray> captures;
+    QSet<QString> invalidConnectors;
     for (const auto &row : bytes.rows) {
+        const QString name = row.value(0);
+        if (invalidConnectors.contains(name)) continue;
         bool ok = false; const auto offset = row.value(2).toInt(&ok,16);
-        auto &capture = captures[row.value(0)];
-        if (!ok || offset != capture.size() || offset < 0 || offset >= 4096) return;
+        auto &capture = captures[name];
         const QByteArray hex = row.value(3).toLatin1().toLower();
         const auto chunk = QByteArray::fromHex(hex);
-        if (chunk.isEmpty() || chunk.size() > 16 || offset + chunk.size() > 4096 || chunk.toHex(' ') != hex) return;
+        if (name.isEmpty() || !ok || offset != capture.size() || offset < 0 || offset >= 4096
+            || chunk.isEmpty() || chunk.size() > 16 || offset + chunk.size() > 4096 || chunk.toHex(' ') != hex) {
+            captures.remove(name);
+            invalidConnectors.insert(name);
+            continue;
+        }
         capture.append(chunk);
     }
-    if (captures.isEmpty()) return;
-    if (!connector.isEmpty() && (!captures.contains(connector)
-        || selectedOffset < 0 || selectedOffset >= captures.value(connector).size())) return;
+    if (captures.isEmpty() || (!connector.isEmpty() && (!captures.contains(connector)
+        || selectedOffset < 0 || selectedOffset >= captures.value(connector).size()))) {
+        QMessageBox::information(parent, tr("EDID Byte Inspector"), tr("The requested EDID bytes are missing or invalid."));
+        return;
+    }
     QDialog dlg(parent); dlg.setWindowTitle(tr("EDID Byte Inspector")); dlg.resize(860, 720);
     auto *layout = new QVBoxLayout(&dlg);
     layout->addWidget(text(tr("Captured bytes only. The connector may have changed since the report was collected.")));
+    if (!invalidConnectors.isEmpty())
+        layout->addWidget(text(tr("Some connector captures contain invalid byte rows and were omitted.")));
     auto *selector = new QComboBox; selector->addItems(captures.keys()); layout->addWidget(selector);
     auto *summary = text(QString()); layout->addWidget(summary);
     auto *plot = new EdidTimingPlot; layout->addWidget(plot);

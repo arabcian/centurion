@@ -1594,6 +1594,7 @@ void HealthTab::loadHistoryDay() {
         if (list_->indexOfTopLevelItem(it) >= 0) delete list_->takeTopLevelItem(list_->indexOfTopLevelItem(it));
     }
     historyRows_.clear();
+    dayHistoryLimited_ = false;
     if (dayFilter_.isEmpty()) return;
     // health.log is bounded and rotated; a selected historical day may have
     // fallen out of retention. Never claim that an absent row means no event.
@@ -1608,9 +1609,13 @@ void HealthTab::loadHistoryDay() {
             seen.insert(boot + QLatin1Char('/') + QString::number(seq));
     }
     const auto tail = diagsrc::savedLog(diagsrc::SavedLog::Health, MAX_ROWS, LOG_MAX_BYTES, dayFilter_);
+    dayHistoryLimited_ = tail.omittedLines > 0 || std::any_of(tail.files.cbegin(), tail.files.cend(), [](const auto &file) {
+        return file.omittedBytes > 0 || file.rejectedLines > 0 || file.incompleteTail
+            || file.state == diagsrc::LogFileState::Unreadable;
+    });
     for (auto it = tail.lines.crbegin(); it != tail.lines.crend(); ++it) {
         const auto recordedAt = QDateTime::fromString(it->time, QStringLiteral("yyyy-MM-dd HH:mm:ss"));
-        if (!recordedAt.isValid()) continue;
+        if (!recordedAt.isValid()) { dayHistoryLimited_ = true; continue; }
         if (!diagnostichistory::fullBoot(it->boot.toStdString()).empty()) {
             const auto key = it->key();
             if (seen.contains(key)) continue;
@@ -1663,6 +1668,8 @@ void HealthTab::applyDayFilter() {
     else
         dayInfo_->setText(tr("%1: %2 matching records (saved history and current session). Click the day again to clear the date filter.")
                              .arg(dayFilter_).arg(shown));
+    if (!dayFilter_.isEmpty() && dayHistoryLimited_)
+        dayInfo_->setText(dayInfo_->text() + QLatin1Char(' ') + tr("Some saved history is outside the scan or display limits, or could not be read."));
 }
 
 QString HealthTab::friendlyEvent(const QJsonObject &e) {

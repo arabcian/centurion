@@ -146,6 +146,7 @@ private:
     QLabel *summary_, *source_, *aer_, *logInfo_, *dayInfo_, *scanWarning_ = nullptr;
     DayBars *days_ = nullptr;
     QString dayFilter_;          // the day the list shows (empty: all)
+    bool dayHistoryLimited_ = false;
     quint64 savedSeq_ = 0;      // highest seq of this boot already in the log file
     QString savedBoot_;         // boot_id savedSeq_ belongs to
     QTreeWidget *list_;

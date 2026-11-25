@@ -95,6 +95,9 @@ fn unique<T>(slot: &mut Option<T>, value: Option<T>, invalid: &mut bool) {
 }
 
 impl Operation {
+    const VHT_80_CENTERS: [u32; 7] = [42, 58, 106, 122, 138, 155, 171];
+    const VHT_160_CENTERS: [u32; 3] = [50, 114, 163];
+
     fn line(&mut self, line: &str) {
         let t = line.trim();
         if line.starts_with('\t') && !line.starts_with("\t\t") {
@@ -131,8 +134,7 @@ impl Operation {
         if band(freq) != "5" || !self.vht || !matches!(self.width?, 1 | 3) { return None; }
         let first = self.seg1?;
         let second = self.seg2?;
-        const CENTERS: [u32; 7] = [42, 58, 106, 122, 138, 155, 171];
-        if !CENTERS.contains(&first) || !CENTERS.contains(&second) || first.abs_diff(second) <= 16
+        if !Self::VHT_80_CENTERS.contains(&first) || !Self::VHT_80_CENTERS.contains(&second) || first.abs_diff(second) <= 16
             || !matches!(primary.abs_diff(first), 2 | 6) { return None; }
         Some(SplitChannel { primary_center_mhz: 5000 + 5 * first, secondary_center_mhz: 5000 + 5 * second })
     }
@@ -142,11 +144,11 @@ impl Operation {
         let (center, width, source) = if self.vht && self.width? != 0 {
             if band(freq) != "5" { return None; }
             let a = self.seg1?; let b = self.seg2?;
-            if !(30..=179).contains(&a) { return None; }
             let (c, w) = match (self.width?, b) {
-                (1, 0) => (a, 80),
-                (1, b) if (30..=179).contains(&b) && a.abs_diff(b) == 8 && matches!(ch.abs_diff(a), 2 | 6) => (b, 160),
-                (2, 0) => (a, 160),
+                (1, 0) if Self::VHT_80_CENTERS.contains(&a) => (a, 80),
+                (1, b) if Self::VHT_80_CENTERS.contains(&a) && Self::VHT_160_CENTERS.contains(&b)
+                    && a.abs_diff(b) == 8 && matches!(ch.abs_diff(a), 2 | 6) => (b, 160),
+                (2, 0) if Self::VHT_160_CENTERS.contains(&a) => (a, 160),
                 _ => return None, // 80+80 and unknown encodings are not contiguous
             };
             if !matches!((w, ch.abs_diff(c)), (80, 2 | 6) | (160, 2 | 6 | 10 | 14)) { return None; }
@@ -754,6 +756,7 @@ mod tests {
         assert_eq!(b.seen_boottime_ms, Some(1234500)); assert!(b.ssid.is_empty());
         assert_eq!(b.channel_range, Some(ChannelRange {center_mhz:5190,width_mhz:40,source:"HT operation"}));
         assert_eq!(scan(5180,&format!("{ht}{vht}")).channel_range.unwrap().center_mhz,5210);
+        assert!(scan(5180, &format!("{ht}{}", vht.replace("segment 1: 42", "segment 1: 38"))).channel_range.is_none());
         assert_eq!(scan(5180,&format!("{ht}{}",vht.replace("segment 2: 0","segment 2: 50"))).channel_range.unwrap().width_mhz,160);
         for op in [format!("{ht}{vht}\tEHT Operation:\n"),format!("{ht}{ht}"),format!("{ht}{}",vht.replace("segment 2: 0","segment 2: 106")),ht.replace("primary channel: 36","primary channel: 40")] {
             assert!(scan(5180,&op).channel_range.is_none());

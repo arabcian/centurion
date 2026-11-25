@@ -544,15 +544,32 @@ DayBars::DayBars(QWidget *parent) : QWidget(parent) {
 }
 
 void DayBars::setDays(const QVector<Day> &days) {
-    days_ = days;begin_=0;end_=days_.size();
+    const bool narrowed = begin_ < end_ && (begin_ > 0 || end_ < days_.size());
+    const QString first = narrowed ? days_.at(begin_).date : QString();
+    const QString last = narrowed ? days_.at(end_ - 1).date : QString();
+    days_ = days;
+    if (narrowed) {
+        const auto begin = std::lower_bound(days_.cbegin(), days_.cend(), first,
+            [](const Day &day, const QString &date) { return day.date < date; });
+        const auto end = std::upper_bound(begin, days_.cend(), last,
+            [](const QString &date, const Day &day) { return date < day.date; });
+        if (begin != end) {
+            setViewRange(begin - days_.cbegin(), end - days_.cbegin());
+            return;
+        }
+    }
+    setViewRange(0, days_.size());
+}
+
+void DayBars::updateAccessibleRange() {
     QStringList rows;
-    for (const Day &d : days) {
+    for (qsizetype i = begin_; i < end_; ++i) {
+        const auto &d = days_.at(i);
         qint64 n = 0;
         for (int c : d.kinds) n += std::max(0,c);
-        if (n) rows << QStringLiteral("%1: %2").arg(d.date).arg(n);
+        rows << QStringLiteral("%1: %2").arg(d.date).arg(n);
     }
     setAccessibleDescription(rows.join(QStringLiteral("; ")));
-    update();
 }
 
 void DayBars::setSelected(const QString &date) {
@@ -649,7 +666,9 @@ void DayBars::keyPressEvent(QKeyEvent *e) {
 
 void DayBars::setViewRange(qsizetype begin,qsizetype end) {
     begin_=std::clamp(begin,qsizetype(0),days_.size());end_=std::clamp(end,begin_,days_.size());
-    if(begin_==end_&&!days_.isEmpty()){begin_=std::min(begin_,days_.size()-1);end_=begin_+1;}update();
+    if(begin_==end_&&!days_.isEmpty()){begin_=std::min(begin_,days_.size()-1);end_=begin_+1;}
+    updateAccessibleRange();
+    update();
 }
 void DayBars::wheelEvent(QWheelEvent *e) {
     if(!(e->modifiers()&Qt::ControlModifier)||days_.isEmpty()||!e->angleDelta().y()){e->ignore();return;}

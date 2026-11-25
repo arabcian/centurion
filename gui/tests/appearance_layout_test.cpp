@@ -101,6 +101,10 @@ int main(int argc, char **argv) {
     QString selected;QObject::connect(&days,&DayBars::dayClicked,&days,[&](const QString &d){selected=d;});
     QKeyEvent home(QEvent::KeyPress,Qt::Key_Home,Qt::NoModifier);QCoreApplication::sendEvent(&days,&home);CHECK(selected==QStringLiteral("2026-01-02"));
     days.setViewRange(100,100);CHECK(days.viewRange().first==2 && days.viewRange().second==3);
+    days.setDays({{QStringLiteral("2026-01-02"),{}},{QStringLiteral("2026-01-03"),{}},{QStringLiteral("2026-01-04"),{}}});
+    CHECK(days.viewRange().first==1 && days.viewRange().second==2);
+    CHECK(days.accessibleDescription().contains(QStringLiteral("2026-01-03")));
+    CHECK(!days.accessibleDescription().contains(QStringLiteral("2026-01-04")));
     days.setDays({});CHECK(days.viewRange().first==0 && days.viewRange().second==0);
     return 0;
 }
