@@ -519,7 +519,7 @@ void VfCurveWidget::contextMenuEvent(QContextMenuEvent *e) {
     const double lo=xMin_,hi=xMax_;
     QMenu menu(this);
     auto *table=menu.addAction(tr("Inspect visible curve points"));
-    auto *visible=menu.addAction(tr("Export visible curve points"));
+    menu.addAction(tr("Export visible curve points"));  // neither of the other two: the visible range
     auto *all=menu.addAction(tr("Export all curve points"));
     const auto chosen=menu.exec(e->globalPos());if(!chosen)return;
     QList<QStringList> rows;

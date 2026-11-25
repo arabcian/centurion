@@ -4542,6 +4542,7 @@ void OptimizeTab::showFrametimePair() {
             const auto bytes=f.read(cap+1);if(bytes.size()>cap||f.error()!=QFileDevice::NoError){refresh();return;}
             auto log=frametime::parse(std::string_view(bytes.constData(),std::size_t(bytes.size())));const auto hash=QCryptographicHash::hash(bytes,QCryptographicHash::Sha256).toHex();captures[i]=Capture{std::move(log),hash,QFileInfo(path).fileName()};descriptions[i]->setText(captures[i]->file+QStringLiteral(" · SHA-256 ")+QString::fromLatin1(hash));refresh();});}
     layout->addWidget(context);layout->addWidget(configA);layout->addWidget(configB);layout->addWidget(same);layout->addWidget(result,1);layout->addWidget(status);
-    for(auto *edit:{context,configA,configB})connect(edit,&QLineEdit::textChanged,&dlg,[&]{same->setChecked(false);refresh();});connect(same,&QCheckBox::toggled,&dlg,refresh);refresh();
+    for(auto *edit:{context,configA,configB})connect(edit,&QLineEdit::textChanged,&dlg,[&]{same->setChecked(false);refresh();});
+    connect(same,&QCheckBox::toggled,&dlg,refresh);refresh();
     auto *buttons=new QDialogButtonBox(QDialogButtonBox::Close);layout->addWidget(buttons);connect(buttons,&QDialogButtonBox::rejected,&dlg,&QDialog::reject);dlg.exec();
 }
