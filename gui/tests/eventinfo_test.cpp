@@ -26,6 +26,8 @@ int main(int argc, char **argv) {
     // Xid 79 is a bus problem, Xid 154 a consequence.
     CHECK(explain(QJsonObject{{"kind", "xid"}, {"code", 79}}).meaning.contains(QLatin1String("PCIe")));
     CHECK(explain(QJsonObject{{"kind", "xid"}, {"code", 154}}).meaning.contains(QLatin1String("consequence")));
+    // Xid 71 (CE4) is a copy-engine error, not an unknown code.
+    CHECK(explain(QJsonObject{{"kind", "xid"}, {"code", 71}}).meaning.contains(QLatin1String("copy engines")));
 
     // OOM: the victim and its size.
     i = explain(classifyLine(QStringLiteral("Out of memory: Killed process 1234 (firefox) total-vm:9000000kB, anon-rss:4194304kB, file-rss:0kB")));

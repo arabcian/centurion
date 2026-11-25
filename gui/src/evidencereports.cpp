@@ -295,6 +295,15 @@ static bool hexValue(const QString &s, quint64 *out) {
     return ok;
 }
 
+// f2fs sysfs.c prints sb_status ("%lx") and cp_status ("%x") in hex without a 0x prefix: "42" is 0x42.
+static bool hexFlags(const QString &s, quint64 *out) {
+    bool ok = false;
+    QString t = s.trimmed();
+    if (t.startsWith(QStringLiteral("0x"), Qt::CaseInsensitive)) t = t.mid(2);
+    *out = t.toULongLong(&ok, 16);
+    return ok && !t.isEmpty();
+}
+
 Report f2fsGuard(const QJsonObject &scan, const QList<F2fsVolume> &volumes, const QList<diagsrc::LogLine> &history) {
     Report r;
     r.code = QStringLiteral("H05");
@@ -309,7 +318,7 @@ Report f2fsGuard(const QJsonObject &scan, const QList<F2fsVolume> &volumes, cons
     t.headers = {tr("Volume"), tr("Mounted at"), tr("Needs fsck"), tr("Checkpoint"), tr("On-disk errors"), tr("Written (lifetime)")};
     for (const F2fsVolume &v : volumes) {
         quint64 sb = 0, cp = 0, err = 0;
-        const bool hasSb = hexValue(v.sys.value(QStringLiteral("sb_status")), &sb), hasCp = hexValue(v.sys.value(QStringLiteral("cp_status")), &cp);
+        const bool hasSb = hexFlags(v.sys.value(QStringLiteral("sb_status")), &sb), hasCp = hexFlags(v.sys.value(QStringLiteral("cp_status")), &cp);
         const bool hasErr = hexValue(v.sys.value(QStringLiteral("errors")), &err);
         // f2fs.h: SBI_NEED_FSCK is bit 2 of the superblock flags; f2fs_fs.h: CP_ERROR_FLAG 0x8, CP_FSCK_FLAG 0x10.
         const bool needFsck = hasSb && (sb & 0x4), cpError = hasCp && (cp & 0x8), cpFsck = hasCp && (cp & 0x10);

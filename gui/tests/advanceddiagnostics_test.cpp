@@ -264,6 +264,11 @@ int main(int argc, char **argv) {
         CHECK(er::f2fsGuard({}, {v}, {}).verdict() == Level::Attention);
         v.sys = {{"sb_status", "0x0"}, {"cp_status", "0x81"}, {"errors", "0x0"}};
         CHECK(er::f2fsGuard({}, {v}, {}).verdict() == Level::Ok);
+        // The kernel writes the flags in hex without "0x": "42" is CRC_RECOVERY|ORPHAN_PRESENT, not decimal 42 (0x2A, error bit set).
+        v.sys = {{"sb_status", "1"}, {"cp_status", "42"}};
+        CHECK(er::f2fsGuard({}, {v}, {}).verdict() == Level::Ok);
+        v.sys = {{"sb_status", "1"}, {"cp_status", "c8"}};
+        CHECK(has(er::f2fsGuard({}, {v}, {}), Level::Attention, QStringLiteral("needing fsck")));
     }
 
     // H09: firmware load failure per adapter.

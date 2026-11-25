@@ -16751,6 +16751,38 @@ system-profile/ altında saklanır ve hiçbir zaman otomatik olarak geri yüklen
             <source>Connectivity may be unavailable; not enough evidence to conclude hardware failure.</source>
             <translation>Bağlantı kullanılamıyor olabilir; donanım arızası sonucuna varmak için yeterli kanıt yok.</translation>
         </message>
+        <message>
+            <source>One of the GPU's copy engines (CE3 / CE4 / CE5: the DMA units that move data between system memory and video memory) reported an error NVIDIA's catalog lists as "unknown". NVIDIA's recovery action is to restart the program; the GPU itself does not need a reset. NVIDIA also notes the error is never expected and should be reported.</source>
+            <translation>GPU'nun kopyalama motorlarından biri (CE3 / CE4 / CE5: sistem belleği ile video belleği arasında veri taşıyan DMA birimleri), NVIDIA kataloğunda "bilinmeyen" olarak geçen bir hata bildirdi. NVIDIA'nın önerdiği kurtarma, programı yeniden başlatmaktır; GPU'nun kendisinin sıfırlanması gerekmez. NVIDIA ayrıca bu hatanın hiç beklenmediğini ve görülürse bildirilmesi gerektiğini belirtir.</translation>
+        </message>
+        <message>
+            <source>A driver bug (NVIDIA treats this code as unexpected)</source>
+            <translation>Bir sürücü hatası (NVIDIA bu kodu beklenmeyen olarak sınıflar)</translation>
+        </message>
+        <message>
+            <source>An unstable GPU curve, overclock or memory clock</source>
+            <translation>Kararsız bir GPU eğrisi, hız aşırtma ya da bellek saati</translation>
+        </message>
+        <message>
+            <source>A PCIe link or dGPU power-state problem while data was being copied</source>
+            <translation>Veri kopyalanırken bir PCIe bağlantısı ya da dGPU güç durumu sorunu</translation>
+        </message>
+        <message>
+            <source>Restart the program that was using the GPU (see the details below).</source>
+            <translation>GPU'yu kullanan programı yeniden başlatın (aşağıdaki ayrıntılara bakın).</translation>
+        </message>
+        <message>
+            <source>If a custom GPU curve or memory offset is active, reset it to stock and run the same workload again.</source>
+            <translation>Özel bir GPU eğrisi ya da bellek ofseti etkinse varsayılana döndürün ve aynı yükü yeniden çalıştırın.</translation>
+        </message>
+        <message>
+            <source>If it repeats with the same driver, update the driver or go back to the previous one, and report it to NVIDIA with nvidia-bug-report.sh.</source>
+            <translation>Aynı sürücüyle tekrarlanırsa sürücüyü güncelleyin ya da bir önceki sürüme dönün ve nvidia-bug-report.sh ile NVIDIA'ya bildirin.</translation>
+        </message>
+        <message>
+            <source>The program's GPU work was interrupted; the rest of the system usually keeps working. Repeats are worth a bug report.</source>
+            <translation>Programın GPU işi kesildi; sistemin geri kalanı genellikle çalışmaya devam eder. Tekrarlanıyorsa hata bildirmeye değer.</translation>
+        </message>
     </context>
     <context>
         <name>FirewallTab</name>

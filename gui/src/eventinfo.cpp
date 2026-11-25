@@ -14,10 +14,12 @@ QString cap(const QString &text, const char *pattern, int group = 1) {
 }
 
 // NVIDIA's Xid catalog, grouped by what the user can do about them.
-enum class XidGroup { App, Bus, Firmware, Memory, Display, Video, Recovery, Other };
+enum class XidGroup { App, CopyEngine, Bus, Firmware, Memory, Display, Video, Recovery, Other };
 XidGroup xidGroup(int code) {
     switch (code) {
     case 8: case 13: case 31: case 43: case 44: case 45: case 69: case 109: return XidGroup::App;
+    // ROBUST_CHANNEL_CE3/4/5_ERROR (Xid-Catalog.xlsx): copy engine "unknown error", RESTART_APP / UNEXPECTED_ERR_REPORT_ISSUE.
+    case 70: case 71: case 72: return XidGroup::CopyEngine;
     case 32: case 79: return XidGroup::Bus;
     case 38: case 61: case 62: case 119: case 120: case 143: case 175: return XidGroup::Firmware;
     case 48: case 63: case 64: case 92: case 94: case 95: case 140: return XidGroup::Memory;
@@ -45,6 +47,17 @@ void xid(int code, const QString &text, Info &i) {
                    tr("Clear the program's shader cache (e.g. ~/.cache/nvidia, Steam's shadercache folder of that game)."),
                    tr("Update the NVIDIA driver; if the problem started with an update, try the previous version.")};
         i.urgency = tr("Usually not dangerous on its own; worth acting on if it repeats.");
+        break;
+    case XidGroup::CopyEngine:
+        i.meaning = tr("One of the GPU's copy engines (CE3 / CE4 / CE5: the DMA units that move data between system memory and video "
+                       "memory) reported an error NVIDIA's catalog lists as \"unknown\". NVIDIA's recovery action is to restart the "
+                       "program; the GPU itself does not need a reset. NVIDIA also notes the error is never expected and should be reported.");
+        i.causes = {tr("A driver bug (NVIDIA treats this code as unexpected)"), tr("An unstable GPU curve, overclock or memory clock"),
+                    tr("A PCIe link or dGPU power-state problem while data was being copied")};
+        i.steps = {tr("Restart the program that was using the GPU (see the details below)."),
+                   tr("If a custom GPU curve or memory offset is active, reset it to stock and run the same workload again."),
+                   tr("If it repeats with the same driver, update the driver or go back to the previous one, and report it to NVIDIA with nvidia-bug-report.sh.")};
+        i.urgency = tr("The program's GPU work was interrupted; the rest of the system usually keeps working. Repeats are worth a bug report.");
         break;
     case XidGroup::Bus:
         i.meaning = tr("The GPU stopped answering on the PCIe bus (\"fallen off the bus\") or sent corrupted data. Graphics usually "
