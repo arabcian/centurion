@@ -27,7 +27,7 @@ void runProgram(const QString &exe, const QStringList &args, const QJsonObject &
         QTimer::singleShot(0, context, [cb] { cb(failure(QStringLiteral("simulation: external helper blocked"))); });
         return;
     }
-    if (!QFileInfo(exe).isExecutable()) { QTimer::singleShot(0, context, [cb] { cb(failure(QStringLiteral("read-only helper is not installed"))); }); return; }
+    if (!QFileInfo(exe).isExecutable()) { QTimer::singleShot(0, context, [cb] { cb(failure(QStringLiteral("helper is not installed"))); }); return; }
     constexpr qsizetype limit = 4 * 1024 * 1024;
     const QByteArray input = QJsonDocument(request).toJson(QJsonDocument::Compact);
     if (input.size() > limit || timeoutMs <= 0) { QTimer::singleShot(0, context, [cb] { cb(failure(QStringLiteral("invalid helper request"))); }); return; }
@@ -35,7 +35,12 @@ void runProgram(const QString &exe, const QStringList &args, const QJsonObject &
     auto *p = new QProcess(QCoreApplication::instance());
     auto *timer = new QTimer(p); timer->setSingleShot(true);
     QPointer<QObject> alive(context);
-    struct State { QByteArray out; qsizetype stderrBytes = 0; bool reported = false; };
+    struct State {
+        QByteArray out;
+        qsizetype stderrBytes = 0;
+        QString abortReason;
+        bool reported = false;
+    };
     auto state = std::make_shared<State>();
     const auto finish = [=](const QJsonObject &reply) {
         if (state->reported) return;
@@ -43,17 +48,17 @@ void runProgram(const QString &exe, const QStringList &args, const QJsonObject &
         if (alive) cb(reply);
     };
     const auto abort = [=](const QString &why) {
-        if (state->reported) return;
-        state->reported = true; timer->stop();
+        if (state->reported || !state->abortReason.isEmpty()) return;
+        state->abortReason = why;
+        timer->stop();
         if (p->state() != QProcess::NotRunning) p->kill();
-        if (alive) cb(failure(why));
     };
     const auto drain = [=] {
         const auto out = p->readAllStandardOutput();
         const auto err = p->readAllStandardError();
-        if (state->reported) return;
+        if (state->reported || !state->abortReason.isEmpty()) return;
         if (out.size() > limit - state->out.size() || err.size() > limit - state->stderrBytes) {
-            abort(QStringLiteral("read-only helper exceeded the output limit")); return;
+            abort(QStringLiteral("helper exceeded the output limit")); return;
         }
         state->out += out; state->stderrBytes += err.size();
     };
@@ -63,22 +68,28 @@ void runProgram(const QString &exe, const QStringList &args, const QJsonObject &
         state->reported = true; timer->stop();
         if (p->state() != QProcess::NotRunning) p->kill();
     });
-    QObject::connect(timer, &QTimer::timeout, p, [=] { abort(QStringLiteral("read-only helper timed out")); });
+    QObject::connect(timer, &QTimer::timeout, p, [=] { abort(QStringLiteral("helper timed out")); });
     QObject::connect(p, &QProcess::finished, p, [=](int code, QProcess::ExitStatus status) {
         drain(); p->deleteLater();
         if (state->reported) return;
-        if (status != QProcess::NormalExit) { finish(failure(QStringLiteral("read-only helper crashed"))); return; }
+        if (!state->abortReason.isEmpty()) { finish(failure(state->abortReason)); return; }
+        if (status != QProcess::NormalExit) { finish(failure(QStringLiteral("helper crashed"))); return; }
         const auto out = state->out.trimmed();
         const auto reply = QJsonDocument::fromJson(out.mid(out.lastIndexOf('\n') + 1)).object();
-        if (!reply.value(QStringLiteral("ok")).isBool()) { finish(failure(QStringLiteral("invalid reply from read-only helper"))); return; }
-        if (code != 0 && reply.value(QStringLiteral("ok")).toBool()) { finish(failure(QStringLiteral("read-only helper reported success but exited unsuccessfully"))); return; }
+        if (!reply.value(QStringLiteral("ok")).isBool()) { finish(failure(QStringLiteral("invalid helper reply"))); return; }
+        if (code != 0 && reply.value(QStringLiteral("ok")).toBool()) { finish(failure(QStringLiteral("helper reported success but exited unsuccessfully"))); return; }
         finish(reply);
     });
     QObject::connect(p, &QProcess::errorOccurred, p, [=](QProcess::ProcessError e) {
         if (e != QProcess::FailedToStart) return;
-        p->deleteLater(); finish(failure(QStringLiteral("the read-only helper could not be started")));
+        p->deleteLater();
+        finish(failure(state->abortReason.isEmpty() ? QStringLiteral("helper could not be started") : state->abortReason));
     });
-    QObject::connect(p, &QProcess::started, p, [=] { if (state->reported) { p->kill(); return; } p->write(input); p->closeWriteChannel(); });
+    QObject::connect(p, &QProcess::started, p, [=] {
+        if (state->reported || !state->abortReason.isEmpty()) { p->kill(); return; }
+        p->write(input);
+        p->closeWriteChannel();
+    });
     timer->start(timeoutMs); p->start(exe, args);
 }
 

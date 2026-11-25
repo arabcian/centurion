@@ -5501,6 +5501,22 @@ Daemon çalışıyor olmalı; açmak conntrack bayt sayaçlarını da açar.</tr
         <translation>Son 60 sn içinde görüldü</translation>
     </message>
     <message>
+        <source>The cached scan was discarded because the adapter changed.</source>
+        <translation>Bağdaştırıcı değiştiği için önbellekteki tarama atıldı.</translation>
+    </message>
+    <message>
+        <source>No cached scan is available.</source>
+        <translation>Önbellekte tarama yok.</translation>
+    </message>
+    <message>
+        <source>Showing %1 of %2 captured rows. The helper reported %3 rows in the scan.</source>
+        <translation>Alınan %2 satırın %1 tanesi gösteriliyor. Yardımcı araç taramada %3 satır bildirdi.</translation>
+    </message>
+    <message>
+        <source>Showing %1 of %2 captured rows.</source>
+        <translation>Alınan %2 satırın %1 tanesi gösteriliyor.</translation>
+    </message>
+    <message>
         <source>Solid markers have a kernel timestamp within 60 s. Hollow markers are stale or have unconfirmed age. Overlap counts describe shared advertised intervals among the rows shown.</source>
         <translation>Dolu işaretlerin çekirdek zaman damgası son 60 saniye içindedir. İçi boş işaretler eskidir veya yaşı doğrulanamamıştır. Çakışma sayıları, görünen satırlardaki ortak ilan edilen aralıkları gösterir.</translation>
     </message>

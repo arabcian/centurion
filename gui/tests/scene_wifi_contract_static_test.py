@@ -37,7 +37,8 @@ class Contract(unittest.TestCase):
         helper=(ROOT/'crates/centurion-helpers/src/wifi.rs').read_text()
         view=gui.split('auto *channelView =',1)[1].split('vwn->addLayout(rwn);',1)[0]
         self.assertIn('wifiRange(o)',view)
-        self.assertIn('wifiage::overlapMHz',view)
+        self.assertIn('wifiage::overlaps(*a,*b)',view)
+        self.assertIn('if (range->second) addSegment(*range->second)',view)
         self.assertIn('seen_boottime_ms',view)
         self.assertIn('dump_completed_boottime_ms',view)
         self.assertNotIn('runUser(',view)

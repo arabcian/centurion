@@ -670,13 +670,20 @@ fn apply_scene(name: &str, parts: SceneParts) -> bool {
     // The EC may reset the flag when the profile changes: re-assert only if it no longer matches.
     if let (Some(on), Some(_)) = (fan_want, s["platform_profile"].as_str().filter(|p| !p.is_empty())) {
         let h = format!("{HELPER_DIR}/legion-profile-helper");
-        if let Ok(v) = pkexec_helper(&h, &json!({"fan_fullspeed": "get"})) {
-            if v["ok"] == true && v["on"].as_bool() != Some(on) {
-                let r = pkexec_helper(&h, &json!({"device": "fan_fullspeed", "value": if on { "1" } else { "0" }}))
-                    .and_then(|v| if v["ok"] == true { Ok("re-applied after the profile change".to_owned()) } else { Err("failed".to_owned()) });
-                line("Fan boost", r);
+        let checked = pkexec_helper(&h, &json!({"fan_fullspeed": "get"})).and_then(|reply| {
+            if reply["ok"] != true {
+                return Err(reply["error"].as_str().unwrap_or("fan boost readback failed").to_owned());
             }
-        }
+            let actual = reply["on"].as_bool().ok_or("fan boost readback is missing")?;
+            if actual == on { return Ok("unchanged".to_owned()); }
+            let reply = pkexec_helper(&h, &json!({"device": "fan_fullspeed", "value": if on { "1" } else { "0" }}))?;
+            if reply["ok"] == true {
+                Ok("re-applied after the profile change".to_owned())
+            } else {
+                Err(reply["error"].as_str().unwrap_or("fan boost reapply failed").to_owned())
+            }
+        });
+        line("Fan boost check", checked);
     }
 
     // 2. firmware limits

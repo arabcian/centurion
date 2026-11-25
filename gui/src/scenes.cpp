@@ -13,6 +13,7 @@
 #include "driftwatch.h"
 #include "privileged.h"
 #include "ryzentab.h"
+#include "userhelper.h"
 #include <algorithm>
 #include <utility>
 #include <QDir>
@@ -1385,22 +1386,16 @@ void SceneEngine::start(const Scene &s) {
     }
 
     // 6d. Internal panel refresh rate — as the user, through the desktop's own tool (centurion-display).
+    const auto runDisplay = [this](const QStringList &args, Done done) {
+        userhelper::runProgram(displayTool(), args, {}, this, [done](const QJsonObject &reply) {
+            const bool ok = reply.value("ok").toBool();
+            done(ok, ok ? reply.value("message").toString()
+                        : reply.value("error").toString(QStringLiteral("centurion-display failed")));
+        }, 30000);
+    };
     if (has(PlanStep::Display)) {
-        addStep("Display", [this, hz = s.refresh](Done done) {
-            auto *p = new QProcess(this);
-            connect(p, &QProcess::finished, this, [p, done](int code, QProcess::ExitStatus status) {
-                const QJsonObject o = QJsonDocument::fromJson(p->readAllStandardOutput().trimmed().split('\n').last()).object();
-                p->deleteLater();
-                const bool ok = status == QProcess::NormalExit && code == 0 && o.value("ok").toBool();
-                done(ok, ok ? o.value("message").toString()
-                            : o.value("error").toString(QStringLiteral("centurion-display failed")));
-            });
-            connect(p, &QProcess::errorOccurred, this, [p, done](QProcess::ProcessError e) {
-                if (e != QProcess::FailedToStart) return;
-                p->deleteLater();
-                done(false, QStringLiteral("centurion-display not found"));
-            });
-            p->start(displayTool(), {QStringLiteral("set-refresh"), QString::number(hz, 'f', 2)});
+        addStep("Display", [runDisplay, hz = s.refresh](Done done) {
+            runDisplay({QStringLiteral("set-refresh"), QString::number(hz, 'f', 2)}, std::move(done));
         });
     }
 
@@ -1417,21 +1412,8 @@ void SceneEngine::start(const Scene &s) {
     // 8. Screen brightness — last, after the command (which may switch display mode or GPU and reset the
     // backlight). As the user, through centurion-display (sysfs / logind SetBrightness / brightnessctl).
     if (has(PlanStep::Brightness)) {
-        addStep("Screen brightness", [this, pct = s.screenBrightness](Done done) {
-            auto *p = new QProcess(this);
-            connect(p, &QProcess::finished, this, [p, done](int code, QProcess::ExitStatus status) {
-                const QJsonObject o = QJsonDocument::fromJson(p->readAllStandardOutput().trimmed().split('\n').last()).object();
-                p->deleteLater();
-                const bool ok = status == QProcess::NormalExit && code == 0 && o.value("ok").toBool();
-                done(ok, ok ? o.value("message").toString()
-                            : o.value("error").toString(QStringLiteral("centurion-display failed")));
-            });
-            connect(p, &QProcess::errorOccurred, this, [p, done](QProcess::ProcessError e) {
-                if (e != QProcess::FailedToStart) return;
-                p->deleteLater();
-                done(false, QStringLiteral("centurion-display not found"));
-            });
-            p->start(displayTool(), {QStringLiteral("set-brightness"), QString::number(pct)});
+        addStep("Screen brightness", [runDisplay, pct = s.screenBrightness](Done done) {
+            runDisplay({QStringLiteral("set-brightness"), QString::number(pct)}, std::move(done));
         });
     }
 

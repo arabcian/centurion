@@ -121,8 +121,11 @@ fn mask_serials(text: &str) -> (String, u64) {
         }
         spans.sort_unstable();
         let mut pos = 0;
-        for (s, e) in spans {
-            if s < pos { continue; }
+        let mut spans = spans.into_iter().peekable();
+        while let Some((s, mut e)) = spans.next() {
+            while spans.peek().is_some_and(|&(start, _)| start < e) {
+                e = e.max(spans.next().unwrap().1);
+            }
             out.push_str(&line[pos..s]);
             out.push_str("<hidden>");
             pos = e;
@@ -727,6 +730,11 @@ pub fn request(req: &Value) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn overlapping_identity_values_are_masked_in_full() {
+        assert_eq!(mask_serials("serial=uuid:alpha beta | end"), ("serial=<hidden> | end".to_owned(), 1));
+    }
 
     fn temp(tag: &str) -> PathBuf {
         let d = std::env::temp_dir().join(format!("centurion-diag-{tag}-{}", std::process::id()));

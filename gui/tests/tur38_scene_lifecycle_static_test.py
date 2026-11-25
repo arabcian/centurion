@@ -20,7 +20,11 @@ assert '}, {}, trackedCpuLease_);' in sc
 assert 'auto tracked = std::exchange(trackedDone_, {});' in sc
 finish=sc.split('void SceneEngine::finish()',1)[1].split('void SceneEngine::gpuDeferredFire()',1)[0]
 assert finish.index('Q_EMIT finished(current_, ok_, log_);') < finish.index('if (tracked) tracked(outcomeReceipt);') < finish.index('busy_ = false;')
-assert 'if (soft && step.undo) applied_.removeLast();' in sc
+next_step=sc.split('void SceneEngine::next()',1)[1].split('void SceneEngine::finish()',1)[0]
+completion=next_step.split('step.apply([this, step]',1)[1]
+assert 'ok_ &= ok;' in completion
+assert '&SceneEngine::next' in completion
+assert 'steps_.clear()' not in completion and 'rollback' not in completion
 assert 'if (unknown) incomplete_ = true;' in sc
 assert 'eff.isEmpty() || eff == p' not in sc
 assert 'r.json.value("effective").toString(old)' not in sc

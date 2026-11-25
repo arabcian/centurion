@@ -16,7 +16,9 @@
 //! desktops use themselves; allowed for the active local session), otherwise brightnessctl.
 
 use serde_json::{json, Value};
-use std::io::Read;
+use std::io::{self, Read};
+use std::os::fd::AsRawFd;
+use std::os::unix::process::CommandExt;
 use std::path::Path;
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
@@ -62,31 +64,62 @@ pub fn detect() -> Option<Backend> {
 
 /// Runs a tool with a hard time limit (a compositor that does not answer must not hang a scene).
 fn run(prog: &str, args: &[&str], limit: Duration) -> Result<String, String> {
-    let mut child = Command::new(prog).args(args).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped())
+    let start = Instant::now();
+    let mut child = Command::new(prog).args(args).stdin(Stdio::null())
+        .stdout(Stdio::piped()).stderr(Stdio::piped()).process_group(0)
         .spawn().map_err(|e| format!("{prog}: {e}"))?;
-    // Drained while the child runs: output past the pipe buffer (kscreen-doctor -j with an external
-    // monitor's mode list) would otherwise block the child until the time limit.
-    let drain = |s: Option<Box<dyn Read + Send>>| std::thread::spawn(move || {
-        let mut v = Vec::new();
-        if let Some(mut s) = s { let _ = s.read_to_end(&mut v); }
-        String::from_utf8_lossy(&v).into_owned()
-    });
-    let out_t = drain(child.stdout.take().map(|s| Box::new(s) as Box<dyn Read + Send>));
-    let err_t = drain(child.stderr.take().map(|s| Box::new(s) as Box<dyn Read + Send>));
-    let t0 = Instant::now();
-    loop {
-        match child.try_wait() {
-            Ok(Some(st)) => {
-                let out = out_t.join().unwrap_or_default();
-                let err = err_t.join().unwrap_or_default();
-                // kscreen-doctor prints its JSON / errors on stdout or stderr depending on the version.
-                return if st.success() { Ok(out) } else { Err(format!("{prog}: {}", if err.trim().is_empty() { out.trim() } else { err.trim() })) };
+    let mut stdout = child.stdout.take().unwrap();
+    let mut stderr = child.stderr.take().unwrap();
+    let mut out = Vec::new();
+    let mut err = Vec::new();
+    let mut exited = false;
+    let result = (|| -> io::Result<String> {
+        for fd in [stdout.as_raw_fd(), stderr.as_raw_fd()] {
+            let flags = unsafe { libc::fcntl(fd, libc::F_GETFL) };
+            if flags < 0 || unsafe { libc::fcntl(fd, libc::F_SETFL, flags | libc::O_NONBLOCK) } < 0 {
+                return Err(io::Error::last_os_error());
             }
-            Ok(None) if t0.elapsed() < limit => std::thread::sleep(Duration::from_millis(25)),
-            Ok(None) => { let _ = child.kill(); let _ = child.wait(); return Err(format!("{prog}: no answer within {} s", limit.as_secs())); }
-            Err(e) => return Err(format!("{prog}: {e}")),
         }
+        loop {
+            let status = child.try_wait()?;
+            exited = status.is_some();
+            // Drain both streams without waiting for EOF from a descendant that
+            // inherited a pipe. After the direct child exits its output is ready.
+            drain_display_output(&mut stdout, &mut out)?;
+            drain_display_output(&mut stderr, &mut err)?;
+            if let Some(status) = status {
+                if status.success() { return Ok(String::from_utf8_lossy(&out).into_owned()); }
+                let detail = if err.is_empty() { &out } else { &err };
+                let detail = String::from_utf8_lossy(detail);
+                return Err(io::Error::other(format!("{status}: {}", detail.trim())));
+            }
+            let left = limit.saturating_sub(start.elapsed());
+            if left.is_zero() {
+                return Err(io::Error::new(io::ErrorKind::TimedOut, format!("no answer within {} s", limit.as_secs_f64())));
+            }
+            std::thread::sleep(left.min(Duration::from_millis(10)));
+        }
+    })();
+    if !exited {
+        // The child started a new process group, including any subordinate tools.
+        unsafe { libc::kill(-(child.id() as libc::pid_t), libc::SIGKILL); }
+        let _ = child.kill();
+        let _ = child.wait();
     }
+    result.map_err(|e| format!("{prog}: {e}"))
+}
+
+fn drain_display_output(pipe: &mut impl Read, bytes: &mut Vec<u8>) -> io::Result<()> {
+    const LIMIT: usize = 4 * 1024 * 1024;
+    match pipe.take((LIMIT + 1 - bytes.len()) as u64).read_to_end(bytes) {
+        Ok(_) => {}
+        Err(error) if error.kind() == io::ErrorKind::WouldBlock => {}
+        Err(error) => return Err(error),
+    }
+    if bytes.len() > LIMIT {
+        return Err(io::Error::other("display tool exceeded the output limit"));
+    }
+    Ok(())
 }
 
 /// kscreen-doctor -j: {"outputs": [{"name", "enabled", "currentModeId", "modes": [{"id", "refreshRate", "size": {w, h}}]}]}
@@ -304,6 +337,14 @@ pub fn set_brightness(pct: u32) -> Result<String, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn compositor_exit_does_not_wait_for_inherited_output_pipes() {
+        let start = Instant::now();
+        let out = run("/bin/sh", &["-c", "sleep 2 & printf done"], Duration::from_secs(1)).unwrap();
+        assert_eq!(out, "done");
+        assert!(start.elapsed() < Duration::from_secs(1));
+    }
 
     #[test]
     fn kscreen() {

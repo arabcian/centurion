@@ -503,6 +503,10 @@ NetPage::NetPage(QWidget *parent) : QWidget(parent) {
                  !changed && wifiScanReceived_.isValid() ? wifiScanReceived_.toString(Qt::ISODate) : tr("Unknown")));
         info->setTextFormat(Qt::PlainText);
         info->setWordWrap(true); layout->addWidget(info);
+        auto *coverage = new QLabel;
+        coverage->setTextFormat(Qt::PlainText);
+        coverage->setWordWrap(true);
+        layout->addWidget(coverage);
         auto *recentOnly = new QCheckBox(tr("Only observations within 60 s"));
         layout->addWidget(recentOnly);
         auto *scene = new QGraphicsScene(&dlg);
@@ -512,6 +516,7 @@ NetPage::NetPage(QWidget *parent) : QWidget(parent) {
         layout->addWidget(tree,1);
         tree->sortByColumn(4, Qt::AscendingOrder);
         const auto captured = snapshot.value(QStringLiteral("networks")).toArray();
+        const auto total = snapshot.value(QStringLiteral("total")).toInteger(-1);
         const auto render = [&] {
             scene->clear();
             tree->setSortingEnabled(false);
@@ -521,6 +526,16 @@ NetPage::NetPage(QWidget *parent) : QWidget(parent) {
                 const auto age = ageOf(network.toObject());
                 if (!recentOnly->isChecked() || (age.observed && age.ms && *age.ms < wifiage::staleMs))
                     nets.append(network);
+            }
+            if (changed) {
+                coverage->setText(tr("The cached scan was discarded because the adapter changed."));
+            } else if (snapshot.isEmpty()) {
+                coverage->setText(tr("No cached scan is available."));
+            } else if (total > captured.size()) {
+                coverage->setText(tr("Showing %1 of %2 captured rows. The helper reported %3 rows in the scan.")
+                                      .arg(nets.size()).arg(captured.size()).arg(total));
+            } else {
+                coverage->setText(tr("Showing %1 of %2 captured rows.").arg(nets.size()).arg(captured.size()));
             }
             // Compare only unique captured BSSID/frequency rows with known intervals.
             // A duplicate key is ambiguous and not counted as another access point.

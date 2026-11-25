@@ -30,6 +30,7 @@
 #include <QToolTip>
 #include <algorithm>
 #include <cmath>
+#include <functional>
 #include <iterator>
 
 namespace {
@@ -76,6 +77,62 @@ QString csvText(QString value) {
     value.replace(QLatin1Char('"'),QStringLiteral("\"\""));
     return QLatin1Char('"')+value+QLatin1Char('"');
 }
+
+void writeCsv(QWidget *parent, const QString &title, const QString &header, qsizetype count,
+              const std::function<void(QTextStream &, qsizetype)> &writeRow) {
+    const QString path = QFileDialog::getSaveFileName(parent, title, {}, QStringLiteral("CSV (*.csv)"));
+    if (path.isEmpty()) return;
+    QSaveFile file(path);
+    const auto reportError = [&] {
+        QMessageBox::warning(parent, QCoreApplication::translate("ChartData", "Export failed"), file.errorString());
+    };
+    if (!file.open(QIODevice::WriteOnly)) { reportError(); return; }
+    QTextStream out(&file);
+    out.setRealNumberPrecision(17);
+    out << header << '\n';
+    qsizetype index = 0;
+    constexpr qsizetype batchSize = 4096;
+    const auto writeBatch = [&] {
+        const auto stop = index + std::min(batchSize, count - index);
+        for (; index < stop && out.status() == QTextStream::Ok; ++index) writeRow(out, index);
+    };
+    if (count <= batchSize) {
+        writeBatch();
+    } else {
+        QDialog progress(parent);
+        progress.setWindowTitle(title);
+        progress.setMinimumWidth(320);
+        auto *layout = new QVBoxLayout(&progress);
+        auto *bar = new QProgressBar;
+        bar->setRange(0, 1000);
+        bar->setValue(0);
+        layout->addWidget(bar);
+        auto *buttons = new QDialogButtonBox(QDialogButtonBox::Cancel);
+        layout->addWidget(buttons);
+        QObject::connect(buttons, &QDialogButtonBox::rejected, &progress, &QDialog::reject);
+        QTimer timer;
+        QObject::connect(&timer, &QTimer::timeout, &progress, [&] {
+            writeBatch();
+            bar->setValue(int(1000.0 * double(index) / double(count)));
+            if (index == count || out.status() != QTextStream::Ok) {
+                timer.stop();
+                progress.accept();
+            }
+        });
+        timer.start(0);
+        if (progress.exec() != QDialog::Accepted) return;
+    }
+    out.flush();
+    if (out.status() != QTextStream::Ok || !file.commit()) reportError();
+}
+
+void writeTextFields(QTextStream &out, const QStringList &row, int numericFrom) {
+    for (qsizetype i = 0; i < row.size(); ++i) {
+        if (i) out << ',';
+        out << (i < numericFrom ? csvText(row.at(i)) : row.at(i));
+    }
+    out << '\n';
+}
 } // namespace
 
 namespace chartdata {
@@ -88,10 +145,8 @@ void table(QWidget *parent,const QStringList &headers,const QList<QStringList> &
     auto *buttons=new QDialogButtonBox(QDialogButtonBox::Close);QObject::connect(buttons,&QDialogButtonBox::rejected,&d,&QDialog::reject);layout->addWidget(buttons);d.exec();
 }
 void exportRows(QWidget *parent,const QString &header,const QList<QStringList> &rows,int numericFrom) {
-    const auto path=QFileDialog::getSaveFileName(parent,QCoreApplication::translate("ChartData","Export chart data"),{},QStringLiteral("CSV (*.csv)"));if(path.isEmpty())return;
-    QSaveFile f(path);if(!f.open(QIODevice::WriteOnly)){QMessageBox::warning(parent,QCoreApplication::translate("ChartData","Export failed"),f.errorString());return;}
-    QTextStream out(&f);out<<header<<'\n';for(const auto &row:rows){for(int i=0;i<row.size();++i){if(i)out<<',';out<<(i<numericFrom?csvText(row[i]):row[i]);}out<<'\n';}out.flush();
-    if(out.status()!=QTextStream::Ok||!f.commit())QMessageBox::warning(parent,QCoreApplication::translate("ChartData","Export failed"),f.errorString());
+    writeCsv(parent, QCoreApplication::translate("ChartData", "Export chart data"), header, rows.size(),
+             [&](QTextStream &out, qsizetype i) { writeTextFields(out, rows.at(i), numericFrom); });
 }
 
 } // namespace chartdata
@@ -321,49 +376,11 @@ void LineChart::contextMenuEvent(QContextMenuEvent *e) {
     const qsizetype first = action == exportVisible ? begin_ : 0;
     const qsizetype last = action == exportVisible ? end_ : frozen.size();
     const QString title = QCoreApplication::translate("LineChart", "Export plotted samples");
-    const QString path=QFileDialog::getSaveFileName(this,title,{},QStringLiteral("CSV (*.csv)"));
-    if(path.isEmpty())return;
     // Export numeric samples only; labels can contain untrusted spreadsheet formula prefixes.
-    QSaveFile f(path);
-    if(!f.open(QIODevice::WriteOnly)) {QMessageBox::warning(this,QCoreApplication::translate("LineChart", "Export failed"),f.errorString());return;}
-    QTextStream out(&f); out.setRealNumberPrecision(17); out << "x,y,break_before\n";
-    qsizetype index = first;
-    constexpr qsizetype batchSize = 4096;
-    const auto writeBatch = [&] {
-        const auto stop = index + std::min(batchSize, last - index);
-        for (; index < stop && out.status() == QTextStream::Ok; ++index) {
-            const auto &pt = frozen.at(index);
-            out << pt.x << ',' << pt.y << ',' << (pt.breakBefore ? 1 : 0) << '\n';
-        }
-    };
-    if (last - first <= batchSize) {
-        writeBatch();
-    } else {
-        QDialog progress(this);
-        progress.setWindowTitle(title);
-        progress.setMinimumWidth(320);
-        auto *layout = new QVBoxLayout(&progress);
-        auto *progressBar = new QProgressBar;
-        progressBar->setRange(0, 1000);
-        progressBar->setValue(0);
-        layout->addWidget(progressBar);
-        auto *buttons = new QDialogButtonBox(QDialogButtonBox::Cancel);
-        layout->addWidget(buttons);
-        connect(buttons, &QDialogButtonBox::rejected, &progress, &QDialog::reject);
-        QTimer timer;
-        connect(&timer, &QTimer::timeout, &progress, [&] {
-            writeBatch();
-            progressBar->setValue(int(1000.0 * double(index - first) / double(last - first)));
-            if (index == last || out.status() != QTextStream::Ok) {
-                timer.stop();
-                progress.accept();
-            }
-        });
-        timer.start(0);
-        if (progress.exec() != QDialog::Accepted) return;
-    }
-    out.flush();
-    if(out.status()!=QTextStream::Ok||!f.commit())QMessageBox::warning(this,QCoreApplication::translate("LineChart", "Export failed"),f.errorString());
+    writeCsv(this, title, QStringLiteral("x,y,break_before"), last - first, [&](QTextStream &out, qsizetype i) {
+        const auto &pt = frozen.at(first + i);
+        out << pt.x << ',' << pt.y << ',' << (pt.breakBefore ? 1 : 0) << '\n';
+    });
 }
 
 // ── BarChart ─────────────────────────────────────────────────────────────────
@@ -493,10 +510,24 @@ void BarChart::contextMenuEvent(QContextMenuEvent *e) {
     if(action==previous) { const auto b=std::max<qsizetype>(0,begin_-count); setViewRange(b,b+count); return; }
     if(action==next) { const auto b=std::min(begin_+count,bars_.size()-count); setViewRange(b,b+count); return; }
     if(action==reset) {setViewRange(0,bars_.size());return;}
-    QList<QStringList> rows;
-    for(const auto &b:(action==csv?frozen:visible))rows.append(QStringList{b.label,std::isfinite(b.value)?b.text:QCoreApplication::translate("BarChart","Unavailable"),std::isfinite(b.value)?QString::number(b.value,'g',17):QString()});
-    if(action==table)chartdata::table(this,{QCoreApplication::translate("ChartData","Label"),QCoreApplication::translate("ChartData","Display value"),QCoreApplication::translate("ChartData","Numeric value")},rows);
-    else if(action==csv||action==csvVisible)chartdata::exportRows(this,QStringLiteral("label,display_value,numeric_value"),rows,2);
+    const auto fields = [](const Bar &bar) {
+        if (!std::isfinite(bar.value))
+            return QStringList{bar.label, QCoreApplication::translate("BarChart", "Unavailable"), QString()};
+        return QStringList{bar.label, bar.text, QString::number(bar.value, 'g', 17)};
+    };
+    if (action == table) {
+        QList<QStringList> rows;
+        for (const auto &bar : visible) rows.append(fields(bar));
+        chartdata::table(this, {QCoreApplication::translate("ChartData", "Label"),
+            QCoreApplication::translate("ChartData", "Display value"),
+            QCoreApplication::translate("ChartData", "Numeric value")}, rows);
+    } else if (action == csv || action == csvVisible) {
+        const auto &data = action == csv ? frozen : visible;
+        writeCsv(this, QCoreApplication::translate("ChartData", "Export chart data"),
+            QStringLiteral("label,display_value,numeric_value"), data.size(), [&](QTextStream &out, qsizetype i) {
+                writeTextFields(out, fields(data.at(i)), 2);
+            });
+    }
 }
 
 // ── DayBars ──────────────────────────────────────────────────────────────────

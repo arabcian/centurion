@@ -56,10 +56,15 @@ static bool openRegular(QFile &f, const QString &path, bool *missing = nullptr) 
 std::optional<QByteArray> readRecord(const QString &path, qint64 limit) {
     QFile f;
     if (limit < 0 || limit > (32LL << 20) || !openRegular(f, path)) return std::nullopt;
-    const qint64 size = f.size();
-    if (size < 0 || size > limit) return std::nullopt;
+    struct stat before{}, after{};
+    if (::fstat(f.handle(), &before) != 0 || before.st_size < 0 || before.st_size > limit) return std::nullopt;
     const auto data = f.read(limit + 1);
-    if (f.error() != QFileDevice::NoError || data.size() != size || f.size() != size || !f.atEnd()) return std::nullopt;
+    if (f.error() != QFileDevice::NoError || data.size() != before.st_size || !f.atEnd()
+        || ::fstat(f.handle(), &after) != 0 || before.st_size != after.st_size
+        || before.st_mtim.tv_sec != after.st_mtim.tv_sec || before.st_mtim.tv_nsec != after.st_mtim.tv_nsec
+        || before.st_ctim.tv_sec != after.st_ctim.tv_sec || before.st_ctim.tv_nsec != after.st_ctim.tv_nsec) {
+        return std::nullopt;
+    }
     return data;
 }
 

@@ -17,8 +17,9 @@ using Callback = std::function<void(const QJsonObject &reply)>;
 /// answer within `timeoutMs` is killed.
 void run(const QJsonObject &request, QObject *context, Callback cb, int timeoutMs = 15000);
 
-/// Explicit, unprivileged read-only executable. No shell or privilege escalation.
-/// Normal exit + JSON success are required; output is bounded and timeout is final.
+/// Explicit unprivileged executable. No shell or privilege escalation.
+/// Requires normal exit and a JSON reply. A timed-out process is killed and reaped
+/// before its failure is reported.
 void runProgram(const QString &exe, const QStringList &args, const QJsonObject &request,
                 QObject *context, Callback cb, int timeoutMs = 15000);
 

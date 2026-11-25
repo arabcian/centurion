@@ -5,6 +5,9 @@
 #include <QMouseEvent>
 #include <QApplication>
 #include <QComboBox>
+#include <QDialog>
+#include <QFile>
+#include <QFileDialog>
 #include <QGroupBox>
 #include <QImage>
 #include <QLabel>
@@ -12,11 +15,13 @@
 #include <QPushButton>
 #include <QSettings>
 #include <QTemporaryDir>
+#include <QTimer>
 #include <QVBoxLayout>
 #include <cstdio>
 #include <limits>
 #define CHECK(x) do { if (!(x)) { std::fprintf(stderr, "Failed: %s\n", #x); return 1; } } while (false)
 int main(int argc, char **argv) {
+    QApplication::setAttribute(Qt::AA_DontUseNativeDialogs);
     QApplication app(argc, argv);
     QTemporaryDir tmp; CHECK(tmp.isValid());
     QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, tmp.path());
@@ -63,6 +68,25 @@ int main(int argc, char **argv) {
     bar.setViewRange(100,200); CHECK(bar.viewRange().first==100 && bar.viewRange().second==200);
     bar.setViewRange(999999,999999); CHECK(bar.viewRange().first==99999 && bar.viewRange().second==100000);
     bar.setBars({}); CHECK(bar.viewRange().first==0 && bar.viewRange().second==0);
+
+    const QString csvPath = tmp.filePath(QStringLiteral("samples.csv"));
+    QTimer picker;
+    QObject::connect(&picker, &QTimer::timeout, &app, [&] {
+        auto *dialog = qobject_cast<QFileDialog *>(QApplication::activeModalWidget());
+        if (!dialog) return;
+        picker.stop();
+        dialog->selectFile(csvPath);
+        static_cast<QDialog *>(dialog)->accept();
+    });
+    QList<QStringList> csvRows(5000, {QStringLiteral("=text,\"quoted\""), QStringLiteral("-3.5")});
+    picker.start(5);
+    chartdata::exportRows(&bar, QStringLiteral("label,value"), csvRows, 1);
+    QFile csv(csvPath);
+    CHECK(csv.open(QIODevice::ReadOnly));
+    CHECK(csv.readLine() == "label,value\n");
+    for (qsizetype i = 0; i < csvRows.size(); ++i)
+        CHECK(csv.readLine() == "\"'=text,\"\"quoted\"\"\",-3.5\n");
+    CHECK(csv.atEnd());
 
     Zone4Canvas zone;zone.resize(400,120);zone.show();app.processEvents();
     int chosen=-1;zone.editZone=[&](int i){chosen=i;};
