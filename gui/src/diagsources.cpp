@@ -48,12 +48,12 @@ QString bootId() { return read(QStringLiteral("/proc/sys/kernel/random/boot_id")
 
 static bool openRegular(QFile &f, const QString &path, bool *missing = nullptr, bool append = false) {
     const QByteArray encoded = QFile::encodeName(path);
-    const int flags = append ? O_WRONLY | O_CREAT | O_APPEND : O_RDONLY;
+    const int flags = append ? O_RDWR | O_CREAT | O_APPEND : O_RDONLY;
     const int fd = ::open(encoded.constData(), flags | O_CLOEXEC | O_NONBLOCK | O_NOFOLLOW, 0600);
     if (missing) *missing = fd < 0 && errno == ENOENT;
     if (fd < 0) return false;
     struct stat st{};
-    const auto mode = append ? QIODevice::WriteOnly | QIODevice::Append : QIODevice::ReadOnly;
+    const auto mode = append ? QIODevice::ReadWrite | QIODevice::Append | QIODevice::Unbuffered : QIODevice::ReadOnly;
     if (::fstat(fd, &st) != 0 || !S_ISREG(st.st_mode) || !f.open(fd, mode, QFileDevice::AutoCloseHandle)) {
         ::close(fd); return false;
     }
@@ -61,11 +61,38 @@ static bool openRegular(QFile &f, const QString &path, bool *missing = nullptr, 
 }
 
 QString savedLogPath(SavedLog source) {
-    return stateDir() + (source == SavedLog::Health ? QStringLiteral("/health.log") : QStringLiteral("/kernel.log"));
+    switch (source) {
+    case SavedLog::Health: return stateDir() + QStringLiteral("/health.log");
+    case SavedLog::Kernel: return stateDir() + QStringLiteral("/kernel.log");
+    case SavedLog::SceneTransactions: return stateDir() + QStringLiteral("/scene-transactions.jsonl");
+    }
+    Q_UNREACHABLE();
+}
+
+static qsizetype recordLimit(SavedLog source) {
+    return source == SavedLog::SceneTransactions ? SceneTransactionRecordLimit : 8192;
+}
+
+// An interrupted writer may leave a partial record that the readers already ignore.
+static qint64 repairLogTail(QFile &file, qsizetype limit) {
+    const auto size = file.size();
+    if (size <= 0) return size;
+    char last = 0;
+    if (!file.seek(size - 1) || !file.getChar(&last)) return -1;
+    if (last == '\n') return size;
+    const auto start = std::max<qint64>(0, size - limit - 1);
+    if (!file.seek(start)) return -1;
+    const auto tail = file.read(size - start);
+    if (file.error() != QFileDevice::NoError || tail.size() != size - start) return -1;
+    const auto lastNewline = tail.lastIndexOf('\n');
+    if (lastNewline < 0 && start > 0) return -1;
+    const qint64 boundary = start + lastNewline + 1;
+    return file.resize(boundary) ? boundary : -1;
 }
 
 bool appendSavedLog(SavedLog source, const QByteArray &records, qint64 rotateAfter) {
     if (records.isEmpty()) return true;
+    if (!records.endsWith('\n')) return false;
     const QString path = savedLogPath(source);
     if (!QDir().mkpath(stateDir())) return false;
     QLockFile lock(path + QStringLiteral(".lock"));
@@ -73,7 +100,8 @@ bool appendSavedLog(SavedLog source, const QByteArray &records, qint64 rotateAft
 
     QFile file;
     if (!openRegular(file, path, nullptr, true)) return false;
-    if (file.size() > rotateAfter) {
+    auto originalSize = repairLogTail(file, recordLimit(source));
+    if (originalSize > 0 && (originalSize > rotateAfter || records.size() > rotateAfter - originalSize)) {
         const auto current = QFile::encodeName(path);
         const auto rotated = current + ".1";
         // Replacing the old rotation and moving the current file is one operation.
@@ -81,8 +109,13 @@ bool appendSavedLog(SavedLog source, const QByteArray &records, qint64 rotateAft
         if (::rename(current.constData(), rotated.constData()) != 0) return false;
         file.close();
         if (!openRegular(file, path, nullptr, true)) return false;
+        originalSize = file.size();
     }
-    return file.write(records) == records.size() && file.flush();
+    if (originalSize < 0) return false;
+    if (file.write(records) == records.size() && file.flush()) return true;
+    // Restore the record boundary before the caller retries a short write.
+    while (::ftruncate(file.handle(), originalSize) != 0 && errno == EINTR) {}
+    return false;
 }
 
 bool clearSavedLog(SavedLog source) {
@@ -157,20 +190,43 @@ std::array<LogFileCoverage, 2> scanSavedLog(
     maxBytesPerFile = std::clamp<qint64>(maxBytesPerFile, 0, 16LL << 20);
     if (!maxBytesPerFile) return files;
     const QString path = savedLogPath(source);
+    const auto maxRecordBytes = recordLimit(source);
     const QByteArray dayPrefix = day.isEmpty() ? QByteArray() : (day + QLatin1Char(' ')).toLatin1();
+    const std::array<QString, 2> paths{path + QStringLiteral(".1"), path};
+    std::array<QFile, 2> handles;
+    // Rotation can change either name between the two opens. Check both bindings
+    // before delivering records, then read through the descriptors we verified.
+    bool stable = false;
+    for (int attempt = 0; attempt < 2 && !stable; ++attempt) {
+        for (std::size_t i = 0; i < paths.size(); ++i) {
+            handles[i].close();
+            bool missing = false;
+            openRegular(handles[i], paths[i], &missing);
+            files[i].state = missing ? LogFileState::Missing : LogFileState::Unreadable;
+        }
+        stable = true;
+        for (std::size_t i = 0; i < paths.size(); ++i) {
+            struct stat opened{}, named{};
+            const int result = ::lstat(QFile::encodeName(paths[i]).constData(), &named);
+            if (handles[i].isOpen()) {
+                stable &= result == 0 && ::fstat(handles[i].handle(), &opened) == 0
+                    && opened.st_dev == named.st_dev && opened.st_ino == named.st_ino;
+            } else if (files[i].state == LogFileState::Missing) {
+                stable &= result != 0 && errno == ENOENT;
+            }
+        }
+    }
+    if (!stable) {
+        for (auto &file : files) file.state = LogFileState::Unreadable;
+        return files;
+    }
     std::optional<std::pair<dev_t, ino_t>> scanned;
     QStringDecoder decoder(QStringDecoder::Utf8, QStringDecoder::Flag::Stateless);
     for (int index = 0; index < 2; ++index) {
         const bool rotated = index == 0;
-        const QString file = rotated ? path + QStringLiteral(".1") : path;
         auto &coverage = files.at(index);
-        QFile f;
-        bool missing = false;
-        if (!openRegular(f, file, &missing)) {
-            coverage.state = missing ? LogFileState::Missing : LogFileState::Unreadable;
-            continue;
-        }
-        coverage.state = LogFileState::Unreadable;
+        QFile &f = handles.at(index);
+        if (!f.isOpen()) continue;
         struct stat before{}, after{};
         if (::fstat(f.handle(), &before) != 0 || before.st_size < 0) continue;
         const auto identity = std::pair{before.st_dev, before.st_ino};
@@ -197,7 +253,7 @@ std::array<LogFileCoverage, 2> scanSavedLog(
             const QByteArrayView record(bytes.constData() + pos, end - pos);
             pos = end + 1;
             if (!dayPrefix.isEmpty() && !record.startsWith(dayPrefix)) continue;
-            if (record.size() > 8192) { ++coverage.rejectedLines; continue; }
+            if (record.size() > maxRecordBytes) { ++coverage.rejectedLines; continue; }
             decoder.resetState();
             const QString text = decoder(record);
             if (decoder.hasError() || !visit(text.trimmed(), rotated))
@@ -209,6 +265,7 @@ std::array<LogFileCoverage, 2> scanSavedLog(
 
 LogTail savedLog(SavedLog source, int max, qint64 maxBytesPerFile, const QString &day) {
     LogTail out;
+    if (source == SavedLog::SceneTransactions) return out;
     max = std::clamp(max, 0, 10000);
     if (!max) return out;
     out.files = scanSavedLog(source, maxBytesPerFile, [&](const QString &record, bool rotated) {

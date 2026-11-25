@@ -210,16 +210,46 @@ fn frequency_mhz(value: &str) -> Option<u32> {
     (freq >= 1.0 && freq <= f64::from(u32::MAX) && freq.fract() == 0.0).then_some(freq as u32)
 }
 
+fn signal_dbm(value: &str) -> Option<i32> {
+    let measurement = value.strip_suffix("dBm")?;
+    if !measurement.ends_with(char::is_whitespace) { return None; }
+    let measurement = measurement.trim_end();
+    let end = measurement.find(char::is_whitespace).unwrap_or(measurement.len());
+    let dbm = measurement[..end].parse::<f64>().ok()?;
+    let chains = measurement[end..].trim();
+    let valid_chains = chains.is_empty() || (chains.starts_with('[') && chains.ends_with(']'));
+    (valid_chains && (-127.0..=0.0).contains(&dbm)).then(|| dbm.round() as i32)
+}
+
+fn bitrate_mbps(value: &str) -> Option<f64> {
+    let mut fields = value.split_whitespace();
+    let number = fields.next()?;
+    let rate = if let Some(n) = number.strip_suffix("Mbps") {
+        n.parse::<f64>().ok()?
+    } else {
+        if !matches!(fields.next()?, "MBit/s" | "Mbps") { return None; }
+        number.parse::<f64>().ok()?
+    };
+    (rate.is_finite() && rate >= 0.0).then_some(rate)
+}
+
+fn valid_bssid(value: &str) -> bool {
+    value.len() == 17 && value.split(':').all(|octet| {
+        octet.len() == 2 && octet.bytes().all(|byte| byte.is_ascii_hexdigit())
+    })
+}
+
 pub fn parse_link(text: &str) -> Link {
-    let mut l = Link { connected: text.trim_start().starts_with("Connected to"), ..Link::default() };
-    if let Some(b) = text.trim_start().strip_prefix("Connected to ").and_then(|t| t.split_whitespace().next()) { l.bssid = b.to_owned(); }
+    let Some(bssid) = text.trim_start().strip_prefix("Connected to ")
+        .and_then(|t| t.split_whitespace().next()).filter(|bssid| valid_bssid(bssid)) else { return Link::default(); };
+    let mut l = Link { connected: true, bssid: bssid.to_ascii_lowercase(), ..Link::default() };
     for (k, v) in fields(text) {
         match k {
             "SSID" => l.ssid = v.to_owned(),
             "freq" => l.freq = frequency_mhz(v),
-            "signal" => l.signal_dbm = first(v),
-            "rx bitrate" => { l.rx_mbps = first(v); l.rx_mode = v.to_owned(); }
-            "tx bitrate" => { l.tx_mbps = first(v); l.tx_mode = v.to_owned(); }
+            "signal" => l.signal_dbm = signal_dbm(v),
+            "rx bitrate" => { l.rx_mbps = bitrate_mbps(v); l.rx_mode = v.to_owned(); }
+            "tx bitrate" => { l.tx_mbps = bitrate_mbps(v); l.tx_mode = v.to_owned(); }
             _ => {}
         }
     }
@@ -230,8 +260,8 @@ pub fn parse_station(text: &str) -> Station {
     let mut s = Station::default();
     for (k, v) in fields(text) {
         match k {
-            "signal" => s.signal_dbm = first(v),
-            "tx bitrate" => s.tx_mbps = first(v),
+            "signal" => s.signal_dbm = signal_dbm(v),
+            "tx bitrate" => s.tx_mbps = bitrate_mbps(v),
             "tx packets" => s.tx_packets = first(v).unwrap_or(0),
             "tx retries" => s.tx_retries = first(v).unwrap_or(0),
             "tx failed" => s.tx_failed = first(v).unwrap_or(0),
@@ -240,15 +270,31 @@ pub fn parse_station(text: &str) -> Station {
             "tx bytes" => s.tx_bytes = first(v).unwrap_or(0),
             "beacon loss" => s.beacon_loss = first(v).unwrap_or(0),
             "connected time" => s.connected_secs = first(v),
-            "signal avg" => s.signal_avg_dbm = first(v),
-            "expected throughput" => s.expected_mbps = lead_f64(v),
+            "signal avg" => s.signal_avg_dbm = signal_dbm(v),
+            "expected throughput" => s.expected_mbps = bitrate_mbps(v),
             _ => {}
         }
     }
     s
 }
 
-/// The number a value starts with, even when the unit is glued to it ("866.700Mbps", "22.00 dBm").
+fn station_for_bssid<'a>(text: &'a str, bssid: &str) -> Option<&'a str> {
+    if bssid.is_empty() { return None; }
+    let mut start = None;
+    let mut offset = 0;
+    for line in text.split_inclusive('\n') {
+        if let Some(header) = line.strip_prefix("Station ") {
+            if let Some(start) = start { return Some(&text[start..offset]); }
+            if header.split_whitespace().next().is_some_and(|peer| peer.eq_ignore_ascii_case(bssid)) {
+                start = Some(offset);
+            }
+        }
+        offset += line.len();
+    }
+    start.map(|start| &text[start..])
+}
+
+/// The number a value starts with ("22.00 dBm").
 fn lead_f64(v: &str) -> Option<f64> {
     let end = v.find(|c: char| !(c.is_ascii_digit() || c == '.' || c == '-')).unwrap_or(v.len());
     v[..end].parse().ok()
@@ -302,7 +348,8 @@ fn security(auth: Option<&str>, wpa: bool, privacy: bool) -> &'static str {
         Some(a) if a.contains("802.1X") => "Enterprise",
         Some(a) if a.contains("SAE") && a.contains("PSK") => "WPA2/WPA3",
         Some(a) if a.contains("SAE") => "WPA3",
-        Some(_) => "WPA2",
+        Some(a) if a.contains("PSK") => "WPA2",
+        Some(_) => "Unknown (RSN)",
         None if wpa => "WPA",
         None if privacy => "WEP",
         None => "Open",
@@ -326,8 +373,9 @@ pub fn parse_scan(text: &str) -> Vec<Bss> {
         if let Some(rest) = line.strip_prefix("BSS ") {
             if let Some(r) = cur.take() { out.push(done(r)); }
             in_rsn = false;
-            let bssid = rest.split(|c: char| c == '(' || c.is_whitespace()).next().unwrap_or("").to_owned();
-            cur = Some(Raw { bss: Bss { bssid, associated: line.contains("-- associated"), ..Bss::default() }, auth: None, wpa: false, privacy: false, operation: Operation::default() });
+            let bssid = rest.split(|c: char| c == '(' || c.is_whitespace()).next().unwrap_or("");
+            if !valid_bssid(bssid) { continue; }
+            cur = Some(Raw { bss: Bss { bssid: bssid.to_ascii_lowercase(), associated: line.trim_end().ends_with("-- associated"), ..Bss::default() }, auth: None, wpa: false, privacy: false, operation: Operation::default() });
             continue;
         }
         let Some(r) = cur.as_mut() else { continue };
@@ -345,7 +393,7 @@ pub fn parse_scan(text: &str) -> Vec<Bss> {
         let v = v.trim();
         match k {
             "freq" => r.bss.freq = frequency_mhz(v).unwrap_or(0),
-            "signal" => r.bss.signal_dbm = first::<f64>(v).filter(|f| f.is_finite() && (-127.0..=0.0).contains(f)).map(|f| f.round() as i32),
+            "signal" => r.bss.signal_dbm = signal_dbm(v),
             "SSID" => r.bss.ssid = v.to_owned(),
             "capability" => r.privacy = v.contains("Privacy"),
             "last seen" if v.ends_with("s [boottime]") => r.bss.seen_boottime_ms = seen_boottime(v),
@@ -359,9 +407,11 @@ pub fn parse_scan(text: &str) -> Vec<Bss> {
 }
 
 /// How crowded the connected channel is: other networks on it, and (2.4 GHz only) on channels within
-/// four of it, which overlap it. `None` when the scan holds no associated network.
+/// four of it, which overlap it. Requires one unambiguous associated network.
 pub fn channel_load(list: &[Bss]) -> Option<(u32, usize, usize)> {
-    let me = list.iter().find(|b| b.associated)?;
+    let mut associated = list.iter().filter(|b| b.associated);
+    let me = associated.next()?;
+    if associated.next().is_some() { return None; }
     let ch = channel(me.freq)?;
     let mut same = 0;
     let mut overlap = 0;
@@ -488,23 +538,37 @@ pub fn status(req: &Value) -> Value {
     let (ifaces, iface) = pick(req);
     let Some(iface) = iface else { return json!({"ok": true, "present": false}) };
     let Some(bin) = tool("iw") else { return json!({"ok": true, "present": true, "iface": iface, "ifaces": ifaces, "iw": false}) };
-    let (link, station) = match (iw(&bin, &iface, &["link"]), iw(&bin, &iface, &["station", "dump"])) {
-        (Ok(l), Ok(s)) => (parse_link(&l), parse_station(&s)),
-        (Err(e), _) | (_, Err(e)) => return json!({"ok": false, "present": true, "iface": iface, "ifaces": ifaces, "iw": true, "error": e}),
+    let link = match iw(&bin, &iface, &["link"]) {
+        Ok(l) => parse_link(&l),
+        Err(e) => return json!({"ok": false, "present": true, "iface": iface, "ifaces": ifaces, "iw": true, "error": e}),
     };
+    let station_sample = if link.connected {
+        iw(&bin, &iface, &["station", "dump"]).ok()
+            .and_then(|dump| station_for_bssid(&dump, &link.bssid).map(parse_station))
+    } else {
+        None
+    };
+    let station_available = station_sample.is_some();
+    let mut station = station_sample.unwrap_or_default();
+    station.signal_dbm = station.signal_dbm.or(link.signal_dbm);
     let info = iw(&bin, &iface, &["info"]).map(|t| parse_info(&t)).unwrap_or_default();
     let freq = link.freq.or(info.freq);
+    let same_channel = freq.is_some() && freq == info.freq;
+    let channel_number = if same_channel { info.channel.or_else(|| freq.and_then(channel)) } else { freq.and_then(channel) };
+    let width = info.width_mhz.filter(|_| same_channel);
+    let has_tx_packets = station.tx_packets > 0;
     let tx_mode = if link.tx_mode.is_empty() { &link.rx_mode } else { &link.tx_mode };
     json!({"ok": true, "present": true, "iw": true, "iface": iface, "ifaces": ifaces, "connected": link.connected, "ssid": link.ssid,
-           "bssid": link.bssid, "freq": freq, "channel": info.channel.or(freq.and_then(channel)), "band": freq.map_or("", band),
-           "width_mhz": info.width_mhz, "tx_power_dbm": info.txpower_dbm,
+           "bssid": link.bssid, "freq": freq, "channel": channel_number, "band": freq.map_or("", band),
+           "width_mhz": width, "tx_power_dbm": info.txpower_dbm, "station_available": station_available,
            "standard": standard(tx_mode), "rx_mode": link.rx_mode, "tx_mode": link.tx_mode,
-           "signal_dbm": station.signal_dbm.or(link.signal_dbm), "signal_avg_dbm": station.signal_avg_dbm, "rx_mbps": link.rx_mbps,
+           "signal_dbm": station.signal_dbm, "signal_avg_dbm": station.signal_avg_dbm, "rx_mbps": link.rx_mbps,
            "tx_mbps": station.tx_mbps.or(link.tx_mbps), "expected_mbps": station.expected_mbps,
            "connected_secs": station.connected_secs, "beacon_loss": station.beacon_loss,
            "rx_packets": station.rx_packets, "rx_bytes": station.rx_bytes, "tx_bytes": station.tx_bytes,
            "tx_packets": station.tx_packets, "tx_retries": station.tx_retries, "tx_failed": station.tx_failed,
-           "retry_pct": pct(station.tx_retries, station.tx_packets), "fail_pct": pct(station.tx_failed, station.tx_packets),
+           "retry_pct": has_tx_packets.then(|| pct(station.tx_retries, station.tx_packets)),
+           "fail_pct": has_tx_packets.then(|| pct(station.tx_failed, station.tx_packets)),
            "warn": warnings(&station)})
 }
 
@@ -527,8 +591,12 @@ fn rfkill(phy: u32) -> (Option<bool>, Option<bool>) {
 /// The adapter behind one interface and what the driver and the radio say about themselves. Static, so the
 /// GUI asks once when the page is opened.
 pub fn hardware(req: &Value) -> Value {
-    let (_, iface) = pick(req);
+    let iface = match scan_iface(req) { Ok(iface) => iface, Err(error) => return error };
     let Some(iface) = iface else { return json!({"ok": true, "present": false}) };
+    let before = adapter_stamp(&iface);
+    if req.get("adapter_stamp").is_some_and(|expected| before.is_none() || expected.as_str() != before.as_deref()) {
+        return json!({"ok": false, "iface": iface, "error": "Selected wireless adapter changed"});
+    }
     let dev = PathBuf::from(format!("/sys/class/net/{iface}/device"));
     let bus = link_name(dev.join("subsystem"));
     // PCI and SDIO keep the IDs on the device; a USB interface keeps them (and the product strings) on its parent.
@@ -549,7 +617,10 @@ pub fn hardware(req: &Value) -> Value {
             out["firmware"] = json!(fields(&t).find(|(k, _)| *k == "firmware-version").map(|(_, v)| v).filter(|v| !v.is_empty() && *v != "N/A"));
         }
     }
-    let Some(iw_bin) = tool("iw") else { out["iw"] = json!(false); return out };
+    let Some(iw_bin) = tool("iw") else {
+        out["iw"] = json!(false);
+        return hardware_reply(&iface, before, out);
+    };
     out["iw"] = json!(true);
     let info = iw(&iw_bin, &iface, &["info"]).map(|t| parse_info(&t)).unwrap_or_default();
     out["mac"] = json!(read_trim(format!("/sys/class/net/{iface}/address")).or(Some(info.addr).filter(|a| !a.is_empty())));
@@ -566,6 +637,14 @@ pub fn hardware(req: &Value) -> Value {
             out["modes"] = json!(modes);
         }
     }
+    hardware_reply(&iface, before, out)
+}
+
+fn hardware_reply(iface: &str, before: Option<String>, mut out: Value) -> Value {
+    if before.is_some() && adapter_stamp(iface) != before {
+        return json!({"ok": false, "iface": iface, "error": "Wireless adapter changed during hardware capture"});
+    }
+    out["adapter_stamp"] = json!(before);
     out
 }
 
@@ -618,7 +697,14 @@ pub fn scan(req: &Value) -> Value {
     if adapter_stamp(&iface).as_deref() != Some(before.as_str()) { return json!({"ok": false, "iface": iface, "error": "Wireless adapter changed during scan dump"}); }
     let list = parse_scan(&text);
     let load = channel_load(&list).map(|(ch, same, overlap)| json!({"channel": ch, "same": same, "overlap": overlap}));
-    let nets: Vec<Value> = list.iter().take(64).map(|b| json!({
+    let mut visible: Vec<_> = list.iter().take(64).collect();
+    let mut associated = list.iter().enumerate().filter(|(_, bss)| bss.associated);
+    let outside_limit = associated.next().filter(|(index, _)| *index >= visible.len() && associated.next().is_none());
+    if let Some((_, network)) = outside_limit {
+        visible.pop();
+        visible.push(network);
+    }
+    let nets: Vec<Value> = visible.into_iter().map(|b| json!({
         "bssid": b.bssid, "ssid": b.ssid, "freq": b.freq, "channel": channel(b.freq), "band": band(b.freq),
         "signal_dbm": b.signal_dbm, "security": b.security, "seen_ms": b.seen_ms, "associated": b.associated,
         "seen_boottime_ms": b.seen_boottime_ms,

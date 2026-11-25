@@ -49,6 +49,7 @@
 #include <ctime>
 #include <deque>
 #include <fcntl.h>
+#include <limits>
 #include <memory>
 #include <optional>
 #include <unistd.h>
@@ -214,7 +215,8 @@ KlogPage::KlogPage(QWidget *parent) : QWidget(parent) {
         if (klogview::fullBootId(bootId_)) {
             diagsrc::scanSavedLog(diagsrc::SavedLog::Kernel, TAIL_BYTES, [this](const QString &record, bool) {
                 const auto line = klogview::parse(record);
-                if (line && line->boot == bootId_) savedSeq_ = std::max(savedSeq_, line->seq);
+                if (line && line->boot == bootId_ && line->seq <= quint64(std::numeric_limits<qint64>::max()))
+                    savedSeq_ = std::max(savedSeq_, line->seq);
                 return line.has_value();
             });
         }
@@ -224,7 +226,7 @@ KlogPage::KlogPage(QWidget *parent) : QWidget(parent) {
     debounce_ = new QTimer(this);
     debounce_->setSingleShot(true);
     debounce_->setInterval(DEBOUNCE_MS);
-    connect(debounce_, &QTimer::timeout, this, &KlogPage::capture);
+    connect(debounce_, &QTimer::timeout, this, [this] { if (!needsRoot_) capture(); });
 
     // SEEK_END: the start-up capture below reads the history; the notifier
     // only wakes for new records.
@@ -243,7 +245,7 @@ KlogPage::KlogPage(QWidget *parent) : QWidget(parent) {
                 QTimer::singleShot(5000, n, [this, n, rate] { drainKmsg(); rate->first.restart(); rate->second = 0; n->setEnabled(true); });
             }
         });
-        QTimer::singleShot(4000, this, &KlogPage::capture);  // history of this boot, once
+        QTimer::singleShot(4000, this, [this] { if (!needsRoot_) capture(); });  // history of this boot, once
     } else {
         needsRoot_ = true;  // restricted: read on demand only (a pkexec prompt is never a background event)
     }
@@ -292,7 +294,10 @@ void KlogPage::drainKmsg() {
 }
 
 void KlogPage::capture() {
-    if (busy_) return;
+    if (busy_) {
+        if (!needsRoot_) debounce_->start();
+        return;
+    }
     if (!QFileInfo(helperPath()).isExecutable()) { info_->setText(QStringLiteral("tune-helper is not installed.")); return; }
     busy_ = true;
     const QJsonObject req{{QStringLiteral("op"), QStringLiteral("klog")}, {QStringLiteral("since"), qint64(lastSeq_)}};
@@ -310,12 +315,18 @@ void KlogPage::capture() {
         busy_ = false;
         const QByteArray out = p->readAllStandardOutput().trimmed();
         p->deleteLater();
-        if (status!=QProcess::NormalExit || exitCode!=0) { info_->setText(tr("Kernel log capture failed or timed out.")); return; }
-        onReply(QJsonDocument::fromJson(out.mid(out.lastIndexOf('\n') + 1)).object(), false);
+        const auto reply = QJsonDocument::fromJson(out.mid(out.lastIndexOf('\n') + 1)).object();
+        if (status != QProcess::NormalExit || !reply.value(QStringLiteral("ok")).isBool()
+            || (exitCode != 0 && reply.value(QStringLiteral("ok")).toBool())) {
+            info_->setText(tr("Kernel log capture failed or timed out."));
+            return;
+        }
+        onReply(reply, false);
     });
     connect(p, &QProcess::errorOccurred, this, [this, p](QProcess::ProcessError e) {
         if (e != QProcess::FailedToStart) return;
         busy_ = false;
+        info_->setText(tr("Kernel log helper could not start."));
         p->deleteLater();
     });
     QTimer::singleShot(10000, p, [guard] { if (guard && guard->state() != QProcess::NotRunning) guard->kill(); });
@@ -336,7 +347,7 @@ void KlogPage::onReply(const QJsonObject &r, bool viaRoot) {
         info_->setText(tr("Kernel log reply has an invalid or different boot identity.")); return;
     }
     const auto records=r.value(QStringLiteral("records")).toArray();
-    qint64 previous=-1;
+    qint64 previous=qint64(lastSeq_);
     for(const auto &record:records) {
         const auto n=record.toObject().value(QStringLiteral("seq")).toInteger(-1);
         if(n<=previous || n>seq) { info_->setText(tr("Malformed kernel log record; capture cursor not advanced.")); return; }
@@ -379,7 +390,7 @@ bool KlogPage::persist(const QJsonArray &records, const QString &bootId) {
                      .arg(QDateTime::fromMSecsSinceEpoch(bootMs + tsMs).toString(QStringLiteral("yyyy-MM-dd HH:mm:ss")))
                      .arg(bootId_).arg(seq)
                      .arg(QString::fromLatin1(LEVELS[lvl]), -5)
-                     .arg(tsMs / 1000).arg((tsMs % 1000) * 1000, 6, 10, QLatin1Char('0'))
+                     .arg(tsValue / 1'000'000).arg(tsValue % 1'000'000, 6, 10, QLatin1Char('0'))
                      .arg(message);
     }
     if (lines.isEmpty()) return true;

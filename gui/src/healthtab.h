@@ -86,7 +86,7 @@ private:
     void eventMenu(const QPoint &pos);
     void showInKlog(const QJsonObject &e);
     void updateSummary();
-    void persist(const QJsonArray &ev, const QString &bootId);
+    bool persist(const QJsonArray &ev, const QString &bootId);
     void updateLogInfo();
     static QString logPath();
     /// The 30-day chart from the helper (event_days); again after new events and after a saved-log clear.
@@ -182,7 +182,8 @@ private:
     QList<QTreeWidgetItem *> historyRows_;
     QTimer *timer_, *debounce_;
     int kmsgFd_ = -1;
-    quint64 lastSeq_ = 0;
+    quint64 lastSeq_ = 0;          // kernel cursor already processed by the live view
+    quint64 savedCaptureSeq_ = 0;  // kernel cursor whose batch reached the saved log
     bool first_ = true, needsRoot_ = false, busy_ = false;
     int xid_ = 0, gsp_ = 0, mce_ = 0, aerN_ = 0, lockup_ = 0, other_ = 0;
     int nvme_ = 0, fs_ = 0, igpu_ = 0, wifi_ = 0, thermal_ = 0, oom_ = 0, oops_ = 0;

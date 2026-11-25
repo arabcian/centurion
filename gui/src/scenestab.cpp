@@ -603,7 +603,10 @@ ScenesTab::ScenesTab(MainWindow *win) : win_(win), eng_(win->scenes()) {
     connect(eng_, &SceneEngine::activeSceneChanged, this, [this](const QString &n, bool game) {
         reloadList(loaded_.name);  // marks the active scene
         updatePowerLabel();
-        setStatus((game ? "Game scene '" : "Scene '") + n + "' is now active (switched by centurion-gamemode).", theme::FG_DIM);
+        setStatus(n.isEmpty() ? tr("No active scene is recorded.")
+                             : game ? tr("Game scene '%1' is now active.").arg(n)
+                                    : tr("Scene '%1' is now active.").arg(n), theme::FG_DIM);
+        if (n.isEmpty()) { lastApply_->hide(); return; }
         lastApply_->setText(tr("<b>Last apply:</b> %1<br>Trigger: %2 (centurion-gamemode; per-component results are in its own log)")
                                 .arg(n.toHtmlEscaped(), game ? tr("game start/exit") : tr("external")));
         lastApply_->setVisible(true);

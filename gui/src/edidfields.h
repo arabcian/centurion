@@ -7,7 +7,7 @@
 #include <iterator>
 #include <vector>
 namespace edidfields {
-enum class Kind { Header, Manufacturer, Product, Serial, Manufacture, Version, Parameters, Chromaticity, Established, Standard, DetailedTiming, Descriptor, ExtensionCount, Checksum, ExtensionHeader, CtaData, Padding, Unknown };
+enum class Kind { Header, Manufacturer, Product, Serial, Manufacture, Version, Parameters, Chromaticity, Established, Standard, DetailedTiming, Descriptor, ExtensionCount, Checksum, ExtensionHeader, CtaData, DisplayIdData, DisplayIdChecksum, Padding, Unknown };
 struct Field { std::size_t offset, length; Kind kind; int tag = -1; };
 struct Block { std::size_t index; bool declared, checksum, structure; };
 struct Inspection { bool header = false, complete = false; std::size_t declared = 0; std::vector<Block> blocks; std::vector<Field> fields; };
@@ -46,6 +46,34 @@ inline Inspection inspect(std::span<const std::uint8_t> data) {
                     [](auto byte) { return byte == 0; });
                 structure &= zeroPadding;
                 field(base + pos, 127 - pos, zeroPadding ? Kind::Padding : Kind::Unknown);
+            }
+        } else if (b && data[base] == 0x70 && ((data[base+1] >> 4) == 1 || (data[base+1] >> 4) == 2)) {
+            constexpr std::size_t headerSize = 5;
+            const auto end = headerSize + std::size_t(data[base+2]);
+            field(base, headerSize, Kind::ExtensionHeader, 0x70);
+            if (end >= 127) {
+                structure = false;
+                field(base+headerSize, 127-headerSize, Kind::Unknown);
+            } else {
+                // The section checksum excludes the EDID extension tag at byte zero.
+                unsigned sectionSum = 0;
+                for (std::size_t pos = 1; pos <= end; ++pos) sectionSum += data[base+pos];
+                structure = (sectionSum & 255) == 0;
+                for (std::size_t pos = headerSize; pos < end;) {
+                    const auto remaining = end - pos;
+                    const auto length = remaining >= 3 ? 3 + std::size_t(data[base+pos+2]) : 0;
+                    if (length == 0 || length > remaining) {
+                        structure = false;
+                        field(base+pos, remaining, Kind::Unknown);
+                        break;
+                    }
+                    field(base+pos, length, Kind::DisplayIdData, data[base+pos]);
+                    pos += length;
+                }
+                field(base+end, 1, Kind::DisplayIdChecksum);
+                const bool zeroPadding = std::all_of(data.begin()+base+end+1, data.begin()+base+127,
+                    [](auto byte) { return byte == 0; });
+                field(base+end+1, 126-end, zeroPadding ? Kind::Padding : Kind::Unknown);
             }
         } else if (b) { field(base,1,Kind::ExtensionHeader,data[base]); field(base+1,126,Kind::Unknown); }
         field(base+127,1,Kind::Checksum);

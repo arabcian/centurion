@@ -11,6 +11,7 @@
 #include "optimizetab.h"
 #include "platformprofile.h"
 #include "driftwatch.h"
+#include "diagsources.h"
 #include "privileged.h"
 #include "ryzentab.h"
 #include "userhelper.h"
@@ -24,6 +25,7 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QKeySequence>
+#include <QLockFile>
 #include <QProcess>
 #include <QRegularExpression>
 #include <QSaveFile>
@@ -88,13 +90,19 @@ bool validName(const QString &n) {
 static QJsonObject readObject(const QString &path) {
     QFile f(path);
     if (!f.open(QIODevice::ReadOnly) || f.size() > MAX_FILE) return {};
-    return QJsonDocument::fromJson(f.readAll()).object();
+    const auto bytes = f.read(MAX_FILE + 1);
+    if (bytes.size() > MAX_FILE || f.error() != QFileDevice::NoError || !f.atEnd()) return {};
+    return QJsonDocument::fromJson(bytes).object();
 }
 
 static bool writeObject(const QString &path, const QJsonObject &o, QString *err) {
+    const auto bytes = QJsonDocument(o).toJson();
+    if (bytes.size() > MAX_FILE) {
+        if (err) *err = QCoreApplication::translate("SceneEngine", "Scene data exceeds the file size limit.");
+        return false;
+    }
     if (!QDir().mkpath(QFileInfo(path).absolutePath())) { if (err) *err = "cannot create " + QFileInfo(path).absolutePath(); return false; }
     QSaveFile f(path);
-    const auto bytes = QJsonDocument(o).toJson();
     if (!f.open(QIODevice::WriteOnly) || f.write(bytes) != bytes.size() || !f.commit()) {
         if (err) *err = f.errorString();
         return false;
@@ -410,17 +418,22 @@ QString bootGuardReason() {
 }
 
 static QString loginGuardFile() {
-    const QString base = qEnvironmentVariableIsEmpty("XDG_STATE_HOME")
-        ? QDir::homePath() + QStringLiteral("/.local/state") : qEnvironmentVariable("XDG_STATE_HOME");
-    return base + QStringLiteral("/centurion/login-guard.json");
+    return diagsrc::stateDir() + QStringLiteral("/login-guard.json");
 }
 
 QString loginGuardReason() {
     const QJsonObject o = readObject(loginGuardFile());
-    return o.value("tripped").toBool() ? o.value("reason").toString() : QString();
+    if (!o.value("tripped").toBool()) return {};
+    const auto reason = o.value("reason").toString();
+    return reason.isEmpty() ? QStringLiteral("login scenes are paused") : reason;
 }
 
-void resumeLoginGuard() { writeObject(loginGuardFile(), {{"state", "ok"}, {"boot_id", bootId()}}, nullptr); }
+void resumeLoginGuard() {
+    const auto file = loginGuardFile();
+    if (!QDir().mkpath(QFileInfo(file).absolutePath())) return;
+    QLockFile lock(file + QStringLiteral(".lock"));
+    if (lock.tryLock()) writeObject(file, {{"state", "ok"}, {"boot_id", bootId()}}, nullptr);
+}
 
 } // namespace scenes
 
@@ -513,11 +526,15 @@ SceneEngine::SceneEngine(MainWindow *win) : QObject(win), win_(win), auto_(loadA
 static constexpr int LOGIN_WINDOW_MS = 120000;
 
 void SceneEngine::startupApply() {
-    if (!ac_) ac_ = onAc();
+    if (const auto source = onAc(); source && source != ac_) {
+        ac_ = source;
+        Q_EMIT powerSourceChanged(*ac_);
+    }
     if (!auto_.enabled || auto_.paused) return;
     // A calibration scheduled for this boot holds the machine at its boot state: the login scene waits.
     if (calibrationHold()) {
         calDeferred_ = true;
+        loginAfterCalibration_ = true;
         Q_EMIT finished(QString(), true, {QStringLiteral("a calibration holds the machine at its boot state — the login scene is applied when it ends")});
         retunePoll();
         return;
@@ -525,9 +542,17 @@ void SceneEngine::startupApply() {
     // Source still unreadable (EC busy at login): the login scene used to be dropped for good here.
     // pollPower() runs this again at the first successful read (and polls fast until then).
     if (!ac_) { startupPending_ = true; retunePoll(); return; }
+    if (!validName(*ac_ ? auto_.onAc : auto_.onBattery)) return;
     const QString file = loginGuardFile();
-    QJsonObject g = readObject(file);
     const QString cur = bootId();
+    const QString attempt = QUuid::createUuid().toString(QUuid::WithoutBraces);
+    const auto guardFailed = [this] {
+        Q_EMIT finished(QString(), false, {QStringLiteral("automatic scene at login skipped — could not arm the login guard")});
+    };
+    if (cur.isEmpty() || !QDir().mkpath(QFileInfo(file).absolutePath())) { guardFailed(); return; }
+    QLockFile lock(file + QStringLiteral(".lock"));
+    if (!lock.tryLock()) { guardFailed(); return; }
+    QJsonObject g = readObject(file);
     // A login that was still inside its window when the machine went down
     // trips the guard -- unless that boot is known to have shut down cleanly
     // (centurion-boot-guard records it at service stop): a normal reboot or poweroff
@@ -541,19 +566,30 @@ void SceneEngine::startupApply() {
         g["reason"] = QStringLiteral("the last login ended without a clean shutdown within 2 minutes of applying its scene");
         writeObject(file, g, nullptr);
     }
-    QString why = g.value("tripped").toBool() ? g.value("reason").toString() : QString();
+    QString why;
+    if (g.value("tripped").toBool()) {
+        why = g.value("reason").toString();
+        if (why.isEmpty()) why = QStringLiteral("login scenes are paused");
+    }
     if (why.isEmpty()) why = bootGuardReason();
     if (!why.isEmpty()) {
+        lock.unlock();
         Q_EMIT finished(QString(), false, {QStringLiteral("automatic scene at login skipped — ") + why});
         return;
     }
-    writeObject(file, {{"state", "applying"}, {"boot_id", cur}}, nullptr);
-    // Cleared after the window, and on a clean quit (logout / shutdown / Quit).
-    QTimer::singleShot(LOGIN_WINDOW_MS, this, [file, cur] { writeObject(file, {{"state", "ok"}, {"boot_id", cur}}, nullptr); });
-    const auto markOk = [file, cur] {
+    const bool armed = writeObject(file, {{"state", "applying"}, {"boot_id", cur}, {"attempt", attempt}}, nullptr);
+    lock.unlock();
+    if (!armed) { guardFailed(); return; }
+    // The timer and clean exit may clear only the record this login armed.
+    const auto markOk = [file, cur, attempt] {
+        QLockFile guard(file + QStringLiteral(".lock"));
+        if (!guard.tryLock()) return;
         const QJsonObject o = readObject(file);
-        if (o.value("state").toString() == QLatin1String("applying")) writeObject(file, {{"state", "ok"}, {"boot_id", cur}}, nullptr);
+        if (!o.value("tripped").toBool() && o.value("state").toString() == QLatin1String("applying")
+            && o.value("boot_id").toString() == cur && o.value("attempt").toString() == attempt)
+            writeObject(file, {{"state", "ok"}, {"boot_id", cur}}, nullptr);
     };
+    QTimer::singleShot(LOGIN_WINDOW_MS, this, markOk);
     connect(qApp, &QCoreApplication::aboutToQuit, this, markOk);
     // X11 session managers announce logout/shutdown here before the app is
     // killed; SIGTERM/SIGHUP end in aboutToQuit (main.cpp).
@@ -740,8 +776,7 @@ void SceneEngine::externalStateChanged() {
     const bool changedPartial = partial != seenPartial_;
     seenActive_ = now;
     seenPartial_ = partial;
-    if (now.isEmpty()) return;
-    if (!sameScene) Q_EMIT activeSceneChanged(now, !state.value("game_scene").toString().isEmpty());
+    if (!sameScene) Q_EMIT activeSceneChanged(now, !now.isEmpty() && !state.value("game_scene").toString().isEmpty());
     else if (changedPartial) Q_EMIT activeScenePartialChanged();
 }
 
@@ -752,7 +787,9 @@ void SceneEngine::pollPower(bool timerTick) {
     if (timerTick) checkGameEnd();
     if (timerTick && calDeferred_ && !calibrationHold()) {
         calDeferred_ = false;
-        if (auto_.enabled && !auto_.paused && ac_) {
+        if (std::exchange(loginAfterCalibration_, false)) {
+            startupApply();
+        } else if (auto_.enabled && !auto_.paused && ac_) {
             Q_EMIT finished(QString(), true, {QStringLiteral("calibration finished — applying the scene for the power source")});
             applyForSource(*ac_, QStringLiteral("calibration finished"));
         }
@@ -826,7 +863,7 @@ void SceneEngine::checkGameEnd() {
     const bool sceneOn = gameSceneActive();
     if (sceneOn) sawGameScene_ = true;
     if (!deferred_ && !sceneOn) { gameGoneReads_ = 0; sawGameScene_ = false; return; }
-    if (busy_ || gameSessions() > 0 || gameStarting()) { gameGoneReads_ = 0; return; }
+    if (busy_ || orphanPruneActive_ || gameSessions() > 0 || gameStarting()) { gameGoneReads_ = 0; return; }
     ++gameGoneReads_;
     if (!sceneOn) {
         if (sawGameScene_) {  // POST left the game scene and applied the right one itself
@@ -846,7 +883,7 @@ void SceneEngine::checkGameEnd() {
     if (gameGoneReads_ < GAME_ORPHAN_READS) return;
     gameGoneReads_ = 0;
     deferred_ = sawGameScene_ = false;
-    QString before;
+    QString before, generation;
     {
         // Claim the clean-up under the lock: a POST that got there first has already left the scene.
         const StateLock lock;
@@ -854,20 +891,38 @@ void SceneEngine::checkGameEnd() {
         QJsonObject st = readObject(stateFile());
         if (const QJsonValue g = st.value("game_scene"); !g.isString() || g.toString().isEmpty()) return;
         before = st.value("before_game").toString();
+        generation = st.value("scene_generation").toString();
         st["game_scene"] = QJsonValue::Null;
         st["before_game"] = QJsonValue::Null;
         st["ab_a"] = QJsonValue::Null;     // a dead A launch (gameSessions() no longer counts it)
         st["ab_owner"] = QJsonValue::Null;
         if (!writeObject(stateFile(), st, nullptr)) return;
     }
+    const auto localTransaction = transactionId_;
+    orphanPruneActive_ = true;
     Q_EMIT finished(QString(), true, {QStringLiteral("the game launcher exited without its POST hook — leaving the game scene")});
-    const QString target = auto_.enabled && ac_ ? (*ac_ ? auto_.onAc : auto_.onBattery) : before;
     // Ends the dead session and restores the game tuning (tune-helper prune).
-    privileged::run(privileged::helperPath("tune-profile-helper"), QJsonObject{{"op", "prune"}}, this,
-                    [this, target](const privileged::Result &) { if (validName(target) && !auto_.paused) apply(target); }, 120000);
+    privileged::runUntilExit(privileged::helperPath("tune-profile-helper"), QJsonObject{{"op", "prune"}}, this,
+        [this, before, generation, localTransaction](const privileged::Result &) {
+            orphanPruneActive_ = false;
+            if (!pending_.isEmpty() && !pendingAuto_) {
+                apply(std::exchange(pending_, QString()), std::exchange(pendingTrigger_, QString()));
+                return;
+            }
+            if (busy_ || auto_.paused || transactionId_ != localTransaction || gameSessions() > 0 || gameStarting()) return;
+            const auto state = readObject(stateFile());
+            if (state.value("scene_generation").toString() != generation || !state.value("game_scene").toString().isEmpty()) return;
+            if (auto_.enabled) {
+                const auto source = onAc();
+                if (source || ac_) applyForSource(source.value_or(ac_.value_or(false)) && !flapHold_, QStringLiteral("game ended"));
+            } else if (validName(before)) {
+                apply(before);
+            }
+        }, 120000);
 }
 
 void SceneEngine::applyForSource(bool onAc, const QString &why) {
+    if (loginAfterCalibration_ || orphanPruneActive_) return;
     if (sceneplan::sourceAction(auto_.paused,false,false,true,false,false)==sceneplan::SourceAction::Paused) { deferred_ = false; return; }
     if (sceneplan::sourceAction(false,calibrationHold(),false,true,false,false)==sceneplan::SourceAction::CalibrationDeferred) {
         if (!calDeferred_) Q_EMIT finished(QString(), true, {QStringLiteral("a calibration is measuring — scene switch deferred until it ends")});
@@ -893,8 +948,11 @@ void SceneEngine::applyForSource(bool onAc, const QString &why) {
     if (action==sceneplan::SourceAction::Coalesce) {
         // The scene being applied right now is already the right one: drop a stale request for the other source
         // instead of applying it and then switching straight back.
-        pending_.clear();
-        pendingAuto_ = false;
+        if (pendingAuto_) {
+            pending_.clear();
+            pendingTrigger_.clear();
+            pendingAuto_ = false;
+        }
         return;
     }
     nextAuto_ = true;
@@ -902,7 +960,14 @@ void SceneEngine::applyForSource(bool onAc, const QString &why) {
 }
 
 void SceneEngine::apply(const QString &name, const QString &trigger) {
-    if (busy_) { pending_ = name; pendingTrigger_ = trigger; pendingAuto_ = std::exchange(nextAuto_, false); return; }
+    if (busy_ || orphanPruneActive_) {
+        const bool automatic = std::exchange(nextAuto_, false);
+        if (automatic && !pending_.isEmpty() && !pendingAuto_) return;
+        pending_ = name;
+        pendingTrigger_ = trigger;
+        pendingAuto_ = automatic;
+        return;
+    }
     nextTrigger_ = trigger;
     const auto s = load(name);
     if (!s) {
@@ -1127,7 +1192,7 @@ QStringList SceneEngine::preview(const Scene &s) const {
 }
 
 bool SceneEngine::operationActive() const {
-    return busy_ || (gpuDefer_ && gpuDefer_->isActive()) || deferredInFlight_ > 0;
+    return busy_ || orphanPruneActive_ || (gpuDefer_ && gpuDefer_->isActive()) || deferredInFlight_ > 0;
 }
 
 void SceneEngine::emitStep(const QString &step, const QString &state, const QString &detail) {
@@ -1512,29 +1577,23 @@ void SceneEngine::finish() {
     lastOutcome_ = QString::fromLatin1(outcome.data(), static_cast<qsizetype>(outcome.size()));
     Q_EMIT transactionState(transactionId_, current_, {}, lastOutcome_, {});
     // Local append-only transaction history for Incident Timeline; never log request secrets or command arguments.
-    const QString stateBase = qEnvironmentVariableIsEmpty("XDG_STATE_HOME") ? QDir::homePath() + QStringLiteral("/.local/state") : qEnvironmentVariable("XDG_STATE_HOME");
-    const QString path = stateBase + QStringLiteral("/centurion/scene-transactions.jsonl");
-    QDir().mkpath(QFileInfo(path).absolutePath());
-    if (QFileInfo(path).size() > (512LL << 10)) {
-        QFile::remove(path + QStringLiteral(".1"));
-        QFile::rename(path, path + QStringLiteral(".1"));
+    QJsonArray componentsJson;
+    for (const auto &part : summary_.items())
+        componentsJson.append(QJsonObject{{"step", QString::fromStdString(part.step)}, {"state", QString::fromStdString(part.state)},
+                                          {"detail", QString::fromStdString(part.detail).left(512)}});
+    QJsonObject record{{"boot", diagsrc::bootId()}, {"t", QDateTime::currentSecsSinceEpoch()}, {"scene", current_},
+                       {"previous", priorScene_}, {"ok", ok_}, {"rolled_back", false},
+                       {"transaction_id", transactionId_}, {"outcome", lastOutcome_},
+                       {"partial", !ok_ || incomplete_}, {"game_took_over", gameOwns},
+                       {"steps", QJsonArray::fromStringList(log_)},
+                       {"trigger", trigger_}, {"components", componentsJson}};
+    auto recordBytes = QJsonDocument(record).toJson(QJsonDocument::Compact);
+    if (recordBytes.size() > diagsrc::SceneTransactionRecordLimit) {
+        record["steps"] = QJsonArray{};
+        record["steps_truncated"] = true;
+        recordBytes = QJsonDocument(record).toJson(QJsonDocument::Compact);
     }
-    QFile tx(path);
-    if (tx.open(QIODevice::Append | QIODevice::Text)) {
-        QFile bootIdFile(QStringLiteral("/proc/sys/kernel/random/boot_id"));
-        const QString currentBootId = bootIdFile.open(QIODevice::ReadOnly) ? QString::fromUtf8(bootIdFile.readAll()).trimmed() : QString();
-        QJsonArray componentsJson;
-        for (const auto &part : summary_.items())
-            componentsJson.append(QJsonObject{{"step", QString::fromStdString(part.step)}, {"state", QString::fromStdString(part.state)},
-                                              {"detail", QString::fromStdString(part.detail).left(512)}});
-        const QJsonObject record{{"boot", currentBootId}, {"t", double(QDateTime::currentSecsSinceEpoch())}, {"scene", current_},
-                                 {"previous", priorScene_}, {"ok", ok_}, {"rolled_back", false},
-                                 {"transaction_id", transactionId_}, {"outcome", lastOutcome_},
-                                 {"partial", !ok_ || incomplete_}, {"game_took_over", gameOwns},
-                                 {"steps", QJsonArray::fromStringList(log_)},
-                                 {"trigger", trigger_}, {"components", componentsJson}};
-        tx.write(QJsonDocument(record).toJson(QJsonDocument::Compact) + '\n');
-    }
+    diagsrc::appendSavedLog(diagsrc::SavedLog::SceneTransactions, recordBytes + '\n', 512LL << 10);
     const QString outcomeReceipt = lastOutcome_;
     auto tracked = std::exchange(trackedDone_, {});
     trackedCpuLease_ = 0;
@@ -1544,15 +1603,21 @@ void SceneEngine::finish() {
     if (!published && stateTimer_) stateTimer_->start(0);
     if (gameOwns) {
         pending_.clear();
+        pendingTrigger_.clear();
         pendingAuto_ = false;
         deferred_ = true;
         return;
     }
     if (!pending_.isEmpty()) {
         const QString n = std::exchange(pending_, QString());
-        nextAuto_ = std::exchange(pendingAuto_, false);
-        if (nextAuto_ && (gameSessions() > 0 || gameStarting() || gameSceneActive())) { nextAuto_ = false; deferred_ = true; return; }
-        apply(n, std::exchange(pendingTrigger_, QString()));
+        const auto trigger = std::exchange(pendingTrigger_, QString());
+        if (!std::exchange(pendingAuto_, false)) {
+            apply(n, trigger);
+        } else if (auto_.enabled && ac_) {
+            const bool onAc = *ac_ && !flapHold_;
+            const auto target = onAc ? auto_.onAc : auto_.onBattery;
+            if (target != current_) applyForSource(onAc);
+        }
         return;
     }
     if (ok_ && published) armVerify();
@@ -1576,6 +1641,7 @@ void SceneEngine::gpuDeferredFire() {
                                         + QStringLiteral("GPU curve '%1' (%2 s after scene '%3'): %4").arg(name).arg(GPU_DEFER_MS / 1000).arg(scene, m)});
     };
     // Same rule as the remaining steps of an automatic switch: a game that started meanwhile wins.
+    if (gpuDeferAuto_ && (!auto_.enabled || auto_.paused)) { report(true, QStringLiteral("skipped (automatic scenes paused or disabled)")); return; }
     if (gpuDeferAuto_ && (gameSessions() > 0 || gameStarting() || gameSceneActive())) { report(true, QStringLiteral("dropped, a game started")); return; }
     if (!nvidiaUsable()) { report(true, QStringLiteral("skipped (NVIDIA dGPU is off)")); return; }
     if (win_->nvidia() && win_->nvidia()->busy()) { report(false, QStringLiteral("the NVIDIA tab is busy; skipped")); return; }
@@ -1594,15 +1660,22 @@ void SceneEngine::armVerify() {
 }
 
 void SceneEngine::verifyPass() {
-    if (verifyTriesLeft_ <= 0 || busy_ || !auto_.enabled || auto_.paused || expectedProfile_.isEmpty()) return;
+    if (verifyTriesLeft_ <= 0 || busy_ || orphanPruneActive_ || !auto_.enabled || auto_.paused || expectedProfile_.isEmpty()) return;
+    const auto source = onAc();
+    if (!source || calibrationHold() || (*source && flapHold_)
+        || (*source ? auto_.onAc : auto_.onBattery) != current_) return;
     const auto state = readObject(stateFile());
-    if (gameSessions() > 0 || gameStarting() || state.value("active").toString() != current_
+    if (gameSessions() > 0 || gameStarting() || !state.value("game_scene").toString().isEmpty()
+        || state.value("active").toString() != current_
         || state.value("scene_generation").toString() != transactionId_) return;
     const auto cur = pp::currentProfile(pp::primaryHandler());
     if (!cur || cur->isEmpty() || *cur == expectedProfile_) return;
     --verifyTriesLeft_;
+    const QString target = current_;
+    const QString generation = transactionId_;
     Q_EMIT finished(QString(), true, {QStringLiteral("the firmware changed the power profile to %1 after the switch — applying '%2' again")
-                                          .arg(HomeTab::profileLabel(*cur), current_)});
+                                          .arg(HomeTab::profileLabel(*cur), target)});
+    if (busy_ || transactionId_ != generation) return;
     nextAuto_ = false;  // one retry only: it is not verified again
-    apply(current_, QStringLiteral("verify: firmware changed the power profile"));
+    apply(target, QStringLiteral("verify: firmware changed the power profile"));
 }

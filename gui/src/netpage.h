@@ -71,6 +71,7 @@ private:
     void whois(const QString &ip, std::function<void(const QJsonObject &)> cb);
     void addIpActions(QMenu &m, const QString &ip);
     void refreshWifi();
+    void resetWifiAdapterView();
     void applyWifi(const QJsonObject &w);
     void refreshWifiHw();
     void applyWifiHw(const QJsonObject &h);
@@ -111,7 +112,10 @@ private:
     QLabel *wifiIfaceLabel_ = nullptr, *wifiHw_ = nullptr, *wifiNetInfo_ = nullptr;
     QTabWidget *wifiPages_ = nullptr;         // Connection / Hardware / Nearby networks
     QTreeWidget *wifiNets_ = nullptr;
+    quint64 wifiAdapterRevision_ = 0, wifiHardwareRevision_ = 0;
     quint64 wifiScanRevision_ = 0;
+    bool wifiStatusBusy_ = false, wifiRescanBusy_ = false, wifiCanRescan_ = false;
+    QString wifiLinkStamp_;
     QJsonObject wifiScanSnapshot_;
     QDateTime wifiScanReceived_;
     std::optional<wifiage::Tick> wifiScanTick_;

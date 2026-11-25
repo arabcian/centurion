@@ -296,6 +296,23 @@ Edid decodeEdid(const QByteArray &d) {
     return e;
 }
 
+QString edidFieldName(edidfields::Kind kind) {
+    using K = edidfields::Kind;
+    switch (kind) {
+    case K::Header: return tr("Header"); case K::Manufacturer: return tr("Manufacturer ID");
+    case K::Product: return tr("Product ID"); case K::Serial: return tr("Serial number field");
+    case K::Manufacture: return tr("Manufacture date"); case K::Version: return tr("EDID version");
+    case K::Parameters: return tr("Display parameters"); case K::Chromaticity: return tr("Chromaticity");
+    case K::Established: return tr("Established timings"); case K::Standard: return tr("Standard timings");
+    case K::DetailedTiming: return tr("Detailed timing"); case K::Descriptor: return tr("Display descriptor");
+    case K::ExtensionCount: return tr("Extension count"); case K::Checksum: return tr("Checksum byte");
+    case K::ExtensionHeader: return tr("Extension header"); case K::CtaData: return tr("CTA data block");
+    case K::DisplayIdData: return tr("DisplayID data block"); case K::DisplayIdChecksum: return tr("DisplayID section checksum");
+    case K::Padding: return tr("Padding"); case K::Unknown: return tr("Unknown");
+    }
+    return tr("Unknown");
+}
+
 Report displays(const QString &root) {
     Report r;
     r.code = QStringLiteral("S03");
@@ -382,21 +399,7 @@ Report displays(const QString &root) {
         }
         const Edid e = decodeEdid(raw);
         const auto inspection = edidfields::inspect({reinterpret_cast<const std::uint8_t *>(raw.constData()), std::size_t(raw.size())});
-        const auto fieldName = [](edidfields::Kind kind) -> QString {
-            using K = edidfields::Kind;
-            switch (kind) {
-            case K::Header: return tr("Header"); case K::Manufacturer: return tr("Manufacturer ID");
-            case K::Product: return tr("Product ID"); case K::Serial: return tr("Serial number field");
-            case K::Manufacture: return tr("Manufacture date"); case K::Version: return tr("EDID version");
-            case K::Parameters: return tr("Display parameters"); case K::Chromaticity: return tr("Chromaticity");
-            case K::Established: return tr("Established timings"); case K::Standard: return tr("Standard timings");
-            case K::DetailedTiming: return tr("Detailed timing"); case K::Descriptor: return tr("Display descriptor");
-            case K::ExtensionCount: return tr("Extension count"); case K::Checksum: return tr("Checksum byte");
-            case K::ExtensionHeader: return tr("Extension header"); case K::CtaData: return tr("CTA data block");
-            case K::Padding: return tr("Padding"); default: return tr("Unknown");
-            }
-        };
-        for (const auto &f : inspection.fields) fields.add({conn, QStringLiteral("0x%1").arg(qulonglong(f.offset),4,16,QLatin1Char('0')), QString::number(qulonglong(f.length)), fieldName(f.kind), f.tag < 0 ? QStringLiteral("—") : QStringLiteral("0x%1").arg(f.tag,2,16,QLatin1Char('0'))});
+        for (const auto &f : inspection.fields) fields.add({conn, QStringLiteral("0x%1").arg(qulonglong(f.offset),4,16,QLatin1Char('0')), QString::number(qulonglong(f.length)), edidFieldName(f.kind), f.tag < 0 ? QStringLiteral("—") : QStringLiteral("0x%1").arg(f.tag,2,16,QLatin1Char('0'))});
         for (const auto &timing : edidfields::progressiveTimings({reinterpret_cast<const std::uint8_t *>(raw.constData()), std::size_t(raw.size())})) {
             auto pair = [](unsigned h,unsigned v) { return QStringLiteral("%1 / %2").arg(h).arg(v); };
             timingDetails.add({conn, QStringLiteral("0x%1").arg(qulonglong(timing.offset), 4, 16, QLatin1Char('0')),
@@ -408,10 +411,14 @@ Report displays(const QString &root) {
             for (int i = 0; i < 128; ++i) sum += u8(raw, block * 128 + i);
             const int remainder = sum % 256;
             const QString kind = block == 0 ? tr("Base block") : e.extensions.value(block - 1, QStringLiteral("—"));
+            const auto &blockInfo = inspection.blocks.at(std::size_t(block));
+            QString status = remainder == 0 ? tr("Checksum matches") : tr("Checksum mismatch");
+            if (!blockInfo.declared) status += QStringLiteral(" · ") + tr("Block not declared");
+            if (!blockInfo.structure) status += QStringLiteral(" · ") + tr("Invalid block structure");
             blocks.add({conn, QString::number(block), kind,
                         QStringLiteral("0x%1").arg(u8(raw, block * 128 + 127), 2, 16, QLatin1Char('0')),
-                        QString::number(remainder), remainder == 0 ? tr("Checksum matches") : tr("Checksum mismatch")},
-                       remainder == 0 ? Level::Info : Level::Review);
+                        QString::number(remainder), status},
+                       blockInfo.checksum && blockInfo.structure && blockInfo.declared ? Level::Info : Level::Review);
         }
         for (const QString &timing : e.timings) modesTable.add({conn, timing});
         {

@@ -6,6 +6,7 @@
 #include "diagnostictools.h"
 #include "charts.h"
 #include <QPainter>
+#include <QMouseEvent>
 #include <QTextBlock>
 #include <cmath>
 #include <QSpinBox>
@@ -64,6 +65,7 @@
 #include <QVBoxLayout>
 
 #include <algorithm>
+#include <functional>
 #include <optional>
 #include <QFileInfo>
 
@@ -438,11 +440,31 @@ QWidget *tableWidget(const diag::Table &t, const std::shared_ptr<QJsonObject> &h
 class EdidTimingPlot final : public QWidget {
 public:
     explicit EdidTimingPlot(QWidget *parent = nullptr) : QWidget(parent) { setMinimumHeight(86); }
+    void setOffsetHandler(std::function<void(int)> handler) { offsetSelected_ = std::move(handler); }
     void setData(std::vector<edidfields::Timing> timings, int minimum, int maximum) {
         timings_ = std::move(timings); minimum_ = minimum; maximum_ = maximum; selected_ = -1; update();
     }
     void selectOffset(int offset) { selected_ = offset; update(); }
 protected:
+    void mousePressEvent(QMouseEvent *event) override {
+        if (event->button() == Qt::LeftButton && offsetSelected_ && width() > 24
+            && std::abs(event->position().y() - height()/2) <= 16) {
+            const double high = axisMaximum();
+            const edidfields::Timing *closest = nullptr;
+            double distance = 8;
+            for (const auto &timing : timings_) {
+                const double delta = std::abs(event->position().x() - axisX(timing.refreshHz(), high));
+                if (delta < distance) { closest = &timing; distance = delta; }
+            }
+            if (closest) {
+                offsetSelected_(int(closest->offset));
+                event->accept();
+                return;
+            }
+        }
+        QWidget::mousePressEvent(event);
+    }
+
     void paintEvent(QPaintEvent *) override {
         QPainter p(this); p.setRenderHint(QPainter::Antialiasing);
         const QColor fg(theme::FG), accent(theme::ACCENT), info(theme::INFO);
@@ -452,12 +474,10 @@ protected:
                        QCoreApplication::translate("diag", "No verified progressive timing or explicit VRR range to plot."));
             return;
         }
-        double high = std::max(60.0, double(maximum_));
-        for (const auto &t : timings_) high = std::max(high, t.refreshHz());
-        high = std::ceil(high / 10.0) * 10.0;
+        const double high = axisMaximum();
         const double left = 12, right = width() - 12;
         if (right <= left) return;
-        const auto x = [&](double hz) { return left + hz / high * (right-left); };
+        const auto x = [&](double hz) { return axisX(hz, high); };
         const int axis = height()/2;
         p.setPen(QPen(QColor(theme::BORDER), 2)); p.drawLine(QPointF(left,axis),QPointF(right,axis));
         if (minimum_ > 0 && maximum_ >= minimum_) {
@@ -474,13 +494,20 @@ protected:
         p.drawText(QRectF(left,axis+20,right-left,22),Qt::AlignRight,QStringLiteral("%1 Hz").arg(high,0,'f',0));
     }
 private:
+    double axisMaximum() const {
+        double high = std::max(60.0, double(maximum_));
+        for (const auto &timing : timings_) high = std::max(high, timing.refreshHz());
+        return std::ceil(high / 10.0) * 10.0;
+    }
+    double axisX(double hz, double high) const { return 12 + hz / high * (width() - 24); }
+
     std::vector<edidfields::Timing> timings_;
+    std::function<void(int)> offsetSelected_;
     int minimum_ = 0, maximum_ = 0, selected_ = -1;
 };
 
 // Inspect the frozen report, never re-open a connector or change an EDID override.
-void inspectEdid(QWidget *parent, const diag::Table &bytes, const diag::Table &fields,
-                 const QString &connector, int selectedOffset) {
+void inspectEdid(QWidget *parent, const diag::Table &bytes, const QString &connector, int selectedOffset) {
     auto tr = [](const char *s) { return QCoreApplication::translate("diag", s); };
     QMap<QString, QByteArray> captures;
     QSet<QString> invalidConnectors;
@@ -520,21 +547,26 @@ void inspectEdid(QWidget *parent, const diag::Table &bytes, const diag::Table &f
     auto *bytePanel = new QWidget; auto *byteLayout = new QVBoxLayout(bytePanel); byteLayout->setContentsMargins(0,0,0,0);
     auto *offset = new QSpinBox; offset->setDisplayIntegerBase(16); offset->setPrefix(QStringLiteral("0x"));
     offset->setAccessibleName(tr("Selected byte offset")); byteLayout->addWidget(offset);
+    plot->setOffsetHandler([offset](int pos) { offset->setValue(pos); });
     auto *detail = text(QString()); byteLayout->addWidget(detail);
     auto *raw = new QPlainTextEdit; raw->setReadOnly(true); raw->setLineWrapMode(QPlainTextEdit::NoWrap);
     raw->setFont(QFontDatabase::systemFont(QFontDatabase::FixedFont)); byteLayout->addWidget(raw, 1);
     split->addWidget(bytePanel); split->setSizes({170,300});
+    QHash<QString, int> lastOffset;
+    edidfields::Inspection inspection;
     auto update = [&] {
-        const auto capture = captures.value(selector->currentText()); const int pos = offset->value();
+        const auto name = selector->currentText();
+        const auto capture = captures.value(name);
+        const int pos = offset->value();
         if (pos < 0 || pos >= capture.size()) return;
-        const auto inspection = edidfields::inspect({reinterpret_cast<const std::uint8_t *>(capture.constData()), std::size_t(capture.size())});
+        lastOffset.insert(name, pos);
         QString info = tr("Byte %1 · block %2 · value %3").arg(pos).arg(pos/128).arg(QStringLiteral("0x%1").arg(quint8(capture.at(pos)),2,16,QLatin1Char('0')));
-        for (const auto &row : fields.rows) {
-            if (row.value(0) != selector->currentText()) continue;
-            bool startOk=false, lenOk=false; const int start=row.value(1).toInt(&startOk,16), len=row.value(2).toInt(&lenOk);
-            if (startOk && lenOk && start>=0 && len>0 && pos>=start && pos-start<len) {
-                info += QStringLiteral("\n%1 · %2 + %3").arg(row.value(3),row.value(1),row.value(2)); break;
-            }
+        for (const auto &field : inspection.fields) {
+            const auto index = std::size_t(pos);
+            if (index < field.offset || index - field.offset >= field.length) continue;
+            info += QStringLiteral("\n%1 · 0x%2 + %3").arg(diagnostictools::edidFieldName(field.kind))
+                .arg(qulonglong(field.offset), 4, 16, QLatin1Char('0')).arg(qulonglong(field.length));
+            break;
         }
         if (std::size_t(pos/128)<inspection.blocks.size()) {
             const auto &block=inspection.blocks[std::size_t(pos/128)];
@@ -554,13 +586,16 @@ void inspectEdid(QWidget *parent, const diag::Table &bytes, const diag::Table &f
         }
     };
     auto switchConnector = [&] {
-        const auto capture=captures.value(selector->currentText());
+        const auto name = selector->currentText();
+        const auto capture = captures.value(name);
+        const auto data = std::span(reinterpret_cast<const std::uint8_t *>(capture.constData()), std::size_t(capture.size()));
+        inspection = edidfields::inspect(data);
         const QSignalBlocker blocker(offset), rawBlock(raw), treeBlock(timingTree);
-        offset->setRange(0,int(capture.size())-1); offset->setValue(0);
+        offset->setRange(0,int(capture.size())-1); offset->setValue(lastOffset.value(name));
         QStringList lines; for (int i=0;i<capture.size();i+=16) lines << QStringLiteral("0x%1  %2").arg(i,4,16,QLatin1Char('0')).arg(QString::fromLatin1(capture.mid(i,16).toHex(' ')).toUpper());
         raw->setPlainText(lines.join(QLatin1Char('\n')));
         auto decoded=diagnostictools::decodeEdid(capture);
-        auto timings=edidfields::detailedTimings({reinterpret_cast<const std::uint8_t *>(capture.constData()), std::size_t(capture.size())});
+        auto timings=edidfields::detailedTimings(data);
         // The source reads one extra byte to detect a cap. A frozen report stores
         // at most 4096 bytes, so it cannot prove completeness at the cap.
         if (capture.size()>=4096 || !decoded.structuralValid) { timings.clear(); decoded.vrrMin=decoded.vrrMax=0; }
@@ -593,9 +628,12 @@ void inspectEdid(QWidget *parent, const diag::Table &bytes, const diag::Table &f
         const int pos=cursor.blockNumber()*16+(column-8)/3;
         if(pos>=0 && pos<=offset->maximum() && pos!=offset->value()) offset->setValue(pos);
     });
-    if (!connector.isEmpty()) selector->setCurrentText(connector);
+    if (!connector.isEmpty()) {
+        const QSignalBlocker blocker(selector);
+        selector->setCurrentText(connector);
+        lastOffset.insert(connector, selectedOffset);
+    }
     switchConnector();
-    if (!connector.isEmpty()) offset->setValue(selectedOffset);
     auto *close=new QDialogButtonBox(QDialogButtonBox::Close); layout->addWidget(close);
     auto *exportBinary=close->addButton(tr("Save captured EDID…"), QDialogButtonBox::ActionRole);
     QObject::connect(exportBinary,&QPushButton::clicked,&dlg,[&]{
@@ -842,10 +880,9 @@ void DiagReportView::setReport(const diag::Report &r) {
         findingWidgets_ << card;
         bodyLayout_->addWidget(card);
     }
-    diag::Table edidBytes, edidFields;
+    diag::Table edidBytes;
     for (const auto &table : current.tables) {
         if (table.viewKind == QStringLiteral("edid-bytes")) edidBytes = table;
-        if (table.viewKind == QStringLiteral("edid-fields")) edidFields = table;
     }
     for (const diag::Table &t : current.tables) {
         auto *w = tableWidget(t, t.viewKind == QStringLiteral("acpi-wmi-tree") ? acpiTreeState_ : hardwareTreeState_);
@@ -856,14 +893,14 @@ void DiagReportView::setReport(const diag::Report &r) {
                                                   || t.viewKind == QStringLiteral("edid-timings"))) {
             auto *inspect = new QPushButton(rawEdid ? tr("Inspect captured EDID bytes…") : tr("Inspect selected byte offset…"));
             w->layout()->addWidget(inspect);
-            const auto openEdid = [w, bytes = edidBytes, fields = edidFields, rawEdid](QTreeWidgetItem *item) {
+            const auto openEdid = [w, bytes = edidBytes, rawEdid](QTreeWidgetItem *item) {
                 if (!item) {
-                    if (rawEdid) inspectEdid(w, bytes, fields, {}, 0);
+                    if (rawEdid) inspectEdid(w, bytes, {}, 0);
                     return;
                 }
                 bool valid = false;
                 const int offset = item->text(rawEdid ? 2 : 1).toInt(&valid, 16);
-                if (valid) inspectEdid(w, bytes, fields, item->text(0), offset);
+                if (valid) inspectEdid(w, bytes, item->text(0), offset);
             };
             connect(inspect, &QPushButton::clicked, w, [tree, openEdid] { openEdid(tree->currentItem()); });
             connect(tree, &QTreeWidget::itemDoubleClicked, w, [openEdid](QTreeWidgetItem *item, int) { openEdid(item); });
@@ -1154,10 +1191,16 @@ void DiagReportView::archiveWorkspace() {
             + (diff.isEmpty() ? tr("No structured differences.") : diff.join(QLatin1Char('\n')))
             + QStringLiteral("\n\n") + tr("Note: %1").arg(entry.value("note").toString()));
     };
-    auto refill = [&](int preferredIndex) {
+    auto refill = [&](int preferredIndex, const QString &preferredId = {}) {
         const QSignalBlocker block(list); list->clear();
-        for (const auto &v : *entries) { const auto e = v.toObject(); list->addItem(e.value(QStringLiteral("time")).toString() + QStringLiteral(" · ") + e.value(QStringLiteral("boot")).toString(), e.value(QStringLiteral("id")).toString()); }
-        list->setCurrentIndex(std::min(preferredIndex, list->count() - 1)); render();
+        for (const auto &v : *entries) {
+            const auto e = v.toObject();
+            list->addItem(e.value(QStringLiteral("time")).toString() + QStringLiteral(" · ") + e.value(QStringLiteral("boot")).toString(),
+                          diagnostichistory::full(e.value(QStringLiteral("id")).toString()));
+        }
+        const int found = preferredId.isEmpty() ? -1 : list->findData(preferredId);
+        list->setCurrentIndex(found >= 0 ? found : std::min(preferredIndex, list->count() - 1));
+        render();
     };
     connect(list, &QComboBox::currentIndexChanged, &dlg, [&](int) { render(); });
     auto change = [&](bool adding) {
@@ -1167,20 +1210,24 @@ void DiagReportView::archiveWorkspace() {
         QLockFile lock(path + QStringLiteral(".lock"));
         if (!lock.tryLock(0)) { QMessageBox::warning(&dlg, tr("Diagnostic History"), tr("History is currently in use.")); return; }
         auto latest = read();
-        if (!latest) { QMessageBox::warning(&dlg, tr("Diagnostic History"), tr("History changed or is damaged.")); return; }
+        if (!latest) { lock.unlock(); QMessageBox::warning(&dlg, tr("Diagnostic History"), tr("History changed or is damaged.")); return; }
         if (adding) {
             for(const auto &v:*latest) {
                 const auto e=v.toObject();
                 if(e.value("time").toString()==capturedAt && e.value("boot").toString()==boot && e.value("locale").toString()==locale && e.value("snapshot").toObject()==captured) {
+                    lock.unlock(); entries = latest; refill(selectedIndex, selected);
                     QMessageBox::information(&dlg,tr("Diagnostic History"),tr("This capture is already archived."));return;
                 }
             }
-            if (latest->size() >= 20) { QMessageBox::information(&dlg, tr("Diagnostic History"), tr("History is full. Delete an old snapshot first.")); return; }
+            if (latest->size() >= 20) {
+                lock.unlock(); entries = latest; refill(selectedIndex, selected);
+                QMessageBox::information(&dlg, tr("Diagnostic History"), tr("History is full. Delete an old snapshot first.")); return;
+            }
             latest->append(QJsonObject{{"id", QUuid::createUuid().toString(QUuid::WithoutBraces)}, {"time", capturedAt}, {"boot", boot}, {"locale", locale}, {"snapshot", captured}});
         } else {
             const auto count = latest->size();
             for (qsizetype i = count; i > 0; --i)
-                if (latest->at(i-1).toObject().value(QStringLiteral("id")).toString() == selected) latest->removeAt(i-1);
+                if (diagnostichistory::full(latest->at(i-1).toObject().value(QStringLiteral("id")).toString()) == selected) latest->removeAt(i-1);
             if (latest->size() == count) {
                 lock.unlock();
                 entries = latest;
@@ -1204,16 +1251,21 @@ void DiagReportView::archiveWorkspace() {
         if(note.size()>4096) {QMessageBox::warning(&dlg,tr("Diagnostic History"),tr("Note exceeds 4096 characters."));return;}
         QLockFile lock(path+QStringLiteral(".lock"));
         if(!lock.tryLock(0)) {QMessageBox::warning(&dlg,tr("Diagnostic History"),tr("History is currently in use."));return;}
-        auto latest=read();if(!latest) {QMessageBox::warning(&dlg,tr("Diagnostic History"),tr("History changed or is damaged."));return;}
+        auto latest=read();if(!latest) {lock.unlock();QMessageBox::warning(&dlg,tr("Diagnostic History"),tr("History changed or is damaged."));return;}
         for(qsizetype i=0;i<latest->size();++i) {
-            auto e=latest->at(i).toObject(); if(e.value("id").toString()!=id) continue;
-            if(e.value("note").toString()!=old) {QMessageBox::warning(&dlg,tr("Diagnostic History"),tr("History changed or is damaged."));return;}
+            auto e=latest->at(i).toObject(); if(diagnostichistory::full(e.value("id").toString())!=id) continue;
+            if(e.value("note").toString()!=old) {
+                lock.unlock(); entries=latest; refill(int(i), id);
+                QMessageBox::warning(&dlg,tr("Diagnostic History"),tr("This note changed while you were editing it."));return;
+            }
             e.insert("note",diag::redactPrivateText(note));latest->replace(i,e);
             const auto error=diagsrc::saveJson(path,QJsonObject{{"version",1},{"entries",*latest}});
+            lock.unlock();
             if(!error.isEmpty()) {QMessageBox::warning(&dlg,tr("Diagnostic History"),error);return;}
             entries=latest;refill(int(i));return;
         }
-        QMessageBox::warning(&dlg,tr("Diagnostic History"),tr("History changed or is damaged."));
+        lock.unlock(); entries=latest; refill(list->currentIndex());
+        QMessageBox::information(&dlg,tr("Diagnostic History"),tr("This snapshot is no longer in the archive."));
     });
     refill(int(entries->size()) - 1); dlg.exec();
 }

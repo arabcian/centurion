@@ -188,9 +188,22 @@ void exportRows(QWidget *parent,const QString &header,const QList<QStringList> &
 LineChart::LineChart(QWidget *parent) : QWidget(parent) { setAccessibleName(QCoreApplication::translate("LineChart", "Line chart")); setMouseTracking(true); setFocusPolicy(Qt::StrongFocus); }
 
 void LineChart::setPoints(const QVector<Point> &points, const QString &yUnit) {
-    const bool narrowed = yUnit == unit_ && begin_ < end_ && (begin_ > 0 || end_ < points_.size());
+    const auto matchingIndex = [](const QVector<Point> &samples, const Point &target) {
+        return uniqueIndex(samples, [&](const Point &p) { return p.x == target.x && p.label == target.label; });
+    };
+    const bool sameUnit = yUnit == unit_;
+    const bool narrowed = sameUnit && begin_ < end_ && (begin_ > 0 || end_ < points_.size());
     const Point oldFirst = narrowed ? points_.at(begin_) : Point{};
     const Point oldLast = narrowed ? points_.at(end_ - 1) : Point{};
+    const bool stableRange = narrowed && matchingIndex(points_, oldFirst) == begin_
+        && matchingIndex(points_, oldLast) == end_ - 1;
+    Point oldSelection{};
+    bool stableSelection = false;
+    if (keyboardSample_ >= 0) {
+        oldSelection = points_.at(keyboardSample_);
+        stableSelection = sameUnit && matchingIndex(points_, oldSelection) == keyboardSample_;
+        QToolTip::hideText();
+    }
     points_.clear();
     bool gap = false;
     for (const auto &pt : points) {
@@ -199,9 +212,10 @@ void LineChart::setPoints(const QVector<Point> &points, const QString &yUnit) {
         points_.append(copy); gap = false;
     }
     unit_ = yUnit;
-    if (narrowed) {
-        const auto first = uniqueIndex(points_, [&](const Point &p) { return p.x == oldFirst.x && p.label == oldFirst.label; });
-        const auto last = uniqueIndex(points_, [&](const Point &p) { return p.x == oldLast.x && p.label == oldLast.label; });
+    keyboardSample_ = stableSelection ? matchingIndex(points_, oldSelection) : -1;
+    if (stableRange) {
+        const auto first = matchingIndex(points_, oldFirst);
+        const auto last = matchingIndex(points_, oldLast);
         if (first >= 0 && last >= first) {
             setViewRange(first, last + 1);
             return;
@@ -232,8 +246,10 @@ void LineChart::setViewRange(qsizetype begin, qsizetype end) {
     plotted_.clear();
     plottedIndices_.clear();
     hover_ = -1;
-    if (keyboardSample_ >= 0) QToolTip::hideText();
-    keyboardSample_ = -1;
+    if (keyboardSample_ >= 0 && (keyboardSample_ < begin_ || keyboardSample_ >= end_)) {
+        QToolTip::hideText();
+        keyboardSample_ = -1;
+    }
     updateAccessibleDescription();
     update();
 }
@@ -645,11 +661,16 @@ void DayBars::updateAccessibleRange() {
         for (int c : d.kinds) n += std::max(0,c);
         rows << QStringLiteral("%1: %2").arg(d.date).arg(n);
     }
+    const auto selected = std::find_if(days_.cbegin() + begin_, days_.cbegin() + end_,
+        [this](const Day &day) { return day.date == selected_; });
+    if (selected != days_.cbegin() + end_) rows.prepend(tr("Selected day: %1").arg(selected->date));
     setAccessibleDescription(rows.join(QStringLiteral("; ")));
 }
 
 void DayBars::setSelected(const QString &date) {
+    if (selected_ == date) return;
     selected_ = date;
+    updateAccessibleRange();
     update();
 }
 
@@ -708,7 +729,14 @@ void DayBars::paintEvent(QPaintEvent *) {
 
 void DayBars::mousePressEvent(QMouseEvent *e) {
     const int i = columnAt(e->position());
-    if (e->button()==Qt::LeftButton && i >= 0) Q_EMIT dayClicked(days_[i].date);
+    if (e->button() == Qt::LeftButton && i >= 0) {
+        const auto date = days_.at(i).date;
+        setSelected(date);
+        Q_EMIT dayClicked(date);
+        e->accept();
+        return;
+    }
+    QWidget::mousePressEvent(e);
 }
 
 void DayBars::mouseMoveEvent(QMouseEvent *e) {
@@ -733,13 +761,14 @@ void DayBars::keyPressEvent(QKeyEvent *e) {
     if (begin_ >= end_ || (!activate && key != Qt::Key_Left && key != Qt::Key_Right && key != Qt::Key_Home && key != Qt::Key_End)) {
         QWidget::keyPressEvent(e); return;
     }
+    if (activate && e->isAutoRepeat()) { e->accept(); return; }
     qsizetype i = begin_;
     while (i < end_ && days_[i].date != selected_) ++i;
     if (key == Qt::Key_End) i = end_ - 1;
     else if (key == Qt::Key_Home || i == end_) i = begin_;
     else if (!activate) i = std::clamp(i + (key == Qt::Key_Left ? -1 : 1), begin_, end_ - 1);
     const QString date = days_.at(i).date;
-    if (date != selected_ || (activate && !e->isAutoRepeat())) {
+    if (date != selected_ || activate) {
         setSelected(date);
         Q_EMIT dayClicked(date);
     }
@@ -753,9 +782,19 @@ void DayBars::setViewRange(qsizetype begin,qsizetype end) {
     update();
 }
 void DayBars::wheelEvent(QWheelEvent *e) {
-    if(!(e->modifiers()&Qt::ControlModifier)||days_.isEmpty()||!e->angleDelta().y()){e->ignore();return;}
-    const auto count=end_-begin_;const auto length=std::clamp(e->angleDelta().y()>0?count*3/4:count+std::max(qsizetype(1),count/3),qsizetype(1),days_.size());
-    const auto first=std::clamp(begin_+(count-length)/2,qsizetype(0),days_.size()-length);setViewRange(first,first+length);e->accept();
+    if (!(e->modifiers() & Qt::ControlModifier) || begin_ >= end_ || !e->angleDelta().y()) { e->ignore(); return; }
+    const auto count = end_ - begin_;
+    const auto length = std::clamp(e->angleDelta().y() > 0 ? count * 3 / 4 : count + std::max(qsizetype(1), count / 3),
+                                   qsizetype(1), days_.size());
+    if (length != count) {
+        const auto anchor = columnAt(e->position());
+        const double fraction = anchor >= 0 && count > 1 ? double(anchor - begin_) / double(count - 1) : 0.5;
+        const auto first = std::clamp(begin_ + qsizetype(std::llround((count - length) * fraction)),
+                                      qsizetype(0), days_.size() - length);
+        setToolTip(QString());
+        setViewRange(first, first + length);
+    }
+    e->accept();
 }
 void DayBars::contextMenuEvent(QContextMenuEvent *e) {
     if(days_.isEmpty())return;
