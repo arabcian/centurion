@@ -102,18 +102,19 @@ std::optional<LogLine> parseLine(const QString &line) {
     return std::nullopt;
 }
 
-LogTail savedLog(SavedLog source, int max, qint64 maxBytesPerFile, const QString &day) {
-    LogTail out;
-    max = std::clamp(max, 0, 10000);
-    maxBytesPerFile = std::clamp<qint64>(maxBytesPerFile, 0, 8LL << 20);
-    if (!max || !maxBytesPerFile) return out;
+std::array<LogFileCoverage, 2> scanSavedLog(
+    SavedLog source, qint64 maxBytesPerFile, const std::function<bool(const QString &, bool)> &visit,
+    const QString &day) {
+    std::array<LogFileCoverage, 2> files{};
+    maxBytesPerFile = std::clamp<qint64>(maxBytesPerFile, 0, 16LL << 20);
+    if (!maxBytesPerFile) return files;
     const bool health = source == SavedLog::Health;
     const QString name = health ? QStringLiteral("health.log") : QStringLiteral("kernel.log");
     const QByteArray dayPrefix = day.isEmpty() ? QByteArray() : (day + QLatin1Char(' ')).toLatin1();
     for (int index = 0; index < 2; ++index) {
         const bool rotated = index == 0;
         const QString file = rotated ? name + QStringLiteral(".1") : name;
-        auto &coverage = out.files.at(index);
+        auto &coverage = files.at(index);
         QFile f;
         bool missing = false;
         if (!openRegular(f, stateDir() + QLatin1Char('/') + file, &missing)) {
@@ -142,20 +143,28 @@ LogTail savedLog(SavedLog source, int max, qint64 maxBytesPerFile, const QString
             const QByteArrayView record(bytes.constData() + pos, end - pos);
             pos = end + 1;
             if (!dayPrefix.isEmpty() && !record.startsWith(dayPrefix)) continue;
-            auto line = record.size() <= 8192
-                ? parseLine(QString::fromUtf8(record.data(), record.size()).trimmed()) : std::nullopt;
-            if (line && (health == !line->kind.isEmpty())) {
-                line->rotated = rotated;
-                out.lines << std::move(*line);
-                if (out.lines.size() > max) {
-                    out.lines.removeFirst();
-                    ++out.omittedLines;
-                }
-            } else {
+            if (record.size() > 8192 || !visit(QString::fromUtf8(record.data(), record.size()).trimmed(), rotated))
                 ++coverage.rejectedLines;
-            }
         }
     }
+    return files;
+}
+
+LogTail savedLog(SavedLog source, int max, qint64 maxBytesPerFile, const QString &day) {
+    LogTail out;
+    max = std::clamp(max, 0, 10000);
+    if (!max) return out;
+    out.files = scanSavedLog(source, maxBytesPerFile, [&](const QString &record, bool rotated) {
+        auto line = parseLine(record);
+        if (!line || (source == SavedLog::Health) != !line->kind.isEmpty()) return false;
+        line->rotated = rotated;
+        out.lines << std::move(*line);
+        if (out.lines.size() > max) {
+            out.lines.removeFirst();
+            ++out.omittedLines;
+        }
+        return true;
+    }, day);
     return out;
 }
 

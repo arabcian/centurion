@@ -3774,6 +3774,14 @@ Kapalı: artık klavyeyi izlemez; kendi parlaklığı buradan ayarlanamaz.</tran
     <context>
         <name>KlogPage</name>
         <message>
+            <source>Some saved records could not be scanned.</source>
+            <translation>Bazı kayıtlar taranamadı.</translation>
+        </message>
+        <message>
+            <source>&lt;i&gt;Kernel message %1 was not found in the scanned records.&lt;/i&gt;</source>
+            <translation>&lt;i&gt;%1 numaralı çekirdek iletisi taranan kayıtlarda bulunamadı.&lt;/i&gt;</translation>
+        </message>
+        <message>
             <location filename="work/gui/src/klogpage.cpp" line="94"/>
             <source>WARN and worse</source>
             <translation>WARN ve üstü</translation>

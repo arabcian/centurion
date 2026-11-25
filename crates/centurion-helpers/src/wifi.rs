@@ -203,13 +203,18 @@ fn fields(text: &str) -> impl Iterator<Item = (&str, &str)> {
 /// First number of a value such as "-52 dBm" or "866.7 MBit/s 80MHz".
 fn first<T: std::str::FromStr>(v: &str) -> Option<T> { v.split_whitespace().next()?.parse().ok() }
 
+fn frequency_mhz(value: &str) -> Option<u32> {
+    let freq = first::<f64>(value)?;
+    (freq >= 1.0 && freq <= f64::from(u32::MAX) && freq.fract() == 0.0).then_some(freq as u32)
+}
+
 pub fn parse_link(text: &str) -> Link {
     let mut l = Link { connected: text.trim_start().starts_with("Connected to"), ..Link::default() };
     if let Some(b) = text.trim_start().strip_prefix("Connected to ").and_then(|t| t.split_whitespace().next()) { l.bssid = b.to_owned(); }
     for (k, v) in fields(text) {
         match k {
             "SSID" => l.ssid = v.to_owned(),
-            "freq" => l.freq = first::<f64>(v).map(|f| f as u32),
+            "freq" => l.freq = frequency_mhz(v),
             "signal" => l.signal_dbm = first(v),
             "rx bitrate" => { l.rx_mbps = first(v); l.rx_mode = v.to_owned(); }
             "tx bitrate" => { l.tx_mbps = first(v); l.tx_mode = v.to_owned(); }
@@ -271,10 +276,10 @@ pub fn band(freq: u32) -> &'static str {
 pub fn channel(freq: u32) -> Option<u32> {
     match freq {
         2484 => Some(14),
-        2412..=2472 => Some((freq - 2407) / 5),
-        5150..=5895 => Some((freq - 5000) / 5),
+        2412..=2472 if (freq - 2407) % 5 == 0 => Some((freq - 2407) / 5),
+        5150..=5895 if freq % 5 == 0 => Some((freq - 5000) / 5),
         5935 => Some(2),
-        5955..=7115 => Some((freq - 5950) / 5),
+        5955..=7115 if freq % 5 == 0 => Some((freq - 5950) / 5),
         _ => None,
     }
 }
@@ -337,7 +342,7 @@ pub fn parse_scan(text: &str) -> Vec<Bss> {
         let Some((k, v)) = t.split_once(':') else { continue };
         let v = v.trim();
         match k {
-            "freq" => r.bss.freq = first::<f64>(v).filter(|f| f.is_finite() && *f >= 0.0 && *f <= u32::MAX as f64 && f.fract() == 0.0).map_or(0, |f| f as u32),
+            "freq" => r.bss.freq = frequency_mhz(v).unwrap_or(0),
             "signal" => r.bss.signal_dbm = first::<f64>(v).filter(|f| f.is_finite() && (-127.0..=0.0).contains(f)).map(|f| f.round() as i32),
             "SSID" => r.bss.ssid = v.to_owned(),
             "capability" => r.privacy = v.contains("Privacy"),
@@ -698,6 +703,9 @@ mod tests {
         assert_eq!((band(5180), channel(5180)), ("5", Some(36)));
         assert_eq!((band(5955), channel(5955)), ("6", Some(1)));
         assert_eq!((band(5935), channel(5935)), ("6", Some(2)));
+        for freq in [2413, 5181, 5956] {
+            assert_eq!(channel(freq), None);
+        }
         assert_eq!((band(900), channel(900)), ("", None));
         assert_eq!(standard("866.7 MBit/s 80MHz VHT-MCS 9"), "ac");
         assert_eq!(standard("1201.0 MBit/s 80MHz HE-MCS 11 HE-NSS 2"), "ax");

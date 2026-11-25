@@ -1,5 +1,6 @@
 #include "klogpage.h"
 
+#include "diagsources.h"
 #include "eventinfo.h"
 #include "klogview.h"
 #include "privileged.h"
@@ -210,14 +211,12 @@ KlogPage::KlogPage(QWidget *parent) : QWidget(parent) {
     // restart of the app does not write the same records twice.
     {
         // Prefix-only rows are deliberately not used as a cursor for a full UUID.
-        for (const auto &path : {logPath()+QStringLiteral(".1"),logPath()}) {
-            QFile f(path);
-            if (!klogview::fullBootId(bootId_) || !f.open(QIODevice::ReadOnly|QIODevice::Text)) continue;
-            if (f.size()>TAIL_BYTES) { f.seek(f.size()-TAIL_BYTES); f.readLine(); }
-            while (!f.atEnd()) {
-                const auto l=klogview::parse(QString::fromUtf8(f.readLine()));
-                if (l && l->boot==bootId_) savedSeq_=std::max(savedSeq_,l->seq);
-            }
+        if (klogview::fullBootId(bootId_)) {
+            diagsrc::scanSavedLog(diagsrc::SavedLog::Kernel, TAIL_BYTES, [this](const QString &record, bool) {
+                const auto line = klogview::parse(record);
+                if (line && line->boot == bootId_) savedSeq_ = std::max(savedSeq_, line->seq);
+                return line.has_value();
+            });
         }
         lastSeq_ = savedSeq_;
     }
@@ -427,35 +426,35 @@ void KlogPage::render() {
         return false;
     };
     const int levelMax = LEVEL_MAX[std::clamp(level_->currentIndex(), 0, 4)];
-    // Judged over the whole saved log, whatever the scope and filter: "only new" needs the earlier boots too.
+    // "Only new" needs the earlier boots too, independent of scope and display filters.
     const bool focused = !focusBoot_.isEmpty();
     klogview::ContextWindow context(focusBoot_, focusSeq_, CONTEXT_BEFORE, CONTEXT_AFTER);
     tailLimited_ = false;
     QHash<QString, QString> firstBoot;
     int matching=0; hiddenMuted_=0;
     std::deque<klogview::Line> shown;  // the newest lines of the scope, level and text filter
-    for (const QString &path : {logPath() + QStringLiteral(".1"), logPath()}) {
-        QFile f(path);
-        if (!f.open(QIODevice::ReadOnly | QIODevice::Text)) continue;
-        while (!f.atEnd()) {
-            const QString l = QString::fromUtf8(f.readLine()).trimmed();
-            const std::optional<klogview::Line> p = klogview::parse(l);
-            if (!p) continue;
-            if (focused) { context.append(*p); continue; }
-            if (!firstBoot.contains(p->key)) firstBoot.insert(p->key, p->boot);
-            if (!all && (!klogview::fullBootId(boot) || p->boot != boot)) continue;
-            if (p->level > levelMax) continue;
-            if (!matches(l) || !valid) continue;
-            QJsonObject event;
-            if (!typed.kind.isEmpty() || typed.code>=0) event=eventinfo::classifyLine(p->msg);
-            if (!typed.matches(*p,event.value(QStringLiteral("kind")).toString(),event.value(QStringLiteral("code")).toInt(-1),devicePattern)) continue;
-            if (muted_.contains(p->key) && !showMuted_->isChecked()) { ++hiddenMuted_; continue; }
-            if (onlyNew_->isChecked() && firstBoot.value(p->key)!=p->boot) continue;
-            ++matching;
-            shown.push_back(*p);
-            if (shown.size() > MAX_SHOWN_LINES) { shown.pop_front(); tailLimited_ = true; }
-        }
-    }
+    const auto coverage = diagsrc::scanSavedLog(diagsrc::SavedLog::Kernel, LOG_MAX_BYTES, [&](const QString &l, bool) {
+        const std::optional<klogview::Line> p = klogview::parse(l);
+        if (!p) return false;
+        if (focused) { context.append(*p); return true; }
+        if (!firstBoot.contains(p->key)) firstBoot.insert(p->key, p->boot);
+        if (!all && (!klogview::fullBootId(boot) || p->boot != boot)) return true;
+        if (p->level > levelMax) return true;
+        if (!matches(l) || !valid) return true;
+        QJsonObject event;
+        if (!typed.kind.isEmpty() || typed.code>=0) event=eventinfo::classifyLine(p->msg);
+        if (!typed.matches(*p,event.value(QStringLiteral("kind")).toString(),event.value(QStringLiteral("code")).toInt(-1),devicePattern)) return true;
+        if (muted_.contains(p->key) && !showMuted_->isChecked()) { ++hiddenMuted_; return true; }
+        if (onlyNew_->isChecked() && firstBoot.value(p->key)!=p->boot) return true;
+        ++matching;
+        shown.push_back(*p);
+        if (shown.size() > MAX_SHOWN_LINES) { shown.pop_front(); tailLimited_ = true; }
+        return true;
+    });
+    const bool scanLimited = std::any_of(coverage.cbegin(), coverage.cend(), [](const auto &file) {
+        return file.omittedBytes > 0 || file.rejectedLines > 0 || file.incompleteTail
+            || file.state == diagsrc::LogFileState::Unreadable;
+    });
 
     // Opened from Monitor: same-boot neighbours, without the normal tail cap or severity filter.
     std::vector<klogview::Row> rows;
@@ -474,6 +473,8 @@ void KlogPage::render() {
     focusBar_->setVisible(focused);
     const bool advancedActive=!typed.boot.isEmpty() || !typed.kind.isEmpty() || !typed.device.isEmpty() || !typed.fromDate.isEmpty() || !typed.toDate.isEmpty() || typed.code!=-1;
     filterInfo_->setText(focused ? tr("Context ignores all display filters.") : !valid ? tr("Invalid boot identity, event code or date range.") : tr("Matching saved records: %1. Legacy eight-character boot tags are not full boot identities; use All saved boots to inspect them separately.").arg(matching) + (advancedActive ? tr(" Advanced filters active.") : QString()));
+    if (scanLimited)
+        filterInfo_->setText(filterInfo_->text() + QLatin1Char(' ') + tr("Some saved records could not be scanned."));
     if (focused)
         focusText_->setText(tr("Showing up to %1 saved lines before and %2 after kernel message %3 in boot %4, independent of display filters.")
                                 .arg(CONTEXT_BEFORE).arg(CONTEXT_AFTER).arg(focusSeq_).arg(focusBoot_)
@@ -498,7 +499,8 @@ void KlogPage::render() {
     const int vs = text_->verticalScrollBar()->value();
     const bool atEnd = vs >= text_->verticalScrollBar()->maximum() - 4;
     if (focused && rows.empty()) {
-        text_->setHtml(tr("<i>Kernel message %1 is not in the saved log (yet).</i>").arg(focusSeq_));
+        text_->setHtml((scanLimited ? tr("<i>Kernel message %1 was not found in the scanned records.</i>")
+                                    : tr("<i>Kernel message %1 is not in the saved log (yet).</i>")).arg(focusSeq_));
         updateInfo();
         return;
     }

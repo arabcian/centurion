@@ -350,6 +350,12 @@ fn fetch(path: &Path, tail: u64, lines: Option<usize>) -> (&'static str, Option<
 fn json_file(path: &Path) -> (&'static str, Option<String>) {
     read_bounded(path, JSON_MAX, None, true)
 }
+fn same_file_version(before: &std::fs::Metadata, after: &std::fs::Metadata) -> bool {
+    before.len() == after.len()
+        && before.mtime() == after.mtime() && before.mtime_nsec() == after.mtime_nsec()
+        && before.ctime() == after.ctime() && before.ctime_nsec() == after.ctime_nsec()
+}
+
 fn read_bounded(path: &Path, cap: u64, lines: Option<usize>, whole: bool) -> (&'static str, Option<String>) {
     let mut file = match std::fs::OpenOptions::new().read(true).custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK).open(path) {
         Ok(f) => f,
@@ -374,7 +380,7 @@ fn read_bounded(path: &Path, cap: u64, lines: Option<usize>, whole: bool) -> (&'
     if whole {
         let Ok(after) = file.metadata() else { return ("unreadable", None); };
         if bytes.len() as u64 > cap { return ("too large", None); }
-        if bytes.len() as u64 != before.len() || before.len() != after.len() || before.modified().ok() != after.modified().ok() {
+        if bytes.len() as u64 != before.len() || !same_file_version(&before, &after) {
             return ("unreadable", None);
         }
     } else {
@@ -563,7 +569,7 @@ fn write_archive_with_policy(entries: &[Entry], root: &str, out: &Path, replace_
     result
 }
 
-fn publish_archive(tmp: &Path, out: &Path, replace_existing: bool) -> std::io::Result<()> {
+fn publish_file(tmp: &Path, out: &Path, replace_existing: bool) -> std::io::Result<()> {
     if replace_existing { return std::fs::rename(tmp, out); }
     let from = CString::new(tmp.as_os_str().as_bytes())?;
     let to = CString::new(out.as_os_str().as_bytes())?;
@@ -601,7 +607,7 @@ fn pack(entries: &[Entry], root: &str, tar: &Path, stage: &Path, dir: &Path, out
         let bytes = std::io::copy(&mut src, &mut dst).map_err(|e| format!("{}: {e}", tmp.display()))?;
         dst.flush().map_err(|e| e.to_string())?;
         dst.sync_all().map_err(|e| e.to_string())?;
-        publish_archive(&tmp, out, replace_existing).map_err(|e| format!("{}: {e}", out.display()))?;
+        publish_file(&tmp, out, replace_existing).map_err(|e| format!("{}: {e}", out.display()))?;
         Ok(bytes)
     })();
     if result.is_err() { let _ = std::fs::remove_file(&tmp); }
@@ -616,8 +622,13 @@ fn freeze_entries(path: &Path, entries: &[Entry]) -> std::io::Result<()> {
     if !path.is_absolute() || bytes.len() as u64 > SNAPSHOT_MAX {
         return Err(std::io::Error::new(std::io::ErrorKind::InvalidInput, "invalid or oversized report snapshot"));
     }
-    let mut file = std::fs::OpenOptions::new().write(true).create_new(true).mode(0o600).open(path)?;
-    file.write_all(&bytes)
+    let nanos = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_nanos());
+    let tmp = path.with_file_name(format!(".centurion-snapshot-{}-{nanos}.partial", std::process::id()));
+    let mut file = std::fs::OpenOptions::new().write(true).create_new(true).mode(0o600).open(&tmp)?;
+    let result = file.write_all(&bytes).and_then(|_| file.sync_all())
+        .and_then(|_| publish_file(&tmp, path, false));
+    if result.is_err() { let _ = std::fs::remove_file(&tmp); }
+    result
 }
 
 fn thaw_entries(path: &Path) -> Option<Vec<Entry>> {
@@ -633,8 +644,7 @@ fn thaw_entries(path: &Path) -> Option<Vec<Entry>> {
     let mut bounded = file.take(before.len() + 1);
     bounded.read_to_end(&mut bytes).ok()?;
     let after = bounded.get_ref().metadata().ok()?;
-    if bytes.len() as u64 != before.len() || before.len() != after.len()
-        || before.modified().ok() != after.modified().ok() {
+    if bytes.len() as u64 != before.len() || !same_file_version(&before, &after) {
         return None;
     }
     let entries: Vec<(String, String)> = serde_json::from_slice(&bytes).ok()?;
@@ -931,7 +941,12 @@ mod tests {
             entry("README.txt", "included", Some(README.to_owned()))];
         let response = preview(&entries);
         freeze_entries(&snapshot, &entries).unwrap();
+        let frozen_bytes = std::fs::read(&snapshot).unwrap();
         assert!(freeze_entries(&snapshot, &entries).is_err());
+        assert_eq!(std::fs::read(&snapshot).unwrap(), frozen_bytes);
+        assert!(std::fs::read_dir(&root).unwrap().all(|entry| {
+            !entry.unwrap().file_name().to_string_lossy().ends_with(".partial")
+        }));
 
         std::fs::write(&source, "new content\n").unwrap();
         let out = root.join("report.tar.gz");

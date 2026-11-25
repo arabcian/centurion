@@ -45,7 +45,7 @@ line = ('2026-11-02 15:37:42  boot=12abc34d seq=1245  '
 pattern = r'^([0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2})\s+boot=([a-fA-F0-9]+)\s+seq=([0-9]+)\s+(\S+)\s+(\S+)\s+(.*?)\s+\|\s+(.*)$'
 m = re.match(pattern, line)
 checks['archived log record parsing example'] = bool(m and m.group(2) == '12abc34d' and m.group(3) == '1245' and m.group(6).startswith('Xid 79'))
-checks['archive uses the bounded shared parser'] = 'parseLine(QString::fromUtf8(record.data(), record.size()).trimmed())' in sources
+checks['archive uses the bounded shared parser'] = 'out.files = scanSavedLog(source, maxBytesPerFile' in sources and 'auto line = parseLine(record)' in sources
 
 for name, ok in checks.items():
     print(('PASS' if ok else 'FAIL') + ' - ' + name)

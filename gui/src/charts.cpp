@@ -349,6 +349,11 @@ void LineChart::leaveEvent(QEvent *e) {
     hover_=-1; QToolTip::hideText(); update(); QWidget::leaveEvent(e);
 }
 void LineChart::contextMenuEvent(QContextMenuEvent *e) {
+    // Live updates may replace the data and range while the menu is open.
+    const auto frozen = points_;
+    const auto firstVisible = begin_;
+    const auto lastVisible = end_;
+    const auto frozenUnit = unit_;
     QMenu menu(this);
     auto *exportAction=menu.addAction(QCoreApplication::translate("LineChart", "Export plotted samples…"));
     auto *exportVisible=menu.addAction(QCoreApplication::translate("LineChart", "Export visible samples…"));
@@ -362,7 +367,7 @@ void LineChart::contextMenuEvent(QContextMenuEvent *e) {
     if (action==table) {
         QDialog dialog(this); dialog.setWindowTitle(table->text()); dialog.resize(650,450);
         auto *layout=new QVBoxLayout(&dialog); auto *view=new QTableView(&dialog);
-        view->setModel(new SampleModel(points_.mid(begin_,end_-begin_),unit_,view));
+        view->setModel(new SampleModel(frozen.mid(firstVisible, lastVisible - firstVisible), frozenUnit, view));
         view->horizontalHeader()->setSectionResizeMode(QHeaderView::Interactive);
         view->horizontalHeader()->setStretchLastSection(true); layout->addWidget(view);
         auto *buttons=new QDialogButtonBox(QDialogButtonBox::Close,&dialog);
@@ -372,9 +377,8 @@ void LineChart::contextMenuEvent(QContextMenuEvent *e) {
     if (action==reset) { resetView(); return; }
     if (action==zoom) { const auto trim=std::max(qsizetype(1),(end_-begin_)/4); if(end_-begin_<=2) return; setViewRange(begin_+trim,end_-trim); return; }
     if (action!=exportAction && action!=exportVisible) return;
-    const auto frozen = points_;
-    const qsizetype first = action == exportVisible ? begin_ : 0;
-    const qsizetype last = action == exportVisible ? end_ : frozen.size();
+    const qsizetype first = action == exportVisible ? firstVisible : 0;
+    const qsizetype last = action == exportVisible ? lastVisible : frozen.size();
     const QString title = QCoreApplication::translate("LineChart", "Export plotted samples");
     // Export numeric samples only; labels can contain untrusted spreadsheet formula prefixes.
     writeCsv(this, title, QStringLiteral("x,y,break_before"), last - first, [&](QTextStream &out, qsizetype i) {

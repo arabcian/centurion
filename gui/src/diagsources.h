@@ -9,6 +9,7 @@
 #include <QStringList>
 
 #include <array>
+#include <functional>
 #include <optional>
 
 namespace diagsrc {
@@ -50,6 +51,11 @@ struct LogTail {
     std::array<LogFileCoverage, 2> files;
     int omittedLines = 0;
 };
+/// Visit complete, bounded records in rotated/current file order. A visitor
+/// returns false for a malformed record to include it in the coverage count.
+std::array<LogFileCoverage, 2> scanSavedLog(
+    SavedLog source, qint64 maxBytesPerFile, const std::function<bool(const QString &, bool)> &visit,
+    const QString &day = {});
 /// Read at most `maxBytesPerFile` from each file. Apply the optional day filter
 /// before retaining the newest `max` records.
 LogTail savedLog(SavedLog source, int max, qint64 maxBytesPerFile = 4LL << 20, const QString &day = {});
