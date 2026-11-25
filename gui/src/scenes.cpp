@@ -94,7 +94,8 @@ static QJsonObject readObject(const QString &path) {
 static bool writeObject(const QString &path, const QJsonObject &o, QString *err) {
     if (!QDir().mkpath(QFileInfo(path).absolutePath())) { if (err) *err = "cannot create " + QFileInfo(path).absolutePath(); return false; }
     QSaveFile f(path);
-    if (!f.open(QIODevice::WriteOnly) || f.write(QJsonDocument(o).toJson()) < 0 || !f.commit()) {
+    const auto bytes = QJsonDocument(o).toJson();
+    if (!f.open(QIODevice::WriteOnly) || f.write(bytes) != bytes.size() || !f.commit()) {
         if (err) *err = f.errorString();
         return false;
     }
@@ -271,7 +272,10 @@ struct StateLock {
         const QString dir = QFileInfo(stateFile()).absolutePath();
         QDir().mkpath(dir);
         fd = ::open(QFile::encodeName(dir + QStringLiteral("/scene.json.lock")).constData(), O_RDWR | O_CREAT | O_CLOEXEC, 0600);
-        if (fd >= 0) while (::flock(fd, LOCK_EX) != 0 && errno == EINTR) {}
+        if (fd < 0) return;
+        int result;
+        do { result = ::flock(fd, LOCK_EX); } while (result != 0 && errno == EINTR);
+        if (result != 0) { ::close(fd); fd = -1; }
     }
     ~StateLock() { if (fd >= 0) ::close(fd); }
     StateLock(const StateLock &) = delete;
@@ -286,31 +290,48 @@ QString activeScene() {
 
 bool activeScenePartial() { return readObject(stateFile()).value("partial").toBool(); }
 
-void setActiveScene(const QString &name, bool partial) {
+static bool beginScene(const QString &id, QString &previous) {
     const StateLock lock;
+    if (lock.fd < 0) return false;
     QJsonObject o = readObject(stateFile());
+    const auto active = o.value("active").toString();
+    previous = validName(active) ? active : QString();
+    o["scene_generation"] = id;
+    o["gpu_pending"] = QJsonValue::Null;
+    o["gpu_running"] = QJsonValue::Null;
+    return writeObject(stateFile(), o, nullptr);
+}
+
+static bool publishScene(const QString &id, const QString &name, bool partial, bool deferGpu) {
+    const StateLock lock;
+    if (lock.fd < 0) return false;
+    QJsonObject o = readObject(stateFile());
+    if (o.value("scene_generation").toString() != id) return false;
     o["active"] = name;
     o["partial"] = partial;
-    writeObject(stateFile(), o, nullptr);
+    o["gpu_pending"] = deferGpu ? QJsonValue(id) : QJsonValue(QJsonValue::Null);
+    return writeObject(stateFile(), o, nullptr);
 }
 
-/// scene.json "gpu_pending": the one deferred GPU curve apply still wanted (centurion-gamemode's
-/// defer_gpu_curve uses the same field). Empty token = cancel whatever is pending.
-static void setGpuPending(const QString &token) {
+/// Both scene runners use the same transaction ID for pending and in-flight GPU work.
+static bool claimGpuPending(const QString &id) {
     const StateLock lock;
+    if (lock.fd < 0 || id.isEmpty()) return false;
     QJsonObject o = readObject(stateFile());
-    o["gpu_pending"] = token.isEmpty() ? QJsonValue(QJsonValue::Null) : QJsonValue(token);
-    writeObject(stateFile(), o, nullptr);
-}
-
-/// Takes the pending apply if it is still `token`'s; false = a later scene replaced or cancelled it.
-static bool claimGpuPending(const QString &token) {
-    const StateLock lock;
-    QJsonObject o = readObject(stateFile());
-    if (token.isEmpty() || o.value("gpu_pending").toString() != token) return false;
+    if (o.value("scene_generation").toString() != id || o.value("gpu_pending").toString() != id) return false;
     o["gpu_pending"] = QJsonValue::Null;
-    writeObject(stateFile(), o, nullptr);
-    return true;
+    o["gpu_running"] = id;
+    return writeObject(stateFile(), o, nullptr);
+}
+
+static bool finishGpuPending(const QString &id, bool partial) {
+    const StateLock lock;
+    if (lock.fd < 0) return false;
+    QJsonObject o = readObject(stateFile());
+    if (o.value("scene_generation").toString() != id || o.value("gpu_running").toString() != id) return false;
+    o["gpu_running"] = QJsonValue::Null;
+    if (partial) o["partial"] = true;
+    return writeObject(stateFile(), o, nullptr);
 }
 
 /// /proc/<pid>/stat field 22 (start time): pid + start identify one process.
@@ -700,6 +721,7 @@ void SceneEngine::watchSceneState() {
     const QString dir = QFileInfo(stateFile()).absolutePath();
     QDir().mkpath(dir);
     seenActive_ = activeScene();
+    seenPartial_ = activeScenePartial();
     stateTimer_ = new QTimer(this);
     stateTimer_->setSingleShot(true);
     connect(stateTimer_, &QTimer::timeout, this, &SceneEngine::externalStateChanged);
@@ -709,11 +731,18 @@ void SceneEngine::watchSceneState() {
 }
 
 void SceneEngine::externalStateChanged() {
-    const QString now = activeScene();
-    if (now == seenActive_) return;
+    if (busy_) return;  // our own apply reports through started()/finished()
+    const auto state = readObject(stateFile());
+    const QString active = state.value("active").toString();
+    const QString now = validName(active) ? active : QString();
+    const bool partial = state.value("partial").toBool();
+    const bool sameScene = now == seenActive_;
+    const bool changedPartial = partial != seenPartial_;
     seenActive_ = now;
-    if (busy_ || now.isEmpty()) return;  // our own apply reports through started()/finished()
-    Q_EMIT activeSceneChanged(now, gameSceneActive());
+    seenPartial_ = partial;
+    if (now.isEmpty()) return;
+    if (!sameScene) Q_EMIT activeSceneChanged(now, !state.value("game_scene").toString().isEmpty());
+    else if (changedPartial) Q_EMIT activeScenePartialChanged();
 }
 
 void SceneEngine::pollPower(bool timerTick) {
@@ -821,6 +850,7 @@ void SceneEngine::checkGameEnd() {
     {
         // Claim the clean-up under the lock: a POST that got there first has already left the scene.
         const StateLock lock;
+        if (lock.fd < 0) return;
         QJsonObject st = readObject(stateFile());
         if (const QJsonValue g = st.value("game_scene"); !g.isString() || g.toString().isEmpty()) return;
         before = st.value("before_game").toString();
@@ -828,7 +858,7 @@ void SceneEngine::checkGameEnd() {
         st["before_game"] = QJsonValue::Null;
         st["ab_a"] = QJsonValue::Null;     // a dead A launch (gameSessions() no longer counts it)
         st["ab_owner"] = QJsonValue::Null;
-        writeObject(stateFile(), st, nullptr);
+        if (!writeObject(stateFile(), st, nullptr)) return;
     }
     Q_EMIT finished(QString(), true, {QStringLiteral("the game launcher exited without its POST hook — leaving the game scene")});
     const QString target = auto_.enabled && ac_ ? (*ac_ ? auto_.onAc : auto_.onBattery) : before;
@@ -1108,7 +1138,7 @@ void SceneEngine::start(const Scene &s) {
     ok_ = true;
     log_.clear();
     steps_.clear();
-    priorScene_ = activeScene();
+    priorScene_.clear();
     current_ = s.name;
     autoApply_ = std::exchange(nextAuto_, false);
     expectedProfile_ = s.platformProfile;
@@ -1122,7 +1152,10 @@ void SceneEngine::start(const Scene &s) {
     lastOutcome_.clear();
     incomplete_ = false;
     deferGpu_.clear();
-    setGpuPending(QString());
+    if (!beginScene(transactionId_, priorScene_)) {
+        incomplete_ = true;
+        log_ << QStringLiteral("Could not record scene ownership");
+    }
     Q_EMIT started(s.name);
     Q_EMIT transactionState(transactionId_, current_, {}, QStringLiteral("started"), {});
 
@@ -1451,18 +1484,21 @@ void SceneEngine::finish() {
     // the current transaction or steal its tracked completion.
     const bool gameOwns = gameTookOver_ || ((autoApply_ || trackedDone_) && (gameSessions() > 0 || gameStarting() || gameSceneActive()));
     gameTookOver_ = false;
-    if (!gameOwns) {
-        setActiveScene(current_, !ok_ || incomplete_);
+    const QString n = std::exchange(deferGpu_, QString());
+    const bool published = !gameOwns && publishScene(transactionId_, current_, !ok_ || incomplete_, !n.isEmpty());
+    if (published) {
         seenActive_ = current_;
+        seenPartial_ = !ok_ || incomplete_;
+    } else if (!gameOwns) {
+        incomplete_ = true;
+        log_ << QStringLiteral("Could not publish this scene as active");
     }
-    if (gameOwns && !deferGpu_.isEmpty()) emitStep(QStringLiteral("GPU curve"), QStringLiteral("deferred_skipped"));
-    if (const QString n = std::exchange(deferGpu_, QString()); !n.isEmpty() && !gameOwns) {
+    if (!n.isEmpty() && !published) emitStep(QStringLiteral("GPU curve"), QStringLiteral("deferred_skipped"));
+    if (!n.isEmpty() && published) {
         gpuDeferProfile_ = n;
         gpuDeferScene_ = current_;
         gpuDeferTransactionId_ = transactionId_;
         gpuDeferAuto_ = autoApply_;
-        gpuDeferToken_ = QUuid::createUuid().toString(QUuid::WithoutBraces);
-        setGpuPending(gpuDeferToken_);
         gpuDefer_->start(GPU_DEFER_MS);
     }
     const auto outcome = sceneoutcome::terminal(ok_, gameOwns, incomplete_,
@@ -1494,6 +1530,7 @@ void SceneEngine::finish() {
     Q_EMIT finished(current_, ok_, log_);
     if (tracked) tracked(outcomeReceipt);
     busy_ = false;
+    if (!published && stateTimer_) stateTimer_->start(0);
     if (gameOwns) {
         pending_.clear();
         pendingAuto_ = false;
@@ -1507,24 +1544,24 @@ void SceneEngine::finish() {
         apply(n);
         return;
     }
-    if (ok_) armVerify();
+    if (ok_ && published) armVerify();
 }
 
 void SceneEngine::gpuDeferredFire() {
     // Claimed under the state lock: a scene applied since (here or by centurion-gamemode) replaced or cancelled it.
     const QString id = std::exchange(gpuDeferTransactionId_, QString());
     const QString name = gpuDeferProfile_, scene = gpuDeferScene_;
-    if (!claimGpuPending(gpuDeferToken_)) {
+    if (!claimGpuPending(id)) {
         Q_EMIT transactionState(id, scene, QStringLiteral("GPU curve"), QStringLiteral("deferred_superseded"), {});
         return;
     }
     auto report = [this, name, scene, id](bool ok, const QString &m) {
         const QString state = !ok ? QStringLiteral("deferred_failed") : m == QStringLiteral("applied") ? QStringLiteral("deferred_returned_unverified") : QStringLiteral("deferred_skipped");
+        const bool published = finishGpuPending(id, !ok || state == QStringLiteral("deferred_skipped"));
         Q_EMIT transactionState(id, scene, QStringLiteral("GPU curve"), state, m);
-        if (transactionId_ != id) return; // older deferred event remains in the identified history only
+        if (transactionId_ != id || !published) return;
         Q_EMIT finished(QString(), ok, {(ok ? QString() : QStringLiteral("✗ "))
                                         + QStringLiteral("GPU curve '%1' (%2 s after scene '%3'): %4").arg(name).arg(GPU_DEFER_MS / 1000).arg(scene, m)});
-        if ((!ok || state == QStringLiteral("deferred_skipped")) && activeScene() == scene) setActiveScene(scene, true);
     };
     // Same rule as the remaining steps of an automatic switch: a game that started meanwhile wins.
     if (gpuDeferAuto_ && (gameSessions() > 0 || gameStarting() || gameSceneActive())) { report(true, QStringLiteral("dropped, a game started")); return; }
@@ -1546,7 +1583,9 @@ void SceneEngine::armVerify() {
 
 void SceneEngine::verifyPass() {
     if (verifyTriesLeft_ <= 0 || busy_ || !auto_.enabled || auto_.paused || expectedProfile_.isEmpty()) return;
-    if (gameSessions() > 0 || gameStarting() || activeScene() != current_) return;  // someone else (a game scene) owns the machine now
+    const auto state = readObject(stateFile());
+    if (gameSessions() > 0 || gameStarting() || state.value("active").toString() != current_
+        || state.value("scene_generation").toString() != transactionId_) return;
     const auto cur = pp::currentProfile(pp::primaryHandler());
     if (!cur || cur->isEmpty() || *cur == expectedProfile_) return;
     --verifyTriesLeft_;

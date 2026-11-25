@@ -53,7 +53,7 @@ use std::io::Write;
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::sync::atomic::{AtomicI32, Ordering};
+use std::sync::atomic::{AtomicI32, AtomicU64, Ordering};
 
 const HELPER_DIR: &str = match option_env!("CENTURION_HELPER_DIR") { Some(d) => d, None => "/usr/libexec/centurion" };
 const PKEXEC: &[&str] = &["/usr/bin/pkexec", "/bin/pkexec"];
@@ -392,20 +392,30 @@ fn runtime_dir() -> PathBuf {
 }
 fn scene_state_file() -> PathBuf { runtime_dir().join("scene.json") }
 fn read_scene_state() -> Value { read_json(&scene_state_file()).filter(Value::is_object).unwrap_or_else(|| json!({})) }
-fn write_scene_state(v: &Value) {
+fn write_scene_state(v: &Value) -> bool {
     let dir = runtime_dir();
-    if std::fs::create_dir_all(&dir).is_err() { return; }
+    if std::fs::create_dir_all(&dir).is_err() { return false; }
     let tmp = dir.join(format!("scene.json.{}.tmp", std::process::id()));
-    if std::fs::write(&tmp, v.to_string()).is_ok() { let _ = std::fs::rename(&tmp, scene_state_file()); }
+    if std::fs::write(&tmp, v.to_string()).and_then(|_| std::fs::rename(&tmp, scene_state_file())).is_ok() {
+        return true;
+    }
+    let _ = std::fs::remove_file(tmp);
+    false
+}
+
+/// Compare and publish scene ownership under the same lock as the Qt runner.
+fn edit_scene_state(edit: impl FnOnce(&mut Value) -> bool) -> bool {
+    let Some(_lock) = user_lock("scene.json.lock") else { return false };
+    let mut st = read_scene_state();
+    edit(&mut st) && write_scene_state(&st)
 }
 /// Read-modify-write of scene.json under scene.json.lock (the GUI takes the same lock): two writers
 /// can no longer drop each other's fields. Never held across a helper call.
-fn update_scene_state<R>(f: impl FnOnce(&mut Value) -> R) -> R {
-    let _l = user_lock("scene.json.lock");
+fn update_scene_state<R: Default>(f: impl FnOnce(&mut Value) -> R) -> R {
+    let Some(_lock) = user_lock("scene.json.lock") else { return R::default() };
     let mut st = read_scene_state();
     let r = f(&mut st);
-    write_scene_state(&st);
-    r
+    if write_scene_state(&st) { r } else { R::default() }
 }
 
 /// Running game sessions, from tune-helper's world-readable state (sessions
@@ -505,26 +515,7 @@ fn launcher_pid() -> i32 {
 }
 
 fn enter_game_scene(scene: &str, cpu: bool, gpu: bool) {
-    // A scene that was deleted (tune.json still names it) must not become the "active" one.
-    if read_json(&scenes_dir().join(format!("{scene}.json"))).is_none() {
-        log!("centurion-gamemode: game scene \"{scene}\" not found ({}) — skipped", scenes_dir().display());
-        return;
-    }
-    update_scene_state(|st| {
-        // A game scene that is still set (its game ended without leaving it) keeps the scene recorded
-        // before it: `active` is that game scene, not where the machine should return to.
-        if st.get("game_scene").map_or(true, Value::is_null) {
-            st["before_game"] = st.get("active").cloned().unwrap_or(Value::Null);
-        }
-        st["game_scene"] = json!(scene);
-        // Active from the first step on: the power profile is the first thing the scene changes, so a
-        // PRE that is cut short (hook timeout, launcher killed) used to leave the machine on Custom
-        // while the state still named the old scene — the GUI neither knew nor reported the switch.
-        st["active"] = json!(scene);
-        st["partial"] = json!(true);  // until the apply below says otherwise
-    });
-    let ok = apply_scene(scene, SceneParts { cpu, gpu, tuning: false });  // parts that failed were reported
-    update_scene_state(|st| st["partial"] = json!(!ok));
+    let ok = apply_scene(scene, SceneParts { cpu, gpu, tuning: false }, true);
     if !ok { log!("centurion-gamemode: game scene \"{scene}\" was applied only partly — see the lines above"); }
 }
 
@@ -536,14 +527,14 @@ fn leave_game_scene() {
     let paused = scenes_paused();
     // Claim the switch back under the lock: the GUI's orphan clean-up does the same, so only one of the
     // two leaves the scene.
-    let before = update_scene_state(|st| {
-        if st.get("game_scene").map_or(true, Value::is_null) { return None; }
-        let before = st["before_game"].as_str().map(str::to_owned);
+    let mut before = None;
+    if !edit_scene_state(|st| {
+        if st["game_scene"].is_null() { return false; }
+        before = st["before_game"].as_str().map(str::to_owned);
         st["game_scene"] = Value::Null;
         st["before_game"] = Value::Null;
-        Some(before)
-    });
-    let Some(before) = before else { return };
+        true
+    }) { return; }
     if paused {
         log!("centurion-gamemode: last game closed — scenes are paused, no scene change");
         return;
@@ -558,8 +549,7 @@ fn leave_game_scene() {
     match target {
         Some(t) => {
             log!("centurion-gamemode: last game closed — back to scene \"{t}\"");
-            let ok = apply_scene(&t, SceneParts { cpu: true, gpu: true, tuning: true });
-            update_scene_state(|st| { st["active"] = json!(t); st["partial"] = json!(!ok); });
+            apply_scene(&t, SceneParts { cpu: true, gpu: true, tuning: true }, false);
         }
         None => log!("centurion-gamemode: last game closed — no earlier scene to return to (the game scene stays)"),
     }
@@ -633,14 +623,30 @@ fn scene_choice(v: &Value) -> Option<Result<String, ()>> {
 
 /// Applies a saved scene in dependency order, printing one line per part.
 /// A failing part is reported and the rest still runs. Returns overall ok.
-fn apply_scene(name: &str, parts: SceneParts) -> bool {
+fn apply_scene(name: &str, parts: SceneParts, entering_game: bool) -> bool {
     if !valid_name(name) { log!("centurion-gamemode: invalid scene name '{name}'"); return false; }
-    let Some(s) = read_json(&scenes_dir().join(format!("{name}.json"))) else {
+    let Some(s) = read_json(&scenes_dir().join(format!("{name}.json"))).filter(Value::is_object) else {
         log!("centurion-gamemode: scene \"{name}\" not found ({})", scenes_dir().display());
         return false;
     };
-    // A new scene cancels the GPU curve an earlier scene still has pending (defer_gpu_curve).
-    update_scene_state(|st| st["gpu_pending"] = Value::Null);
+    static NEXT_SCENE: AtomicU64 = AtomicU64::new(0);
+    let nanos = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_nanos());
+    let id = format!("{}-{nanos}-{}", std::process::id(), NEXT_SCENE.fetch_add(1, Ordering::Relaxed));
+    let owns_state = edit_scene_state(|st| {
+        st["scene_generation"] = json!(id);
+        st["gpu_pending"] = Value::Null;
+        st["gpu_running"] = Value::Null;
+        if entering_game {
+            if st["game_scene"].is_null() {
+                st["before_game"] = st["active"].clone();
+            }
+            st["game_scene"] = json!(name);
+            // Publish the game scene before its first step so an interrupted PRE can be recovered.
+            st["active"] = json!(name);
+            st["partial"] = json!(true);
+        }
+        true
+    });
     let mut ok = true;
     let mut line = |what: &str, r: Result<String, String>| match r {
         Ok(m) => log!("centurion-gamemode: scene {name}: {what}: {m}"),
@@ -889,9 +895,36 @@ fn apply_scene(name: &str, parts: SceneParts) -> bool {
         line("brightness", centurion_helpers::display::set_brightness(pct as u32));
     }
 
+    // Publish the result and deferred GPU request together while this scene owns the state.
+    let published = owns_state && edit_scene_state(|st| {
+        if st["scene_generation"].as_str() != Some(id.as_str()) { return false; }
+        st["active"] = json!(name);
+        st["partial"] = json!(!ok);
+        st["gpu_pending"] = if deferred_gpu.is_some() { json!(id) } else { Value::Null };
+        true
+    });
+    if !published {
+        log!("centurion-gamemode: scene {name}: could not publish this scene as active");
+        return false;
+    }
+
     // 9. the GPU curve profile, GPU_DEFER after everything above.
     if let Some(n) = deferred_gpu {
-        line("GPU curve", defer_gpu_curve(&n).map(|_| format!("\"{n}\" in {} s, in the background", GPU_DEFER.as_secs())));
+        match defer_gpu_curve(&n, &id) {
+            Ok(()) => log!("centurion-gamemode: scene {name}: GPU curve: \"{n}\" in {} s, in the background", GPU_DEFER.as_secs()),
+            Err(error) => {
+                log!("centurion-gamemode: scene {name}: ✗ GPU curve: {error}");
+                edit_scene_state(|st| {
+                    if st["scene_generation"].as_str() != Some(id.as_str()) || st["gpu_pending"].as_str() != Some(id.as_str()) {
+                        return false;
+                    }
+                    st["gpu_pending"] = Value::Null;
+                    st["partial"] = json!(true);
+                    true
+                });
+                return false;
+            }
+        }
     }
     ok
 }
@@ -904,22 +937,16 @@ const GPU_DEFERRED: &str = "GPU-DEFERRED";
 /// Hands the profile to a detached copy of this tool that applies it GPU_DEFER from now, so the
 /// game is not held back. scene.json `gpu_pending` names the one deferred apply still wanted: every
 /// later scene (here or in the GUI) replaces or clears it, and a copy whose token is gone does nothing.
-fn defer_gpu_curve(name: &str) -> Result<(), String> {
-    let nanos = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0);
-    let token = format!("{}-{nanos}", std::process::id());
-    update_scene_state(|st| st["gpu_pending"] = json!(token));
+fn defer_gpu_curve(name: &str, token: &str) -> Result<(), String> {
     let exe = std::env::current_exe().map_err(|e| format!("cannot locate centurion-gamemode: {e}"))?;
     let mut c = Command::new(exe);
     // No inherited stdio: a launcher reading the hook's output to EOF would otherwise wait for it.
-    c.args([GPU_DEFERRED, name, &token]).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null());
+    c.args([GPU_DEFERRED, name, token]).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null());
     unsafe { c.pre_exec(|| { libc::setsid(); Ok(()) }); }
     match c.spawn() {
         // Reaped here while this process lives (WRAP waits for the whole game); after that by init.
         Ok(mut child) => { std::thread::spawn(move || { let _ = child.wait(); }); Ok(()) }
-        Err(e) => {
-            update_scene_state(|st| if st["gpu_pending"].as_str() == Some(token.as_str()) { st["gpu_pending"] = Value::Null; });
-            Err(format!("cannot start the deferred apply: {e}"))
-        }
+        Err(e) => Err(format!("cannot start the deferred apply: {e}")),
     }
 }
 
@@ -935,21 +962,33 @@ fn gpu_deferred(name: &str, token: &str) -> i32 {
     if !valid_name(name) { note("invalid profile name"); return 2; }
     std::thread::sleep(GPU_DEFER);
     // Claim it under the state lock: a scene applied meanwhile replaced or cleared the token.
-    let mine = update_scene_state(|st| {
-        let m = st["gpu_pending"].as_str() == Some(token);
-        if m { st["gpu_pending"] = Value::Null; }
-        m
+    let mine = edit_scene_state(|st| {
+        if token.is_empty() || st["scene_generation"].as_str() != Some(token) || st["gpu_pending"].as_str() != Some(token) {
+            return false;
+        }
+        st["gpu_pending"] = Value::Null;
+        st["gpu_running"] = json!(token);
+        true
     });
     if !mine { note("dropped, the scene changed meanwhile"); return 0; }
-    if !nvidia_usable() { note(GPU_OFF); return 0; }
-    match apply_nvidia_named(name) {
-        Ok(()) => { note("applied"); 0 }
-        Err(e) => {
-            note(&format!("failed: {e}"));
-            update_scene_state(|st| st["partial"] = json!(true));
-            1
+    let (code, partial) = if !nvidia_usable() {
+        note(GPU_OFF);
+        (0, true)
+    } else {
+        match apply_nvidia_named(name) {
+            Ok(()) => { note("applied"); (0, false) }
+            Err(e) => { note(&format!("failed: {e}")); (1, true) }
         }
-    }
+    };
+    edit_scene_state(|st| {
+        if st["scene_generation"].as_str() != Some(token) || st["gpu_running"].as_str() != Some(token) {
+            return false;
+        }
+        st["gpu_running"] = Value::Null;
+        if partial { st["partial"] = json!(true); }
+        true
+    });
+    code
 }
 
 // ── undervolt ("GAMING" curve presets) ──────────────────────────────────────
@@ -1469,16 +1508,8 @@ fn main() {
         Some("APPROVE") => approve(&args[1..]),
         Some("RESTORE") => pkexec(&json!({"op": "restore"})).map_or_else(fail, |v| (!report("RESTORE", &v)) as i32),
         Some("UNDERVOLT") => (!undervolt(true)) as i32,
-        Some("SCENE") if args.len() == 2 => {
-            // Only a scene that exists becomes the active one.
-            if !valid_name(&args[1]) || read_json(&scenes_dir().join(format!("{}.json", args[1]))).is_none() {
-                log!("centurion-gamemode: scene \"{}\" not found ({})", args[1], scenes_dir().display());
-                std::process::exit(1);
-            }
-            let ok = apply_scene(&args[1], SceneParts { cpu: true, gpu: true, tuning: true });
-            update_scene_state(|st| { st["active"] = json!(args[1]); st["partial"] = json!(!ok); });
-            (!ok) as i32
-        }
+        Some("SCENE") if args.len() == 2 =>
+            (!apply_scene(&args[1], SceneParts { cpu: true, gpu: true, tuning: true }, false)) as i32,
         Some("STATUS") => status(),
         Some("OVERLAY") => {
             println!("{}", overlay_line(read_scene_state()["active"].as_str(), current_platform_profile().as_deref()));

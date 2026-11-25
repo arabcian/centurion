@@ -91,7 +91,6 @@ std::optional<bool> onAc(bool lenient = false);
 QString activeScene();
 /// The active scene's last apply had a failed step: it is only partly in effect.
 bool activeScenePartial();
-void setActiveScene(const QString &name, bool partial = false);
 /// Game sessions currently holding game mode (tune-helper's state).
 int gameSessions();
 
@@ -149,6 +148,7 @@ Q_SIGNALS:
     void pausedChanged(bool paused);
     /// The active scene was changed from outside the GUI (centurion-gamemode PRE/POST/SCENE): `game` = it is a game scene.
     void activeSceneChanged(const QString &name, bool game);
+    void activeScenePartialChanged();
 
 private:
     using Done = std::function<void(bool ok, const QString &msg)>;
@@ -200,7 +200,7 @@ private:
     QTimer *verify_ = nullptr;  // re-checks the profile a few seconds after an automatic switch (the EC can override it late)
     // GPU curve profile of the scene being applied: written GPU_DEFER_MS after the scene, not as one of its steps.
     QString deferGpu_;                                          // set by the running apply's GPU step
-    QString gpuDeferProfile_, gpuDeferScene_, gpuDeferToken_;   // the armed one (token = scene.json "gpu_pending")
+    QString gpuDeferProfile_, gpuDeferScene_;
     bool gpuDeferAuto_ = false;
     QTimer *gpuDefer_ = nullptr;
 
@@ -219,6 +219,7 @@ private:
     QFileSystemWatcher *stateWatch_ = nullptr;  // $XDG_RUNTIME_DIR/centurion: scene.json is replaced by rename
     QTimer *stateTimer_ = nullptr;
     QString seenActive_;                        // last active scene this engine knows about (own applies and external ones)
+    bool seenPartial_ = false;
     int uevFd_ = -1;  // uevent socket; -1 → poll at the fast cadence as before
     QTimer *resumeTick_ = nullptr, *resumePass_ = nullptr;  // suspend detector / reapply passes after a wake
     // Wall-clock-set notification (timerfd): the kernel raises it on every resume, so the detector

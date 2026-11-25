@@ -1,5 +1,6 @@
 #include "diagsources.h"
 
+#include <QByteArrayView>
 #include <QCoreApplication>
 #include <QDateTime>
 #include <QDir>
@@ -101,11 +102,14 @@ std::optional<LogLine> parseLine(const QString &line) {
     return std::nullopt;
 }
 
-LogTail savedLog(SavedLog source, int max) {
+LogTail savedLog(SavedLog source, int max, qint64 maxBytesPerFile, const QString &day) {
     LogTail out;
     max = std::clamp(max, 0, 10000);
-    if (!max) return out;
-    const QString name = source == SavedLog::Health ? QStringLiteral("health.log") : QStringLiteral("kernel.log");
+    maxBytesPerFile = std::clamp<qint64>(maxBytesPerFile, 0, 8LL << 20);
+    if (!max || !maxBytesPerFile) return out;
+    const bool health = source == SavedLog::Health;
+    const QString name = health ? QStringLiteral("health.log") : QStringLiteral("kernel.log");
+    const QByteArray dayPrefix = day.isEmpty() ? QByteArray() : (day + QLatin1Char(' ')).toLatin1();
     for (int index = 0; index < 2; ++index) {
         const bool rotated = index == 0;
         const QString file = rotated ? name + QStringLiteral(".1") : name;
@@ -117,7 +121,7 @@ LogTail savedLog(SavedLog source, int max) {
             continue;
         }
         coverage.state = LogFileState::Unreadable;
-        const qint64 size = f.size(), start = std::max<qint64>(0, size - (4LL << 20));
+        const qint64 size = f.size(), start = std::max<qint64>(0, size - maxBytesPerFile);
         if (size < 0) continue;
         char previous = '\n';
         if (start > 0 && (!f.seek(start - 1) || !f.getChar(&previous))) continue;
@@ -135,9 +139,12 @@ LogTail savedLog(SavedLog source, int max) {
         while (pos < bytes.size()) {
             const auto end = bytes.indexOf('\n', pos);
             if (end < 0) break;
-            auto line = end - pos <= 8192
-                ? parseLine(QString::fromUtf8(bytes.constData() + pos, end - pos).trimmed()) : std::nullopt;
-            if (line) {
+            const QByteArrayView record(bytes.constData() + pos, end - pos);
+            pos = end + 1;
+            if (!dayPrefix.isEmpty() && !record.startsWith(dayPrefix)) continue;
+            auto line = record.size() <= 8192
+                ? parseLine(QString::fromUtf8(record.data(), record.size()).trimmed()) : std::nullopt;
+            if (line && (health == !line->kind.isEmpty())) {
                 line->rotated = rotated;
                 out.lines << std::move(*line);
                 if (out.lines.size() > max) {
@@ -147,7 +154,6 @@ LogTail savedLog(SavedLog source, int max) {
             } else {
                 ++coverage.rejectedLines;
             }
-            pos = end + 1;
         }
     }
     return out;

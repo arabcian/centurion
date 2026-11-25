@@ -50,7 +50,9 @@ struct LogTail {
     std::array<LogFileCoverage, 2> files;
     int omittedLines = 0;
 };
-LogTail savedLog(SavedLog source, int max);
+/// Read at most `maxBytesPerFile` from each file. Apply the optional day filter
+/// before retaining the newest `max` records.
+LogTail savedLog(SavedLog source, int max, qint64 maxBytesPerFile = 4LL << 20, const QString &day = {});
 /// The newest `max` lines of health.log.1 + health.log, oldest first.
 QList<LogLine> savedEvents(int max = 3000);
 /// The newest `max` lines of kernel.log.1 + kernel.log, oldest first.

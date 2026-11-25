@@ -589,6 +589,7 @@ ScenesTab::ScenesTab(MainWindow *win) : win_(win), eng_(win->scenes()) {
         updatePowerLabel();
     });
     connect(eng_, &SceneEngine::powerSourceChanged, this, &ScenesTab::updatePowerLabel);
+    connect(eng_, &SceneEngine::activeScenePartialChanged, this, [this] { reloadList(loaded_.name); });
     connect(eng_, &SceneEngine::activeSceneChanged, this, [this](const QString &n, bool game) {
         reloadList(loaded_.name);  // marks the active scene
         updatePowerLabel();

@@ -9,6 +9,7 @@
 #include "curvepage.h"
 #include "eventinfo.h"
 #include "diagsources.h"
+#include "diagnostichistory.h"
 #include "sleeppage.h"
 #include "klogpage.h"
 #include "kernelparamspage.h"
@@ -44,7 +45,6 @@
 #include <QMessageBox>
 #include <QSettings>
 #include <QStandardPaths>
-#include <QTextStream>
 #include <QUrl>
 #include <ctime>
 #include <QSocketNotifier>
@@ -54,7 +54,6 @@
 #include <QComboBox>
 #include <QCheckBox>
 #include <QSplitter>
-#include <QRegularExpression>
 #include <QSet>
 #include <QFont>
 #include <QApplication>
@@ -765,18 +764,11 @@ HealthTab::HealthTab(QWidget *parent) : QWidget(parent) {
     // Resume point: highest seq of the current boot already in the file, so a
     // restart does not write this boot's history twice.
     {
-        QFile b(QStringLiteral("/proc/sys/kernel/random/boot_id"));
-        if (b.open(QIODevice::ReadOnly)) savedBoot_ = QString::fromLatin1(b.readAll().trimmed()).toLower();
-        QFile f(logPath());
-        const QString legacyBoot = savedBoot_.left(8);
-        if (!savedBoot_.isEmpty() && f.open(QIODevice::ReadOnly | QIODevice::Text)) {
-            // The whole file (up to 8 MiB) used to be decoded line by line on the GUI thread at every start.
-            if (f.size() > TAIL_BYTES) { f.seek(f.size() - TAIL_BYTES); f.readLine(); }
-            while (!f.atEnd()) {
-                const auto line = diagsrc::parseLine(QString::fromUtf8(f.readLine()).trimmed());
-                if (line && (line->boot == savedBoot_ || line->boot == legacyBoot))
-                    savedSeq_ = std::max(savedSeq_, line->seq);
-            }
+        savedBoot_ = diagsrc::bootId().toLower();
+        if (!diagnostichistory::fullBoot(savedBoot_.toStdString()).empty()) {
+            const auto tail = diagsrc::savedLog(diagsrc::SavedLog::Health, 10000, TAIL_BYTES);
+            for (const auto &record : tail.lines)
+                if (record.boot == savedBoot_) savedSeq_ = std::max(savedSeq_, record.seq);
         }
     }
     updateLogInfo();
@@ -1605,51 +1597,36 @@ void HealthTab::loadHistoryDay() {
     if (dayFilter_.isEmpty()) return;
     // health.log is bounded and rotated; a selected historical day may have
     // fallen out of retention. Never claim that an absent row means no event.
-    const QRegularExpression pattern(QStringLiteral(
-        R"(^([0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2})\s+boot=([a-fA-F0-9-]+)\s+seq=([0-9]+)\s+(\S+)\s+(\S+)\s+(.*?)\s+\|\s+(.*)$)"));
     QSet<QString> seen;
     for (int i = 0; i < list_->topLevelItemCount(); ++i) {
-        auto *it = list_->topLevelItem(i);
-        if (it->data(0, Qt::UserRole + 2).toString() != dayFilter_) continue;
-        const QJsonObject e = QJsonDocument::fromJson(it->data(0, Qt::UserRole).toByteArray()).object();
-        if (e.isEmpty()) continue;
-        const auto boot = e.value(QStringLiteral("boot_id")).toString().toLower();
-        if (boot.isEmpty()) continue;
-        const auto sequence = QLatin1Char(':') + QString::number(quint64(e.value(QStringLiteral("seq")).toDouble()));
-        seen.insert(boot + sequence);
-        seen.insert(boot.left(8) + sequence);
+        const auto *item = list_->topLevelItem(i);
+        if (item->data(0, Qt::UserRole + 2).toString() != dayFilter_) continue;
+        const auto event = QJsonDocument::fromJson(item->data(0, Qt::UserRole).toByteArray()).object();
+        const auto boot = event.value(QStringLiteral("boot_id")).toString().toLower();
+        const auto seq = event.value(QStringLiteral("seq")).toInteger(-1);
+        if (seq >= 0 && !diagnostichistory::fullBoot(boot.toStdString()).empty())
+            seen.insert(boot + QLatin1Char('/') + QString::number(seq));
     }
-    QList<QByteArray> matches;
-    for (const QString &path : {logPath() + QStringLiteral(".1"), logPath()}) {
-        QFile file(path);
-        if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) continue;
-        while (!file.atEnd()) {
-            const QByteArray line = file.readLine();
-            if (!line.startsWith((dayFilter_ + QLatin1Char(' ')).toLatin1())) continue;
-            matches.append(line);
-            if (matches.size() > MAX_ROWS) matches.removeFirst();
+    const auto tail = diagsrc::savedLog(diagsrc::SavedLog::Health, MAX_ROWS, LOG_MAX_BYTES, dayFilter_);
+    for (auto it = tail.lines.crbegin(); it != tail.lines.crend(); ++it) {
+        const auto recordedAt = QDateTime::fromString(it->time, QStringLiteral("yyyy-MM-dd HH:mm:ss"));
+        if (!recordedAt.isValid()) continue;
+        if (!diagnostichistory::fullBoot(it->boot.toStdString()).empty()) {
+            const auto key = it->key();
+            if (seen.contains(key)) continue;
+            seen.insert(key);
         }
-    }
-    // Keep the most recent 500 records, not the oldest entries of a busy day.
-    for (auto it = matches.crbegin(); it != matches.crend(); ++it) {
-        const auto match = pattern.match(QString::fromUtf8(*it));
-        if (!match.hasMatch()) continue;
-        const QString key = match.captured(2).toLower() + QLatin1Char(':') + match.captured(3);
-        if (seen.contains(key)) continue;
-        seen.insert(key);
-        const QString level = match.captured(4).toLower();
-        const QString kind = match.captured(5);
-        const QString original = match.captured(6);
-        const QString raw = match.captured(7).trimmed();
-        const QDateTime recordedAt = QDateTime::fromString(match.captured(1), QStringLiteral("yyyy-MM-dd HH:mm:ss"));
-        const QJsonObject e{{QStringLiteral("kind"), kind.toLower()}, {QStringLiteral("title"), original},
+        const auto &level = it->level;
+        const auto &original = it->title;
+        const auto &raw = it->text;
+        const QJsonObject e{{QStringLiteral("kind"), it->kind}, {QStringLiteral("title"), original},
                             {QStringLiteral("level"), level}, {QStringLiteral("text"), raw},
-                            {QStringLiteral("boot_id"), match.captured(2)},
+                            {QStringLiteral("boot_id"), it->boot},
                             {QStringLiteral("wall_ms"), double(recordedAt.toMSecsSinceEpoch())}};
-        auto *item = new QTreeWidgetItem({match.captured(1).left(16),
+        auto *item = new QTreeWidgetItem({it->time.left(16),
                                            level == QLatin1String("critical") ? tr("Critical") :
                                            level == QLatin1String("error") ? tr("Error") : tr("Notice"),
-                                           kind, technicalEvents_->isChecked() ? original : friendlyEvent(e)});
+                                           it->kind.toUpper(), technicalEvents_->isChecked() ? original : friendlyEvent(e)});
         item->setToolTip(3, tr("Saved record (may be from a previous boot):\n%1\n%2").arg(original, raw));
         item->setData(0, Qt::UserRole + 2, dayFilter_);
         item->setData(0, Qt::UserRole + 3, true);
@@ -1903,7 +1880,11 @@ void HealthTab::persist(const QJsonArray &ev, const QString &bootId) {
     if (QFileInfo(path).size() > LOG_MAX_BYTES) { QFile::remove(path + QStringLiteral(".1")); QFile::rename(path, path + QStringLiteral(".1")); }
     QFile f(path);
     if (!f.open(QIODevice::Append | QIODevice::Text)) { logInfo_->setText(QStringLiteral("Saved log: cannot write ") + path); return; }
-    QTextStream(&f) << lines.join(QLatin1Char('\n')) << '\n';
+    const QByteArray bytes = (lines.join(QLatin1Char('\n')) + QLatin1Char('\n')).toUtf8();
+    if (f.write(bytes) != bytes.size() || !f.flush()) {
+        logInfo_->setText(QStringLiteral("Saved log: cannot write ") + path);
+        return;
+    }
     savedSeq_ = top;
     updateLogInfo();
 }

@@ -69,6 +69,10 @@ int main(int argc,char **argv) {
     CHECK(health.files.at(0).state == diagsrc::LogFileState::Read);
     CHECK(health.files.at(1).rejectedLines == 1 && health.files.at(1).incompleteTail);
     CHECK(diagsrc::savedLog(diagsrc::SavedLog::Health, 2).omittedLines == 4);
+    const auto day = diagsrc::savedLog(diagsrc::SavedLog::Health, 1, 4096, QStringLiteral("2026-01-01"));
+    CHECK(day.lines.size() == 1 && day.lines.first().seq == 20 && day.omittedLines == 5);
+    const auto anotherDay = diagsrc::savedLog(diagsrc::SavedLog::Health, 1, 4096, QStringLiteral("2026-01-02"));
+    CHECK(anotherDay.lines.isEmpty() && anotherDay.omittedLines == 0);
     const auto records = recordedEvents(health, {});
     CHECK(records.size() == 5 && records.first().boot.isEmpty());
     CHECK(records.at(1).sequence == 10 && records.at(1).current && records.at(1).rotated);
