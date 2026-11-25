@@ -165,6 +165,22 @@ BackupPage::BackupPage(QWidget *parent) : QWidget(parent) {
     cr->addWidget(bNow);
     connect(bNow, &QPushButton::clicked, this, &BackupPage::compareWithCurrent);
     cv->addLayout(cr);
+    // Gentoo, Arch and NixOS: their configuration on its own, without Centurion's data (reference, never restored).
+    const QString fam = distroprofile::family();
+    if (fam == QLatin1String("gentoo") || fam == QLatin1String("arch") || fam == QLatin1String("nixos")) {
+        auto *sr = new QHBoxLayout;
+        auto *bSys = new QPushButton(tr("Back up %1 configuration").arg(distroprofile::familyLabel(fam).section(QLatin1Char(' '), 0, 0)));
+        bSys->setToolTip(tr("Saves only this system's own configuration, without Centurion's data, as centurion-config-…-system-%1.tar.gz "
+                            "in the folder above:\n%2").arg(fam, distroprofile::profileAbout(fam)));
+        actions_.append(bSys);
+        sr->addWidget(bSys);
+        auto *si = new QLabel(distroprofile::systemConfigSummary(fam));
+        si->setProperty("role", "muted");
+        si->setWordWrap(true);
+        sr->addWidget(si, 1);
+        connect(bSys, &QPushButton::clicked, this, &BackupPage::systemConfigBackup);
+        cv->addLayout(sr);
+    }
     // Automatic: made by the tray app itself (as you, no password), when the newest configuration backup is older than this.
     auto *ar = new QHBoxLayout;
     autoDays_ = new QSpinBox;
@@ -818,6 +834,23 @@ void BackupPage::configBackup() {
         });
 }
 
+void BackupPage::systemConfigBackup() {
+    saveSettings();
+    const QString dir = cfgDir_->text().trimmed();
+    if (!QDir::isAbsolutePath(dir)) { finished(tr("Choose a folder for the configuration backups first."), false); return; }
+    run({{"op", "config_backup"}, {"dest_dir", dir}, {"profile_only", true}, {"centurion_version", QStringLiteral(CENTURION_VERSION)}},
+        false, tr("Saving the system configuration…"), [this](const QJsonObject &r) {
+            if (!r.value("ok").toBool()) { finished(tr("System configuration backup failed: ") + str(r, "error"), false); return; }
+            const QJsonArray skipped = r.value("skipped").toArray();
+            for (const QJsonValue &s : skipped) log(QStringLiteral("not saved: ") + s.toString(), theme::WARN);
+            finished(tr("Saved %1 (%2): %3 file(s) of the system configuration%4.")
+                         .arg(QFileInfo(str(r, "archive")).fileName(), human(num(r, "bytes")))
+                         .arg(num(r.value("contents").toObject(), "system_profile"))
+                         .arg(skipped.isEmpty() ? QString() : tr(", %1 unreadable (root-only; see below)").arg(skipped.size())), true);
+            select(str(r, "archive"));
+        });
+}
+
 void BackupPage::configRestore() {
     QString kind;
     const QString archive = selected(&kind);
@@ -828,6 +861,12 @@ void BackupPage::configRestore() {
     run({{"op", "config_inspect"}, {"archive", archive}}, false, QStringLiteral("Reading the backup…"), [this, archive](const QJsonObject &r) {
         if (!r.value("ok").toBool()) { finished(QStringLiteral("Cannot restore: ") + str(r, "error"), false); return; }
         const QJsonObject m = r.value("manifest").toObject(), c = m.value("contents").toObject(), mach = m.value("machine").toObject();
+        if (m.value("profile_only").toBool()) {
+            finished(tr("%1 holds only the system configuration, kept as reference: there is nothing for Centurion to restore. "
+                        "Open it with an archive manager (system-profile/root/ mirrors /), or compare it with another one.")
+                         .arg(QFileInfo(archive).fileName()), false);
+            return;
+        }
         const QString here = sysinfo::dmiClean(QStringLiteral("product_version")).value_or(QString());
         QString text = QStringLiteral("<b>%1</b><br>made %2 on %3 (%4, BIOS %5)<br><br>%6 user file(s) → ~/.config/centurion, ~/.config/ryzen-curve-optimizer<br>"
                                       "%7 system file(s) → presets, boot profiles, network-guard rules, NVIDIA profiles, calibration<br><br>"

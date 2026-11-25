@@ -45,6 +45,8 @@ QList<Optional> optionalExcludes();
 QString restoreHint(const QString &family);
 /// Tooltip of the "System profile" box.
 QString profileAbout(const QString &family);
+/// One line for the Backup page's system-configuration button (Gentoo, Arch, NixOS); empty for others.
+QString systemConfigSummary(const QString &family);
 /// Whether a tar image of / suits this system at all (image-based systems: NixOS, Fedora Atomic, …); the reason when not.
 QString imageCaveat();
 

@@ -1434,6 +1434,19 @@ fn profile_facts(dir: &Path) {
     if !pkgs.is_empty() { write_text(&dir.join("packages.txt"), &(pkgs.join("\n") + "\n")); }
     let explicit = crate::distro::explicit_packages(family);
     if !explicit.is_empty() { write_text(&dir.join("packages-explicit.txt"), &(explicit.join("\n") + "\n")); }
+    let foreign = crate::distro::foreign_packages(family);
+    if !foreign.is_empty() { write_text(&dir.join("packages-foreign.txt"), &(foreign.join("\n") + "\n")); }
+    if family == "nixos" {
+        // Which generation runs, and the ones that can be booted back to (system-N-link -> store path).
+        if let Ok(v) = fs::read_to_string("/run/current-system/nixos-version") { write_text(&dir.join("nixos-version.txt"), &v); }
+        let mut gens: Vec<(u64, String)> = fs::read_dir("/nix/var/nix/profiles").into_iter().flatten().flatten().filter_map(|e| {
+            let n = e.file_name().into_string().ok()?;
+            let num = n.strip_prefix("system-")?.strip_suffix("-link")?.parse::<u64>().ok()?;
+            Some((num, format!("{n} -> {}", fs::read_link(e.path()).ok()?.display())))
+        }).collect();
+        gens.sort();
+        if !gens.is_empty() { write_text(&dir.join("nixos-generations.txt"), &(gens.into_iter().map(|(_, l)| l).collect::<Vec<_>>().join("\n") + "\n")); }
+    }
 }
 
 fn safe_tag(v: &Value) -> Option<&str> {
@@ -1472,21 +1485,31 @@ pub fn config_backup(req: &Value) -> Value {
 struct Staged { user: Copier, state: Copier, sys: Copier, prof: Copier }
 
 /// Copies what a configuration backup holds into `s`, in the archive's layout (see config_backup).
-fn stage_config(s: &Path, profile: bool, logs: bool) -> Staged {
+/// `centurion` false: the system profile alone (Backup → "System configuration").
+fn stage_config(s: &Path, centurion: bool, profile: bool, logs: bool) -> Staged {
     let mut user = Copier::default();
-    if let Some(c) = config_home() {
-        for d in USER_CONFIG_DIRS { user.copy(&c.join(d), &s.join("user/config").join(d), 0); }
-    }
     let mut state = Copier::default();
-    if logs { if let Some(c) = user_state() { state.copy(&c, &s.join("user/state/centurion"), 0); } }
     let mut sys = Copier::default();
-    for p in SYS_CENTURION.iter().chain(if logs { SYS_CENTURION_LOGS } else { &[] }) {
-        sys.copy(&Path::new("/").join(p), &s.join("system").join(p), 0);
+    if centurion {
+        if let Some(c) = config_home() {
+            for d in USER_CONFIG_DIRS { user.copy(&c.join(d), &s.join("user/config").join(d), 0); }
+        }
+        if logs { if let Some(c) = user_state() { state.copy(&c, &s.join("user/state/centurion"), 0); } }
+        for p in SYS_CENTURION.iter().chain(if logs { SYS_CENTURION_LOGS } else { &[] }) {
+            sys.copy(&Path::new("/").join(p), &s.join("system").join(p), 0);
+        }
     }
     let mut prof = Copier { links: true, ..Default::default() };
     if profile {
-        for p in crate::distro::profile_list(crate::distro::this_family()) {
+        let family = crate::distro::this_family();
+        for p in crate::distro::profile_list(family) {
             prof.copy(&Path::new("/").join(p), &s.join("system-profile/root").join(p), 0);
+        }
+        // Gentoo: local overlays (repos.conf entries without a sync source) are kept whole: nothing fetches them again.
+        if family == "gentoo" {
+            for (_, loc) in crate::distro::gentoo_local_overlays(&crate::distro::repos_conf_text()) {
+                prof.copy(Path::new(&loc), &s.join("system-profile/root").join(loc.trim_start_matches('/')), 0);
+            }
         }
         profile_facts(&s.join("system-profile"));
     }
@@ -1501,8 +1524,10 @@ fn config_backup_inner(req: &Value) -> Result<Value, String> {
     let tar = tool("tar").ok_or("tar is not installed")?;
     let stage = Scratch(mkdtemp(&std::env::temp_dir(), "centurion-backup-")?);
     let s = &stage.0;
-    let Staged { user, state, sys, prof } = stage_config(s, req["include_profile"].as_bool().unwrap_or(true),
-                                                          req["include_logs"].as_bool().unwrap_or(false));
+    // profile_only: the distribution's configuration alone, as reference (nothing in it is ever restored).
+    let profile_only = req["profile_only"].as_bool().unwrap_or(false);
+    let Staged { user, state, sys, prof } = stage_config(s, !profile_only, profile_only || req["include_profile"].as_bool().unwrap_or(true),
+                                                          !profile_only && req["include_logs"].as_bool().unwrap_or(false));
     if user.files + sys.files + prof.files == 0 { return Err("nothing to back up yet".into()); }
 
     let st = stamp();
@@ -1513,10 +1538,12 @@ fn config_backup_inner(req: &Value) -> Result<Value, String> {
         "centurion_version": req["centurion_version"].as_str().filter(|v| v.len() <= 32).unwrap_or(""),
         "machine": {"product": dmi("product_version"), "bios": dmi("bios_version"), "kernel": kernel},
         "contents": {"user_config": user.files, "user_state": state.files, "system": sys.files, "system_profile": prof.files},
-        "skipped": skipped});
+        "profile_only": profile_only, "distro": crate::distro::this_family(), "skipped": skipped});
     fs::write(s.join(MANIFEST), serde_json::to_vec_pretty(&manifest).unwrap_or_default()).map_err(|e| e.to_string())?;
 
-    let tag = safe_tag(&req["tag"]).map(|t| format!("-{t}")).unwrap_or_default();
+    let family = crate::distro::this_family();
+    let tag = if profile_only { format!("-system-{}", if family.is_empty() { "linux" } else { family }) }
+              else { safe_tag(&req["tag"]).map(|t| format!("-{t}")).unwrap_or_default() };
     let fin = dest.join(format!("centurion-config-{}_{}{tag}.tar.gz", st.date, st.time));
     let partial = dest.join(format!(".{}.partial", fin.file_name().unwrap().to_string_lossy()));
     let mut tc = command(&tar, false);
@@ -1889,7 +1916,7 @@ pub fn config_diff(req: &Value) -> Value {
             fa = read_config_files(&a, &stage.0, profile)?;
             let live = stage.0.join("live");
             fs::create_dir_all(&live).map_err(|e| e.to_string())?;
-            let st = stage_config(&live, profile, false);
+            let st = stage_config(&live, true, profile, false);
             let mut m = BTreeMap::new();
             for top in ["user", "system", "system-profile"] {
                 if live.join(top).is_dir() { collect_files(&live.join(top), top, 0, &mut m)?; }

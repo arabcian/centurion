@@ -65,7 +65,8 @@ int main(int argc, char **argv) {
     CHECK(familyOf(QStringLiteral("ID=\"almalinux\"\nID_LIKE=\"rhel centos fedora\"\n")) == QLatin1String("fedora"));
     CHECK(familyOf(QStringLiteral("ID=\"opensuse-leap\"\n")) == QLatin1String("opensuse"));
     CHECK(familyOf(QStringLiteral("ID=gentoo\n")) == QLatin1String("gentoo"));
-    CHECK(familyOf(QStringLiteral("ID=nixos\n")).isEmpty());
+    CHECK(familyOf(QStringLiteral("ID=nixos\n")) == QLatin1String("nixos"));  // its own family: /etc/nixos in the system profile
+    CHECK(familyOf(QStringLiteral("ID=somethingelse\n")).isEmpty());
     for (const QString &f : families()) {
         const QStringList ex = imageExcludes(f);
         CHECK(ex.contains(QStringLiteral("/proc/*")) && ex.contains(QStringLiteral("/sys/*")) && ex.contains(QStringLiteral("/dev/*")));

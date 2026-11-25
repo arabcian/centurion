@@ -9218,6 +9218,40 @@ Hedef: %2</translation>
         <source>An archive or metadata file changed during preview.</source>
         <translation>Önizleme sırasında bir arşiv veya üstveri dosyası değişti.</translation>
     </message>
+        <message>
+            <source>Back up %1 configuration</source>
+            <translation>%1 yapılandırmasını yedekle</translation>
+        </message>
+        <message>
+            <source>Saves only this system's own configuration, without Centurion's data, as centurion-config-…-system-%1.tar.gz in the folder above:
+%2</source>
+            <translation>Yalnızca bu sistemin kendi yapılandırmasını, Centurion verileri olmadan, yukarıdaki klasöre centurion-config-…-system-%1.tar.gz olarak kaydeder:
+%2</translation>
+        </message>
+        <message>
+            <source>Choose a folder for the configuration backups first.</source>
+            <translation>Önce yapılandırma yedekleri için bir klasör seçin.</translation>
+        </message>
+        <message>
+            <source>Saving the system configuration…</source>
+            <translation>Sistem yapılandırması kaydediliyor…</translation>
+        </message>
+        <message>
+            <source>System configuration backup failed: </source>
+            <translation>Sistem yapılandırması yedeği başarısız: </translation>
+        </message>
+        <message>
+            <source>Saved %1 (%2): %3 file(s) of the system configuration%4.</source>
+            <translation>%1 kaydedildi (%2): sistem yapılandırmasından %3 dosya%4.</translation>
+        </message>
+        <message>
+            <source>, %1 unreadable (root-only; see below)</source>
+            <translation>, %1 okunamadı (yalnızca root; aşağıya bakın)</translation>
+        </message>
+        <message>
+            <source>%1 holds only the system configuration, kept as reference: there is nothing for Centurion to restore. Open it with an archive manager (system-profile/root/ mirrors /), or compare it with another one.</source>
+            <translation>%1 yalnızca başvuru için saklanan sistem yapılandırmasını içerir: Centurion'un geri yükleyeceği bir şey yok. Bir arşiv yöneticisiyle açın (system-profile/root/ kökün / bir yansısıdır) ya da başka bir arşivle karşılaştırın.</translation>
+        </message>
 </context>
     <context>
         <name>blocklistsubs</name>
@@ -15570,13 +15604,13 @@ Ctrl+tekerlek: yakınlaştır; orta tuşla sürükle veya ok tuşlarıyla kaydı
         </message>
         <message>
             <location filename="../src/distroprofile.cpp" line="145"/>
-            <source>/etc/portage, the world set, the kernel .config, conf.d, runlevels, env.d</source>
-            <translation>/etc/portage, world kümesi, çekirdek .config dosyası, conf.d, runlevels, env.d</translation>
+            <source>/etc/portage (make.conf, package.*, repos.conf), the world set, local overlays, the kernel .config, conf.d, runlevels, env.d</source>
+            <translation>/etc/portage (make.conf, package.*, repos.conf), world kümesi, yerel overlay'ler, çekirdek .config, conf.d, runlevels, env.d</translation>
         </message>
         <message>
             <location filename="../src/distroprofile.cpp" line="146"/>
-            <source>pacman.conf and pacman.d (mirror list), makepkg.conf, mkinitcpio</source>
-            <translation>pacman.conf ve pacman.d (yansı listesi), makepkg.conf, mkinitcpio</translation>
+            <source>pacman.conf and pacman.d (mirror list, hooks), makepkg.conf, mkinitcpio / booster, paru.conf, the AUR package list</source>
+            <translation>pacman.conf ve pacman.d (ayna listesi, kancalar), makepkg.conf, mkinitcpio / booster, paru.conf, AUR paket listesi</translation>
         </message>
         <message>
             <location filename="../src/distroprofile.cpp" line="147"/>
@@ -15663,6 +15697,22 @@ system-profile/ altında saklanır ve hiçbir zaman otomatik olarak geri yüklen
         <message>
             <source>Favorite limit reached.</source>
             <translation>Favori sınırına ulaşıldı.</translation>
+        </message>
+        <message>
+            <source>/etc/nixos (configuration.nix, hardware-configuration.nix, flake.nix / flake.lock), nix.conf, the generations and installed packages</source>
+            <translation>/etc/nixos (configuration.nix, hardware-configuration.nix, flake.nix / flake.lock), nix.conf, nesiller ve kurulu paketler</translation>
+        </message>
+        <message>
+            <source>make.conf, package.use / accept_keywords / mask, repos.conf (eselect repository), local overlays, world, kernel .config and command line, fstab, OpenRC conf.d.</source>
+            <translation>make.conf, package.use / accept_keywords / mask, repos.conf (eselect repository), yerel overlay'ler, world, çekirdek .config ve komut satırı, fstab, OpenRC conf.d.</translation>
+        </message>
+        <message>
+            <source>pacman.conf, mirror list, makepkg.conf, mkinitcpio, boot loader entries, kernel command line, fstab, explicit and AUR package lists.</source>
+            <translation>pacman.conf, ayna listesi, makepkg.conf, mkinitcpio, önyükleyici girdileri, çekirdek komut satırı, fstab, açıkça kurulan ve AUR paket listeleri.</translation>
+        </message>
+        <message>
+            <source>/etc/nixos (configuration.nix, hardware-configuration.nix, flake), nix.conf, generations, installed packages, kernel command line.</source>
+            <translation>/etc/nixos (configuration.nix, hardware-configuration.nix, flake), nix.conf, nesiller, kurulu paketler, çekirdek komut satırı.</translation>
         </message>
     </context>
     <context>

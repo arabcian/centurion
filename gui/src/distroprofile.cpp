@@ -42,7 +42,7 @@ QString familyOf(const QString &text) {
         if (id == QLatin1String("debian") || id == QLatin1String("ubuntu")) return QStringLiteral("debian");
         if (id == QLatin1String("fedora") || id == QLatin1String("rhel") || id == QLatin1String("centos")) return QStringLiteral("fedora");
         if (id == QLatin1String("suse") || id == QLatin1String("sles") || id.startsWith(QLatin1String("opensuse"))) return QStringLiteral("opensuse");
-        if (id == QLatin1String("void") || id == QLatin1String("alpine")) return id;
+        if (id == QLatin1String("void") || id == QLatin1String("alpine") || id == QLatin1String("nixos")) return id;
     }
     return {};
 }
@@ -68,12 +68,13 @@ QString familyLabel(const QString &f) {
     if (f == QLatin1String("opensuse")) return QStringLiteral("openSUSE / SLES");
     if (f == QLatin1String("void")) return QStringLiteral("Void Linux");
     if (f == QLatin1String("alpine")) return QStringLiteral("Alpine Linux");
+    if (f == QLatin1String("nixos")) return QStringLiteral("NixOS");
     return tr("Generic Linux");
 }
 
 QStringList families() {
     return {QStringLiteral("gentoo"), QStringLiteral("arch"), QStringLiteral("debian"), QStringLiteral("fedora"),
-            QStringLiteral("opensuse"), QStringLiteral("void"), QStringLiteral("alpine"), QString()};
+            QStringLiteral("opensuse"), QStringLiteral("void"), QStringLiteral("alpine"), QStringLiteral("nixos"), QString()};
 }
 
 QStringList imageExcludes(const QString &f) {
@@ -168,8 +169,9 @@ QString restoreHint(const QString &f) {
 
 QString profileAbout(const QString &f) {
     QString pm;
-    if (f == QLatin1String("gentoo")) pm = tr("/etc/portage, the world set, the kernel .config, conf.d, runlevels, env.d");
-    else if (f == QLatin1String("arch")) pm = tr("pacman.conf and pacman.d (mirror list), makepkg.conf, mkinitcpio");
+    if (f == QLatin1String("gentoo")) pm = tr("/etc/portage (make.conf, package.*, repos.conf), the world set, local overlays, the kernel .config, conf.d, runlevels, env.d");
+    else if (f == QLatin1String("arch")) pm = tr("pacman.conf and pacman.d (mirror list, hooks), makepkg.conf, mkinitcpio / booster, paru.conf, the AUR package list");
+    else if (f == QLatin1String("nixos")) pm = tr("/etc/nixos (configuration.nix, hardware-configuration.nix, flake.nix / flake.lock), nix.conf, the generations and installed packages");
     else if (f == QLatin1String("debian")) pm = tr("APT sources and preferences, /etc/default, initramfs-tools, netplan");
     else if (f == QLatin1String("fedora")) pm = tr("dnf configuration, yum.repos.d, /etc/sysconfig, the SELinux mode");
     else if (f == QLatin1String("opensuse")) pm = tr("zypper repositories and zypp.conf, /etc/sysconfig, snapper configurations");
@@ -183,6 +185,16 @@ QString profileAbout(const QString &f) {
               "the installed package list and the packages installed by name.\n"
               "It is stored under system-profile/ and is never restored automatically.")
         .arg(prettyName(), pm);
+}
+
+QString systemConfigSummary(const QString &f) {
+    if (f == QLatin1String("gentoo"))
+        return tr("make.conf, package.use / accept_keywords / mask, repos.conf (eselect repository), local overlays, world, kernel .config and command line, fstab, OpenRC conf.d.");
+    if (f == QLatin1String("arch"))
+        return tr("pacman.conf, mirror list, makepkg.conf, mkinitcpio, boot loader entries, kernel command line, fstab, explicit and AUR package lists.");
+    if (f == QLatin1String("nixos"))
+        return tr("/etc/nixos (configuration.nix, hardware-configuration.nix, flake), nix.conf, generations, installed packages, kernel command line.");
+    return {};
 }
 
 QString imageCaveat() {

@@ -39,6 +39,8 @@ public:
     bool operationActive() const { return !proc_.isNull(); }
     /// *Back up now* of the Centurion configuration box (first-run wizard too); result in jobFinished.
     void configBackup();
+    /// Gentoo / Arch / NixOS: the distribution's configuration alone (system profile), in the configuration folder.
+    void systemConfigBackup();
 
 Q_SIGNALS:
     /// A job finished while the page was not on screen (tray notification).

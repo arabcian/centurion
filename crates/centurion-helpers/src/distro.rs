@@ -9,7 +9,7 @@
 use std::fs;
 use std::path::Path;
 
-/// "gentoo", "arch", "debian", "fedora", "opensuse", "void", "alpine", or "" for anything else.
+/// "gentoo", "arch", "debian", "fedora", "opensuse", "void", "alpine", "nixos", or "" for anything else.
 /// Derivatives are found through ID_LIKE (Manjaro, EndeavourOS, CachyOS → arch; Ubuntu, Mint,
 /// Pop!_OS → debian; RHEL, Rocky, Alma, CentOS → fedora; Leap, Tumbleweed, SLES → opensuse).
 /// ID wins over ID_LIKE whatever their order in the file.
@@ -29,6 +29,7 @@ pub fn family(os_release: &str) -> &'static str {
         i if i.starts_with("opensuse") => Some("opensuse"),
         "void" => Some("void"),
         "alpine" => Some("alpine"),
+        "nixos" => Some("nixos"),
         _ => None,
     }).unwrap_or("")
 }
@@ -101,7 +102,10 @@ pub const PROFILE_COMMON: &[&str] = &[
     "etc/modprobe.d", "etc/modules-load.d", "etc/sysctl.conf", "etc/sysctl.d", "etc/udev/rules.d", "etc/X11/xorg.conf.d",
     "etc/environment", "etc/locale.gen", "etc/locale.conf", "etc/vconsole.conf", "etc/hostname", "etc/hosts",
     "etc/security/limits.conf", "etc/security/limits.d", "etc/systemd/system", "etc/systemd/logind.conf",
-    "etc/systemd/sleep.conf", "etc/tmpfiles.d",
+    "etc/systemd/sleep.conf", "etc/tmpfiles.d", "etc/systemd/zram-generator.conf", "etc/cmdline.d",
+    // Boot loader entries: systemd-boot (on /boot or the ESP) and rEFInd's kernel options. Often root-only: listed as unreadable then.
+    "boot/loader/loader.conf", "boot/loader/entries", "efi/loader/loader.conf", "efi/loader/entries",
+    "boot/efi/loader/loader.conf", "boot/efi/loader/entries", "boot/refind_linux.conf",
 ];
 
 /// System profile, per family: the package manager's configuration and the initramfs generator.
@@ -109,7 +113,10 @@ pub fn profile_paths(family: &str) -> &'static [&'static str] {
     match family {
         "gentoo" => &["etc/portage", "var/lib/portage/world", "var/lib/portage/world_sets", "usr/src/linux/.config",
                       "etc/conf.d", "etc/rc.conf", "etc/local.d", "etc/runlevels", "etc/env.d", "etc/genkernel.conf"],
-        "arch" => &["etc/pacman.conf", "etc/pacman.d", "etc/makepkg.conf", "etc/mkinitcpio.conf", "etc/mkinitcpio.d"],
+        "arch" => &["etc/pacman.conf", "etc/pacman.d", "etc/makepkg.conf", "etc/makepkg.conf.d", "etc/mkinitcpio.conf", "etc/mkinitcpio.d",
+                    "etc/paru.conf", "etc/booster.yaml", "etc/xdg/reflector/reflector.conf"],
+        // NixOS is rebuilt from its configuration: configuration.nix, hardware-configuration.nix, flake.nix / flake.lock.
+        "nixos" => &["etc/nixos", "etc/nix/nix.conf", "etc/nix/registry.json", "etc/nix/machines"],
         "debian" => &["etc/apt/sources.list", "etc/apt/sources.list.d", "etc/apt/preferences", "etc/apt/preferences.d",
                       "etc/apt/apt.conf.d", "etc/initramfs-tools", "etc/default"],
         // Not /etc/sysconfig as a whole: network scripts there hold Wi-Fi keys, and much of it is root-only.
@@ -126,7 +133,63 @@ pub fn profile_paths(family: &str) -> &'static [&'static str] {
 /// (netplan, /etc/network/interfaces, NetworkManager, ifcfg) is left out of the lists for the same reason:
 /// it may hold Wi-Fi passphrases, and the profile is a file of the user's.
 pub const PROFILE_SKIP: &[&str] = &["/etc/portage/gnupg", "/etc/pacman.d/gnupg", "/etc/zypp/credentials.d",
-                                    "/etc/apt/auth.conf", "/etc/apt/auth.conf.d"];
+                                    "/etc/apt/auth.conf", "/etc/apt/auth.conf.d", "/etc/nix/netrc", "/etc/nixos/secrets"];
+
+/// Gentoo: the ebuild repositories repos.conf defines without a sync source (local overlays: nothing fetches them
+/// again), as (name, location). The Gentoo repository and synced overlays (eselect repository / git) are left out:
+/// their definitions are in /etc/portage/repos.conf, which the profile keeps.
+pub fn gentoo_local_overlays(repos_conf: &str) -> Vec<(String, String)> {
+    let mut out = Vec::new();
+    let mut flush = |name: &Option<String>, loc: &Option<String>, synced: bool| {
+        if let (Some(n), Some(l)) = (name, loc) {
+            if !synced && n != "DEFAULT" && n != "gentoo" && l.starts_with('/') && !l.contains("..") { out.push((n.clone(), l.clone())); }
+        }
+    };
+    let (mut name, mut loc, mut synced) = (None::<String>, None::<String>, false);
+    for raw in repos_conf.lines() {
+        let line = raw.trim();
+        if line.starts_with('#') || line.is_empty() { continue; }
+        if let Some(sec) = line.strip_prefix('[').and_then(|l| l.strip_suffix(']')) {
+            flush(&name, &loc, synced);
+            (name, loc, synced) = (Some(sec.trim().to_owned()), None, false);
+            continue;
+        }
+        let Some((k, v)) = line.split_once('=') else { continue };
+        match k.trim() {
+            "location" => loc = Some(v.trim().trim_end_matches('/').to_owned()),
+            "sync-uri" | "sync-type" if !v.trim().is_empty() => synced = true,
+            _ => {}
+        }
+    }
+    flush(&name, &loc, synced);
+    out
+}
+
+/// /etc/portage/repos.conf as one text, whether it is a file or a directory of *.conf files.
+pub fn repos_conf_text() -> String {
+    let p = Path::new("/etc/portage/repos.conf");
+    if p.is_file() { return fs::read_to_string(p).unwrap_or_default(); }
+    let mut files: Vec<_> = fs::read_dir(p).into_iter().flatten().flatten().map(|e| e.path()).filter(|f| f.is_file()).collect();
+    files.sort();
+    files.iter().filter_map(|f| fs::read_to_string(f).ok()).collect::<Vec<_>>().join("\n")
+}
+
+/// NixOS: the packages of the running system and the user's profile, from the store paths their bin/ links
+/// point into ("name-version"), without running nix.
+pub fn nix_packages(dirs: &[&Path]) -> Vec<String> {
+    let mut out = Vec::new();
+    for d in dirs {
+        for e in fs::read_dir(d).into_iter().flatten().flatten() {
+            let Ok(t) = fs::read_link(e.path()) else { continue };
+            let Some(rest) = t.to_str().and_then(|t| t.strip_prefix("/nix/store/")) else { continue };
+            let Some(pkg) = rest.split('/').next().and_then(|h| h.get(33..)) else { continue };  // "<32-char hash>-name-version"
+            if !pkg.is_empty() { out.push(pkg.to_owned()); }
+        }
+    }
+    out.sort();
+    out.dedup();
+    out
+}
 
 /// The profile paths for `family`: the common ones and the family's, without a path that another one in the
 /// list already contains (Debian's etc/default holds etc/default/grub), so no file is copied or counted twice.
@@ -150,6 +213,13 @@ pub fn installed_packages(family: &str) -> Vec<String> {
         "arch" => pacman_local(Path::new("/var/lib/pacman/local")),
         "debian" => dpkg_status(&fs::read_to_string("/var/lib/dpkg/status").unwrap_or_default()),
         "alpine" => apk_installed(&fs::read_to_string("/lib/apk/db/installed").unwrap_or_default()),
+        "nixos" => {
+            let user = std::env::var("USER").unwrap_or_default();
+            let per_user = format!("/etc/profiles/per-user/{user}/bin");
+            let mut dirs = vec![Path::new("/run/current-system/sw/bin")];
+            if !user.is_empty() && !user.contains('/') { dirs.push(Path::new(&per_user)); }
+            nix_packages(&dirs)
+        }
         "fedora" | "opensuse" => command_lines("rpm", &["-qa", "--qf", "%{NAME} %{VERSION}-%{RELEASE}.%{ARCH}\\n"]),
         "void" => command_lines("xbps-query", &["-l"]).iter().filter_map(|l| {
             // "ii name-1.2_3 description"
@@ -184,6 +254,11 @@ pub fn explicit_packages(family: &str) -> Vec<String> {
     out.sort();
     out.dedup();
     out
+}
+
+/// Packages that come from outside the distribution's repositories (Arch: the AUR and local builds, `pacman -Qqm`).
+pub fn foreign_packages(family: &str) -> Vec<String> {
+    match family { "arch" => command_lines("pacman", &["-Qqm"]), _ => Vec::new() }
 }
 
 /// A package query's output lines. Bounded: a locked or broken database must not hang a configuration backup
@@ -301,7 +376,7 @@ mod tests {
         assert_eq!(family("ID=\"opensuse-tumbleweed\"\nID_LIKE=\"opensuse suse\"\n"), "opensuse");
         assert_eq!(family("ID=void\n"), "void");
         assert_eq!(family("ID=alpine\n"), "alpine");
-        assert_eq!(family("ID=nixos\n"), "");
+        assert_eq!(family("ID=nixos\n"), "nixos");
         assert_eq!(family(""), "");
     }
 
@@ -389,5 +464,21 @@ mod tests {
         let auto = apt_auto("Package: a\nArchitecture: amd64\nAuto-Installed: 1\n\nPackage: b\nAuto-Installed: 0\n");
         assert!(auto.contains("a") && !auto.contains("b"));
         assert_eq!(apk_installed("C:x\nP:musl\nV:1.2.5-r0\n\nP:busybox\nV:1.36\n"), vec!["musl 1.2.5-r0".to_string(), "busybox 1.36".to_string()]);
+    }
+
+    #[test]
+    fn gentoo_overlays_and_nix_packages() {
+        let conf = "[DEFAULT]\nmain-repo = gentoo\n\n[gentoo]\nlocation = /var/db/repos/gentoo\nsync-type = rsync\n\n\
+                    [local]\nlocation = /var/db/repos/local/\n\n[guru]\nlocation = /var/db/repos/guru\nsync-type = git\nsync-uri = https://x\n\n\
+                    [bad]\nlocation = ../etc\n";
+        assert_eq!(gentoo_local_overlays(conf), vec![("local".to_string(), "/var/db/repos/local".to_string())]);
+        assert!(profile_list("nixos").contains(&"etc/nixos"));
+        assert!(PROFILE_SKIP.contains(&"/etc/nix/netrc"));
+        let dir = std::env::temp_dir().join(format!("centurion-nix-{}", std::process::id()));
+        let _ = fs::create_dir_all(&dir);
+        let _ = std::os::unix::fs::symlink("/nix/store/0123456789abcdfghijklmnpqrsvwxyz-firefox-130.0/bin/firefox", dir.join("firefox"));
+        let _ = std::os::unix::fs::symlink("/usr/bin/x", dir.join("other"));
+        assert_eq!(nix_packages(&[&dir]), vec!["firefox-130.0".to_string()]);
+        let _ = fs::remove_dir_all(&dir);
     }
 }
