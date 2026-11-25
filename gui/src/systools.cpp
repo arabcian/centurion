@@ -47,6 +47,7 @@
 #include <QSet>
 #include <QTextBrowser>
 #include <QTextDocument>
+#include <QTextCursor>
 #include <QPointer>
 #include <QProcess>
 #include <QProgressDialog>
@@ -126,6 +127,7 @@ const ToolPkg TOOL_PKGS[] = {
     {"vulkaninfo", "dev-util/vulkan-tools", "vulkan-tools", "vulkan-tools", "vulkan-tools"},
     {"glxinfo", "x11-apps/mesa-progs", "mesa-utils", "glx-utils", "mesa-utils"},
     {"lsmod", "sys-apps/kmod", "kmod", "kmod", "kmod"},
+    {"modinfo", "sys-apps/kmod", "kmod", "kmod", "kmod"},
     {"swapon", "sys-apps/util-linux", "util-linux", "util-linux", "util-linux"},
     {"free", "sys-process/procps", "procps-ng", "procps-ng", "procps"},
     {"df", "sys-apps/coreutils", "coreutils", "coreutils", "coreutils"},
@@ -288,6 +290,94 @@ QStringList dirNames(const QString &dir, const QStringList &filters = {}) {
     return QDir(dir).entryList(filters, QDir::Dirs | QDir::NoDotAndDotDot | QDir::System, QDir::Name);
 }
 
+// modinfo for the modules named in `input` (space or comma separated), or for every loaded module when it is
+// empty, each followed by the live values of its parameters. Read-only: runs as the user, one module at a time.
+void showModuleInfo(QWidget *parent, const QString &input) {
+    static const QRegularExpression valid(QStringLiteral("^[A-Za-z0-9_][A-Za-z0-9_-]{0,63}$"));
+    QStringList names = input.split(QRegularExpression(QStringLiteral("[\\s,]+")), Qt::SkipEmptyParts);
+    if (names.isEmpty()) {
+        for (const QString &line : readFile(QStringLiteral("/proc/modules")).split(QLatin1Char('\n'), Qt::SkipEmptyParts))
+            names << line.section(QLatin1Char(' '), 0, 0);
+        names.sort();
+    }
+    names.removeDuplicates();
+    for (const QString &n : std::as_const(names)) {
+        if (!valid.match(n).hasMatch()) {
+            QMessageBox::warning(parent, tl("Module info"), tl("'%1' is not a module name.").arg(n));
+            return;
+        }
+    }
+    const QString exe = findExe(QStringLiteral("modinfo"));
+    if (exe.isEmpty()) {
+        QMessageBox::warning(parent, tl("Module info"), tl("modinfo is not installed (%1).").arg(installHint(QStringLiteral("modinfo"))));
+        return;
+    }
+    if (names.isEmpty()) {
+        QMessageBox::information(parent, tl("Module info"), tl("No loaded modules are listed in /proc/modules. Type a module name."));
+        return;
+    }
+    auto *dlg = new QDialog(parent);
+    dlg->setAttribute(Qt::WA_DeleteOnClose);
+    dlg->setWindowTitle(names.size() == 1 ? tl("Module info: %1").arg(names.first()) : QCoreApplication::translate("systools", "Module info: %n modules", nullptr, int(names.size())));
+    dlg->resize(900, 620);
+    auto *lay = new QVBoxLayout(dlg);
+    auto *text = new QPlainTextEdit;
+    text->setReadOnly(true);
+    text->setLineWrapMode(QPlainTextEdit::NoWrap);
+    text->setFont(QFontDatabase::systemFont(QFontDatabase::FixedFont));
+    lay->addWidget(text, 1);
+    auto *bb = new QDialogButtonBox(QDialogButtonBox::Close);
+    auto *copy = bb->addButton(tl("Copy"), QDialogButtonBox::ActionRole);
+    QObject::connect(copy, &QPushButton::clicked, text, [text] { QApplication::clipboard()->setText(text->toPlainText()); });
+    QObject::connect(bb, &QDialogButtonBox::rejected, dlg, &QDialog::close);
+    lay->addWidget(bb);
+    dlg->show();
+
+    // Live parameter values: modinfo lists what a module accepts, /sys/module shows what is in effect now.
+    auto params = [](const QString &name) {
+        const QString dir = QStringLiteral("/sys/module/%1/parameters").arg(name);
+        if (!QDir(dir).exists()) return QString();
+        QString out = tl("Current parameter values (/sys/module/%1/parameters):").arg(name) + QLatin1Char('\n');
+        for (const QString &f : QDir(dir).entryList(QDir::Files, QDir::Name)) {
+            QFile file(dir + QLatin1Char('/') + f);
+            const QString v = file.open(QIODevice::ReadOnly) ? QString::fromUtf8(file.read(4096)).trimmed() : tl("(root only)");
+            out += QStringLiteral("  %1 = %2\n").arg(f, v);
+        }
+        return out;
+    };
+    auto next = std::make_shared<std::function<void(int)>>();
+    QPointer<QDialog> guardDlg(dlg);
+    *next = [guardDlg, text, names, exe, params, next](int i) {
+        if (!guardDlg) return;
+        if (i >= names.size()) { text->moveCursor(QTextCursor::Start); return; }
+        const QString name = names.at(i);
+        auto *p = new QProcess(guardDlg);
+        p->setProcessChannelMode(QProcess::MergedChannels);
+        auto env = QProcessEnvironment::systemEnvironment(); env.insert(QStringLiteral("LC_ALL"), QStringLiteral("C"));
+        p->setProcessEnvironment(env);
+        QPointer<QProcess> guard(p);
+        QObject::connect(p, &QProcess::finished, guardDlg, [text, p, name, params, next, i](int code, QProcess::ExitStatus st) {
+            QString out = QStringLiteral("$ modinfo %1\n").arg(name) + QString::fromUtf8(p->readAll().left(MAX_OUT)).trimmed() + QLatin1Char('\n');
+            if (st != QProcess::NormalExit || code != 0) out += tl("(modinfo failed: no such module on this kernel?)") + QLatin1Char('\n');
+            out += params(name);
+            text->appendPlainText(out);
+            p->deleteLater();
+            (*next)(i + 1);
+        });
+        QObject::connect(p, &QProcess::errorOccurred, guardDlg, [text, p, name, next, i](QProcess::ProcessError e) {
+            if (e != QProcess::FailedToStart) return;
+            text->appendPlainText(QStringLiteral("$ modinfo %1\n(failed to start)\n").arg(name));
+            p->deleteLater();
+            (*next)(i + 1);
+        });
+        QTimer::singleShot(CMD_TIMEOUT_MS, p, [guard] { if (guard && guard->state() != QProcess::NotRunning) guard->kill(); });
+        p->start(exe, {QStringLiteral("--"), name});
+    };
+    // Breaks the self-reference once the dialog is gone.
+    QObject::connect(dlg, &QObject::destroyed, [next] { *next = nullptr; });
+    (*next)(0);
+}
+
 // The changes a tool page offers, under its toolbar (nullptr: none). Each goes through sysadmin-helper
 // (administrator password) and reads the page again when it succeeded.
 QWidget *actionBar(const QString &key, QWidget *page, const std::function<void()> &rerun) {
@@ -407,6 +497,8 @@ QWidget *actionBar(const QString &key, QWidget *page, const std::function<void()
         h->addWidget(mod);
         button(tl("Load"), tl("modprobe <name>: until the next boot (Configuration files → modules-load keeps it)."), [act, mod] {
             if (!mod->text().trimmed().isEmpty()) act(tl("Load module"), QString(), req("module", {{"name", mod->text().trimmed()}, {"load", true}})); });
+        button(tl("Info…"), tl("modinfo <name>: description, version, firmware, aliases and parameters, with the values in effect now. Several names may be given; empty = every loaded module. Read-only."), [page, mod] {
+            showModuleInfo(page, mod->text()); });
         button(tl("Unload"), tl("modprobe -r <name>: refused while something uses the module."), [act, mod] {
             if (!mod->text().trimmed().isEmpty())
                 act(tl("Unload module"), tl("Unload %1? Devices it drives stop working until it is loaded again.").arg(mod->text().trimmed()),

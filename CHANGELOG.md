@@ -12,6 +12,9 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions follo
   Same keys, presets, Restore originals and boot defaults; only the page and its own Apply checked button differ.
 
 ### Added
+- System tools → Kernel: *Info…* next to Load / Unload runs `modinfo` for the module names typed in the field
+  (several allowed), or for every loaded module when it is empty, and adds each module's current parameter values from
+  `/sys/module/<name>/parameters`. Read-only, runs as the user.
 - Six knobs found missing in a full /sys dump: *No EC wake-ups in s2idle* (`pm.ec_no_wakeup`, s2idle battery
   drain), *Freeze file systems before suspend* and *Removable-disk polling interval* (Optimizations → Devices);
   *KSM pages_to_scan*, *KSM sleep_millisecs* and *DAMON proactive reclaim* (System tools → Kernel tuning). Manual

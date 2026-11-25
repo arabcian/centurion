@@ -53,7 +53,7 @@ const QHash<QString, Info> &tools() {
          {A::Devices, 0, words("pcie|link|hız|speed|gen|lane|şerit|aspm|aer|xid 79|fallen off the bus|bant genişliği|bandwidth|S04")}},
         {"USB", {A::Devices, ChangesSettings, words("usb|lsusb|port|hub|cihaz|device|bağlantı kopması|disconnect")}},
         // Firmware & kernel
-        {"Kernel", {A::Firmware, ChangesSettings, words("kernel|çekirdek|uname|lsmod|modül|module|cmdline|boot parameters|açılış parametreleri")}},
+        {"Kernel", {A::Firmware, ChangesSettings, words("kernel|çekirdek|uname|lsmod|modinfo|modül|module|modül bilgisi|module info|cmdline|boot parameters|açılış parametreleri")}},
         {"Kernel Feature & Firmware Check",
          {A::Firmware, 0, words("kernel config|firmware missing|firmware eksik|modül|module|driver yok|missing driver|desteklenmiyor|unsupported|S18")}},
         {"ACPI / WMI Firmware Browser", {A::Firmware, 0, words("acpi|wmi|firmware|bios|lenovo|legion|dsdt|S11")}},

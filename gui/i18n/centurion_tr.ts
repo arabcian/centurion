@@ -8301,6 +8301,52 @@ Ayrıntılar için Sağlık → dGPU gücü.</translation>
         <source>Module parameter metadata is missing or unrecognized.</source>
         <translation>Modül parametre üstverisi eksik veya tanınmıyor.</translation>
     </message>
+        <message>
+            <source>Info…</source>
+            <translation>Bilgi…</translation>
+        </message>
+        <message>
+            <source>modinfo &lt;name&gt;: description, version, firmware, aliases and parameters, with the values in effect now. Several names may be given; empty = every loaded module. Read-only.</source>
+            <translation>modinfo &lt;ad&gt;: açıklama, sürüm, ürün yazılımı, takma adlar ve parametreler, şu an geçerli değerleriyle. Birden çok ad yazılabilir; boş = yüklü tüm modüller. Yalnızca okur.</translation>
+        </message>
+        <message>
+            <source>Module info</source>
+            <translation>Modül bilgisi</translation>
+        </message>
+        <message>
+            <source>'%1' is not a module name.</source>
+            <translation>'%1' bir modül adı değil.</translation>
+        </message>
+        <message>
+            <source>modinfo is not installed (%1).</source>
+            <translation>modinfo kurulu değil (%1).</translation>
+        </message>
+        <message>
+            <source>No loaded modules are listed in /proc/modules. Type a module name.</source>
+            <translation>/proc/modules içinde yüklü modül görünmüyor. Bir modül adı yazın.</translation>
+        </message>
+        <message>
+            <source>Module info: %1</source>
+            <translation>Modül bilgisi: %1</translation>
+        </message>
+        <message>
+            <source>Current parameter values (/sys/module/%1/parameters):</source>
+            <translation>Güncel parametre değerleri (/sys/module/%1/parameters):</translation>
+        </message>
+        <message>
+            <source>(root only)</source>
+            <translation>(yalnız root)</translation>
+        </message>
+        <message>
+            <source>(modinfo failed: no such module on this kernel?)</source>
+            <translation>(modinfo başarısız: bu çekirdekte böyle bir modül yok mu?)</translation>
+        </message>
+        <message numerus="yes">
+            <source>Module info: %n modules</source>
+            <translation>
+                <numerusform>Modül bilgisi: %n modül</numerusform>
+            </translation>
+        </message>
 </context>
     <context>
         <name>BackupPage</name>
