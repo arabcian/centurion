@@ -62,6 +62,17 @@ Only undervolted cores are loaded alone. The parts add up to 1,200 s; with more 
 1, 2, 3 and 6 alone exceed it and the verification is that long. With 8 cores part 4 runs 3 cycles and part 5
 fits (9 s per core).
 
+### Low-load wakeups in CO cycles
+
+The final transition in each 24 s probe and 60 s CO cycle allows the pinned worker to sleep
+before each short SSE burst. Idle intervals alternate between 96–240 ms and 8–32 ms, with
+jitter within each range. Each wake requests 0.25–2 ms of repeated single 2K FFT squares.
+Every square is checked against a per-seed reference, including the first one after idle.
+The phase event reports `wake-fft-sse`. These durations are scheduling targets. Actual
+clocks and idle residency depend on the processor, firmware, OS and other runnable work.
+The single-thread and suspend/resume approach follows
+[CoreCycler's testing rationale](https://github.com/sp00n/CoreCycler/blob/master/readme.txt).
+
 ### Why the earlier test stayed near 70 W
 
 Most of it is single-core by design (tens of watts), and its all-core kernels wait on dependency chains and on

@@ -188,6 +188,17 @@ fn fft_inverse<const F: bool>(re: &mut [f64], im: &mut [f64], wr: &[f64], wi: &[
 #[inline(always)]
 fn fft_chunk<const F: bool>(seed: u64, s: &mut Scratch, flip: u32) -> u64 {
     let log = FFT_LOGS[seed as usize];
+    let iters = (FFT_BUDGET / ((1u64 << log) * log as u64)).max(1) as u32;
+    fft_square::<F>(seed, s, flip, log, iters)
+}
+
+/// A single 2K SSE FFT square for brief wakes, checked against its own per-seed references.
+pub fn wake_chunk(seed: u64, s: &mut Scratch) -> u64 {
+    fft_square::<false>(seed, s, NO_FLIP, 11, 1)
+}
+
+#[inline(always)]
+fn fft_square<const F: bool>(seed: u64, s: &mut Scratch, flip: u32, log: u32, iters: u32) -> u64 {
     let n = 1usize << log;
     if s.fft_tw.len() <= log as usize { s.fft_tw.resize_with(log as usize + 1, || None); }
     let (wr, wi) = s.fft_tw[log as usize].get_or_insert_with(|| fft_tables(log));
@@ -201,7 +212,6 @@ fn fft_chunk<const F: bool>(seed: u64, s: &mut Scratch, flip: u32) -> u64 {
     for d in digits.iter_mut() { *d = (splitmix(&mut st) & (base as u64 - 1)) as i64 - base / 2; }
     let mut h = [splitmix(&mut st), splitmix(&mut st), splitmix(&mut st), splitmix(&mut st)];
     let scale = 1.0 / n as f64;
-    let iters = (FFT_BUDGET / (n as u64 * log as u64)).max(1) as u32;
     for it in 0..iters {
         for j in 0..n { re[j] = digits[j] as f64; im[j] = 0.0; }
         fft_forward::<F>(re, im, wr, wi);

@@ -37,6 +37,7 @@ fn timing(seconds: u64) -> Timing {
 struct Step { on_ms: u32, off_ms: u32, swap: bool, eighths: usize }
 const ONE: u32 = 0;
 const ALL: u32 = u32::MAX;
+const WAKE: u32 = u32::MAX - 2; // Short, verified SSE bursts with alternating idle ranges.
 const RAND: u32 = u32::MAX - 1;
 
 const FLUCT: [Step; 10] = [
@@ -49,8 +50,16 @@ const FLUCT: [Step; 10] = [
     Step { on_ms: RAND, off_ms: RAND, swap: false, eighths: 2 },  // irregular
     Step { on_ms: ALL, off_ms: 0, swap: true, eighths: 1 },       // swaps on a lone, fully boosted core
     Step { on_ms: 50, off_ms: 10, swap: false, eighths: 8 },      // mostly busy, short dips
-    Step { on_ms: 10, off_ms: 300, swap: false, eighths: 8 },     // mostly idle, short spikes
+    Step { on_ms: WAKE, off_ms: 0, swap: false, eighths: 8 },     // irregular low-duty wakeups; see wake_pulse
 ];
+
+/// Scheduling targets only. The OS and the cost of a verified chunk determine actual timings.
+fn wake_pulse(rng: &mut u64, long_idle: bool) -> (Duration, Duration) {
+    let (base, range) = if long_idle { (96, 145) } else { (8, 25) };
+    let idle = Duration::from_millis(base + cowork::splitmix(rng) % range);
+    let busy = Duration::from_micros(250 + cowork::splitmix(rng) % 1751);
+    (idle, busy)
+}
 
 /// Phase at `elapsed` into a cycle: 0 = steady, 1..=10 = fluctuation step.
 fn phase_at(elapsed: Duration, span: Timing) -> usize {
@@ -81,7 +90,12 @@ fn kernels() -> Vec<Kernel> { cowork::KERNELS.into_iter().filter(|k| k.supported
 fn reference_on(cpu: usize) -> Result<Vec<u64>, String> {
     topo::pin(cpu)?;
     let mut s = Scratch::new();
-    Ok(kernels().into_iter().flat_map(|k| (0..cowork::NSEEDS).map(move |seed| (k, seed))).map(|(k, seed)| cowork::chunk(k, seed, &mut s)).collect())
+    let mut refs = Vec::new();
+    for k in kernels() {
+        refs.extend((0..cowork::NSEEDS).map(|seed| cowork::chunk(k, seed, &mut s)));
+    }
+    refs.extend((0..cowork::NSEEDS).map(|seed| cowork::wake_chunk(seed, &mut s)));
+    Ok(refs)
 }
 
 struct Job { cpu: usize, slot: usize, n: usize, kernel: usize, per_core: bool,
@@ -94,10 +108,11 @@ fn worker(j: Job, ks: &[Kernel], refs: &[u64], sh: &Shared, abort: &AtomicBool) 
     let mut n = 0u64;
     let mut rng = (j.cpu as u64) << 32 ^ j.start.duration_since(j.t0).as_nanos() as u64;
     let halted = || STOP.load(Ordering::Relaxed) || abort.load(Ordering::Relaxed);
-    // One chunk of kernel `k`: false when it came out wrong.
+    // The wake kernel has its own reference block after the steady kernels.
+    let wake = ks.len();
     let mut run = |k: usize, n: &mut u64| -> bool {
         let seed = *n % cowork::NSEEDS;
-        let got = cowork::chunk(ks[k], seed, &mut s);
+        let got = if k == wake { cowork::wake_chunk(seed, &mut s) } else { cowork::chunk(ks[k], seed, &mut s) };
         #[cfg(feature = "fault-inject")]
         let got = if *n == 3 && j.cpu + 1 == topo::cores().iter().flat_map(|c| c.cpus.iter()).count() { got ^ 1 } else { got };
         *n += 1;
@@ -116,6 +131,20 @@ fn worker(j: Job, ks: &[Kernel], refs: &[u64], sh: &Shared, abort: &AtomicBool) 
     for (i, st) in FLUCT.iter().enumerate() {
         let end = steady_end + j.span.step * (i as u32 + 1);
         if !j.per_core && !active(j.slot, j.n, i, st.eighths) { sleep_until(end, abort); continue; }
+        if st.on_ms == WAKE {
+            let mut long_idle = true;
+            while !halted() && Instant::now() < end {
+                let (idle, busy) = wake_pulse(&mut rng, long_idle);
+                long_idle = !long_idle;
+                // Sleep once so cancellation polling does not wake this core mid-pause.
+                std::thread::sleep(idle.min(end.saturating_duration_since(Instant::now())));
+                let burst_end = end.min(Instant::now() + busy);
+                while !halted() && Instant::now() < burst_end {
+                    if !run(wake, &mut n) { return Ok(n); }
+                }
+            }
+            continue;
+        }
         let mut flip = false;
         while !halted() && Instant::now() < end {
             let mut rand_ms = || 1 + cowork::splitmix(&mut rng) % 200;
@@ -180,7 +209,12 @@ fn cycle(cpus: &[usize], per_core: bool, kernel: usize, cyc: u32, cx: &Ctx, p: &
     let (mut phase, mut clock) = (0usize, Clock::default());
     let end_phase = |phase: usize, clock: &Clock| {
         let (avg, max) = clock.json();
-        let mut v = json!({"ev": "phase", "t": secs(t0), "cycle": cyc, "phase": phase_name(phase), "kernel": ks[kernel].name(),
+        let name = if phase > 0 && FLUCT[phase - 1].on_ms == WAKE {
+            "wake-fft-sse"
+        } else {
+            ks[kernel].name()
+        };
+        let mut v = json!({"ev": "phase", "t": secs(t0), "cycle": cyc, "phase": phase_name(phase), "kernel": name,
                            "mhz_avg": avg, "mhz_max": max});
         if per_core { v["cpu"] = json!(cpus[0]); }
         emit(&v);
@@ -291,6 +325,37 @@ mod tests {
         assert_eq!(phase_at(Duration::from_millis(13_199), quick), 1);
         assert_eq!(phase_at(Duration::from_millis(13_200), quick), 2);
         assert_eq!(phase_at(Duration::from_millis(23_999), quick), 10);
+    }
+
+    #[test]
+    fn wake_profile_samples_both_idle_ranges() {
+        let mut rng = 0;
+        for _ in 0..64 {
+            for (long, bounds) in [(true, 96..=240), (false, 8..=32)] {
+                let (idle, busy) = wake_pulse(&mut rng, long);
+                assert!(bounds.contains(&idle.as_millis()));
+                assert!((250..=2000).contains(&busy.as_micros()));
+            }
+        }
+    }
+
+    #[test]
+    fn wake_error_is_reported_on_the_pinned_cpu() {
+        let cpu = topo::cores()[0].cpus[0];
+        let ks = kernels();
+        let mut refs = reference_on(cpu).unwrap();
+        let index = ks.len() * cowork::NSEEDS as usize;
+        refs[index] ^= 1;
+        // Start in the last phase so the first chunk is a wake from idle.
+        let span = Timing { steady: Duration::ZERO, step: Duration::from_secs(1) };
+        let start = Instant::now() - span.step * (FLUCT.len() as u32 - 1);
+        let j = Job { cpu, slot: 0, n: 1, kernel: 0, per_core: true, start, t0: start, span };
+        let sh = Shared::default();
+        assert_eq!(worker(j, &ks, &refs, &sh, &AtomicBool::new(false)).unwrap(), 1);
+        let wrong = sh.wrong.lock().unwrap();
+        assert_eq!(wrong.len(), 1);
+        assert_eq!((wrong[0].1, wrong[0].2), (cpu, index as u64));
+        assert_eq!(wrong[0].3 ^ wrong[0].4, 1);
     }
 
     #[test]

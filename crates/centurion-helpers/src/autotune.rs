@@ -1178,8 +1178,10 @@ pub fn seen_z(j: &model::Joint, key: &str) -> (f64, usize) {
     for val in j.values(key) {
         let a = [(key.to_owned(), val.clone())];
         for &o in &weighed {
-            m += 1;
-            if let Some((mu, var)) = j.eval_diff_obj(&a, &[], o).filter(|(_, v)| *v > 0.0) { z = z.max(mu.abs() / var.sqrt()); }
+            if let Some((mu, var)) = j.eval_diff_obj(&a, &[], o).filter(|(mu, v)| mu.is_finite() && v.is_finite() && *v > 0.0) {
+                m += 1;
+                z = z.max(mu.abs() / var.sqrt());
+            }
         }
     }
     (z, m)
@@ -3964,6 +3966,8 @@ mod tests {
         let mut cal = calib::Calibration::default();
         cal.put_session(calib::Phase::Load, 1, rows);
         for f in &facs { cal.refs.insert(f.key.clone(), f.reference.clone()); }
+        let joint = cal.joint([1.0; 4], calib::Blend { load: 0.5, io: 1.0 }).unwrap();
+        assert_eq!(seen_z(&joint, "vm.swappiness").1, 1, "only latency has observations");
         p.calibration = Some(cal);
         let (d, _, notes) = decide_weighted(Goal::Gaming, &p, Weights::for_goal(Goal::Gaming));
         assert_eq!((get(&d, "vm.swappiness").map(vstr), get(&d, "vm.page_cluster").map(vstr)), (Some("100".into()), Some("1".into())), "synergy kept: {d:?}");
