@@ -47,15 +47,34 @@ fn link_dirty(spans: &[(u64, u64)], t: u64) -> Option<usize> {
     spans.iter().enumerate().map(|(i, sp)| (dist(sp), i)).min().filter(|(d, _)| *d <= LINK_SLACK_S).map(|(_, i)| i)
 }
 
-/// Curve states per kind in the order they were applied during one boot: {"cpu_co": "profile:a → reset"}.
-fn curve_states(journal: &[(String, String, String)], boot: &str) -> Value {
-    let mut per: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
-    for (b, kind, state) in journal {
-        if b != boot { continue; }
-        let v = per.entry(kind).or_default();
-        if v.last() != Some(&state.as_str()) && v.len() < MAX_STATES { v.push(state); }
+/// One curve journal line: its state, and (newer helpers) the values written with their fingerprint.
+struct JLine { boot: String, kind: String, state: String, fp: Option<String>, values: Value }
+
+/// Curve states per kind in the order they were applied during one boot: {"cpu_co": "profile:a → reset"};
+/// a state recorded with values carries its fingerprint ("profile:a #1f2e3d4c"), so the same name with
+/// other values reads as another curve.
+fn curve_states(journal: &[JLine], boot: &str) -> Value {
+    let mut per: BTreeMap<&str, Vec<String>> = BTreeMap::new();
+    for l in journal {
+        if l.boot != boot { continue; }
+        let s = l.fp.as_ref().map_or_else(|| l.state.clone(), |fp| format!("{} #{fp}", l.state));
+        let v = per.entry(&l.kind).or_default();
+        if v.last() != Some(&s) && v.len() < MAX_STATES { v.push(s); }
     }
     Value::Object(per.into_iter().map(|(k, v)| (k.to_owned(), json!(v.join(" → ")))).collect::<Map<_, _>>())
+}
+
+/// The curve in effect at the end of one boot, per kind, with the values written (what a crash ran under):
+/// {"cpu_co": {"state", "fp"?, "values"?}}. Kinds never written in the boot are absent (stock).
+fn curve_values(journal: &[JLine], boot: &str) -> Value {
+    let mut last: BTreeMap<&str, &JLine> = BTreeMap::new();
+    for l in journal.iter().filter(|l| l.boot == boot) { last.insert(&l.kind, l); }
+    Value::Object(last.into_iter().map(|(k, l)| {
+        let mut o = json!({"state": l.state});
+        if let Some(fp) = &l.fp { o["fp"] = json!(fp); }
+        if !l.values.is_null() { o["values"] = l.values.clone(); }
+        (k.to_owned(), o)
+    }).collect::<Map<_, _>>())
 }
 
 /// {"ok", "current", "boots": [newest first], "previous_unclean": {"boot","end"}|null, "pstore": {"available", "entries"}}.
@@ -63,9 +82,11 @@ fn curve_states(journal: &[(String, String, String)], boot: &str) -> Value {
 /// (`load` adds "flight": [samples] to the previous boot, see `attach_flight`).
 /// Every pstore entry gains "boot" (the unclean boot it was attributed to) when there is one.
 pub fn build(exposure: &Value, journal: &str, current: &str, now: u64, pstore: &Value) -> Value {
-    let jl: Vec<(String, String, String)> = journal.lines().filter_map(|l| {
+    let jl: Vec<JLine> = journal.lines().filter_map(|l| {
         let v: Value = serde_json::from_str(l).ok()?;
-        Some((v["boot"].as_str()?.to_owned(), v["kind"].as_str()?.to_owned(), v["state"].as_str()?.to_owned()))
+        let fp = v["fp"].as_str().filter(|f| f.len() == 8 && f.bytes().all(|b| b.is_ascii_hexdigit())).map(str::to_owned);
+        Some(JLine { boot: v["boot"].as_str()?.to_owned(), kind: v["kind"].as_str()?.to_owned(), state: v["state"].as_str()?.to_owned(),
+                     fp, values: v["values"].clone() })
     }).collect();
     let mut src: Vec<&Value> = exposure["boots"].as_array().map(|a| a.iter().filter(|b| b["boot"].is_string()).collect()).unwrap_or_default();
     src.sort_by_key(|b| b["start"].as_u64().unwrap_or(0));
@@ -86,7 +107,8 @@ pub fn build(exposure: &Value, journal: &str, current: &str, now: u64, pstore: &
         let events = b["events"].as_object().cloned().unwrap_or_default();
         let total: u64 = events.values().filter_map(Value::as_u64).sum();
         let mut o = json!({"boot": id, "start": start, "state": state, "events": events, "event_total": total,
-                           "curves": curve_states(&jl, id), "pstore": []});
+                           "curves": curve_states(&jl, id),
+                           "curve_values": curve_values(&jl, id), "pstore": []});
         if b["versions"].is_object() { o["versions"] = b["versions"].clone(); }
         if let Some(e) = end { o["end"] = json!(e); o["duration"] = json!(e.saturating_sub(start)); }
         else if state == "running" { o["duration"] = json!(now.saturating_sub(start)); }
@@ -134,7 +156,8 @@ mod tests {
         "{\"t\":1300,\"boot\":\"b1\",\"kind\":\"cpu_co\",\"state\":\"reset\"}\n",
         "{\"t\":1400,\"boot\":\"b1\",\"kind\":\"gpu_curve\",\"state\":\"profile:oc\"}\n",
         "not json\n",
-        "{\"t\":10100,\"boot\":\"b2\",\"kind\":\"cpu_co\",\"state\":\"profile:hard\"}\n");
+        "{\"t\":10100,\"boot\":\"b2\",\"kind\":\"cpu_co\",\"state\":\"profile:hard\"}\n",
+        "{\"t\":30100,\"boot\":\"b4\",\"kind\":\"cpu_co\",\"state\":\"profile:daily\",\"fp\":\"0a1b2c3d\",\"values\":{\"0.0.0\":-25,\"0.0.1\":-20}}\n");
 
     #[test]
     fn flight_attachment_preserves_interval_only_on_matching_boot() {
@@ -163,6 +186,10 @@ mod tests {
         assert!(b[2].get("duration").is_none());
         assert_eq!(b[3]["state"], "unclean");
         assert_eq!(b[3]["curves"]["cpu_co"], "profile:hard");
+        assert!(b[3]["curve_values"]["cpu_co"].get("values").is_none());   // an older line: no values
+        // A crash under per-core values: the boot keeps which core had which offset, and the fingerprint.
+        assert_eq!(b[1]["curves"]["cpu_co"], "profile:daily #0a1b2c3d");
+        assert_eq!(b[1]["curve_values"]["cpu_co"]["values"]["0.0.1"], -20);
         assert_eq!(b[4]["state"], "clean");
         assert_eq!(b[4]["duration"], 4000);
         assert_eq!(b[4]["event_total"], 4);

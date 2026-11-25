@@ -58,6 +58,7 @@ private:
     gpustress::Run run_state_;
     QList<gpustress::Device> devices_;
     QString pci_, deviceName_, curve_;
+    QJsonObject curveRecord_;  // CurvePage::currentCurve at the start
     gpustress::Mode runMode_ = gpustress::Mode::Vram;
     int seconds_ = 0, faults_ = 0;
     bool cancelled_ = false, blocked_ = false, settling_ = false, kernelLive_ = true;

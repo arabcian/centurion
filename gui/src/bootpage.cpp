@@ -1,4 +1,5 @@
 #include "bootpage.h"
+#include "curvevalues.h"
 #include "flightrec.h"
 #include "klogview.h"
 #include "eventinfo.h"
@@ -299,6 +300,15 @@ void BootPage::showDetail() {
     if (!ev.isEmpty()) out += tr("Kernel events: %1\n").arg(eventsText(ev));
     const QJsonObject cv = b.value(QStringLiteral("curves")).toObject();
     if (!cv.isEmpty()) out += tr("Curves: %1\n").arg(curvesText(cv));
+    // The values each curve had at the end of the boot (newer journal lines): for a crash, which core ran which offset.
+    const QJsonObject vals = b.value(QStringLiteral("curve_values")).toObject();
+    for (auto it = vals.begin(); it != vals.end(); ++it) {
+        const QStringList lines = curvevalues::lines(it.key(), it.value().toObject().value(QStringLiteral("values")));
+        if (lines.isEmpty()) continue;
+        out += tr("%1 at the end of this boot:\n").arg(curvevalues::label(it.value().toObject().value(QStringLiteral("state")).toString(),
+                                                                           it.value().toObject().value(QStringLiteral("fp")).toString()));
+        for (const QString &l : lines) out += QStringLiteral("  ") + l + QLatin1Char('\n');
+    }
     out += comparedWithPrevious(b);
     const QJsonArray flight = b.value(QStringLiteral("flight")).toArray();
     if (!flight.isEmpty()) out += QLatin1Char('\n') + flightrec::text(flight);

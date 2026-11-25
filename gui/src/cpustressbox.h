@@ -8,6 +8,7 @@
 #include "cpustress.h"
 
 #include <QElapsedTimer>
+#include <QHash>
 #include <QJsonObject>
 #include <QWidget>
 
@@ -66,6 +67,8 @@ private:
     cpustress::Plan plan_;
     cpustress::Mode runMode_ = cpustress::Mode::PerCore;
     QString load_name_, curve_, profileHash_;
+    QJsonObject curveRecord_;  // CurvePage::currentCurve at the start: fingerprint and values of the curve under test
+    QHash<int, std::pair<int, int>> coreOf_;  // AMD: logical CPU -> (CCD, core slot), the keys of the Curve Optimizer values
     qint64 id_ = 0;
     int seconds_ = 0, cycles_n_ = 1, faults_ = 0;
     QList<int> faultCpus_;

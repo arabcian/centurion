@@ -41,6 +41,13 @@ fn config() -> Config {
 
 fn profile_file(name: &str) -> PathBuf { Path::new(PROFILES_DIR).join(format!("{name}.json")) }
 
+/// What the curve journal keeps of a profile: its settings without the name (renaming is not a new curve).
+fn journal_values(data: &Value) -> Value {
+    let mut v = data.clone();
+    if let Some(o) = v.as_object_mut() { o.remove("name"); o.remove("saved_at"); o.remove("created"); }
+    v
+}
+
 fn name_param<'a>(p: &'a Obj, key: &str) -> Result<&'a str, String> {
     p.get(key).and_then(Value::as_str).filter(|n| is_canonical_profile_name(n))
         .ok_or_else(|| "Invalid profile name".to_string())
@@ -412,8 +419,14 @@ fn run() -> Value {
         Ok(m) => {
             // Curve journal (Health → Curve stability): which curve is in effect from now on.
             match op {
-                "apply_gpu_offsets" => nvcurve::ocjournal::record("custom"),
-                "apply_named_profile" => nvcurve::ocjournal::record(&format!("profile:{}", obj.get("name").and_then(Value::as_str).unwrap_or("?"))),
+                "apply_gpu_offsets" => nvcurve::ocjournal::record_values("custom", obj.get("profile_data").map(journal_values).as_ref()),
+                "apply_named_profile" => {
+                    let name = obj.get("name").and_then(Value::as_str).unwrap_or("?");
+                    let saved = name_param(obj, "name").ok()
+                        .and_then(|n| nvcurve::atomicio::read_regular(&profile_file(n), MAX_PROFILE_BYTES as u64).ok())
+                        .and_then(|t| serde_json::from_str::<Value>(&t).ok());
+                    nvcurve::ocjournal::record_values(&format!("profile:{name}"), saved.as_ref().map(journal_values).as_ref())
+                }
                 "reset_gpu_curve" | "reset_all" => nvcurve::ocjournal::record("reset"),
                 _ => {}
             }

@@ -1,6 +1,7 @@
 #include "gpustressbox.h"
 
 #include "curvepage.h"
+#include "curvevalues.h"
 #include "theme.h"
 
 #include <QComboBox>
@@ -202,6 +203,7 @@ void GpuStressBox::launch(const gpustress::Plan &p, gpustress::Mode m, int secon
     pci_ = device_->currentData().toString();
     deviceName_ = device_->currentText();
     curve_ = CurvePage::currentState(QStringLiteral("gpu"));  // what the result is about: the curve in effect at the start
+    curveRecord_ = CurvePage::currentCurve(QStringLiteral("gpu"));
     run_state_ = {};
     partial_.clear();
     faults_ = 0;
@@ -264,6 +266,9 @@ void GpuStressBox::conclude(int exitCode, bool crashed, qint64 seconds) {
         {QStringLiteral("passes"), run_state_.passes}, {QStringLiteral("errors"), run_state_.errors},
         {QStringLiteral("faults"), faults_}, {QStringLiteral("verdict"), gpustress::verdictName(v)},
         {QStringLiteral("curve"), curve_}};
+    // The fingerprint of what was written: a profile saved again under the same name with other offsets differs.
+    if (curveRecord_.contains(QStringLiteral("fp"))) result[QStringLiteral("curve_fp")] = curveRecord_.value(QStringLiteral("fp"));
+    if (curveRecord_.contains(QStringLiteral("values"))) result[QStringLiteral("curve_values")] = curveRecord_.value(QStringLiteral("values"));
     if (!kernelLive_) result[QStringLiteral("kernel_log")] = false;  // a pass without kernel events is weaker evidence
     const bool saved = gpustress::append(result);
     proc_->deleteLater();
@@ -310,7 +315,8 @@ void GpuStressBox::fill() {
             vram ? tr("VRAM") : tr("Core"), o.value(QStringLiteral("device")).toString(),
             vram ? tr("%1 MiB").arg(o.value(QStringLiteral("mib")).toInteger()) : QStringLiteral("-"),
             tr("%n min", nullptr, int(o.value(QStringLiteral("seconds")).toInteger() / 60)),
-            QString::number(o.value(QStringLiteral("passes")).toInteger()), errors, shown, o.value(QStringLiteral("curve")).toString()});
+            QString::number(o.value(QStringLiteral("passes")).toInteger()), errors, shown,
+            curvevalues::label(o.value(QStringLiteral("curve")).toString(), o.value(QStringLiteral("curve_fp")).toString())});
         const char *color = v == QLatin1String("pass") ? theme::OK : v == QLatin1String("fail") ? theme::DANGER : theme::MUTED;
         it->setForeground(7, QColor(QLatin1String(color)));
         results_->addTopLevelItem(it);

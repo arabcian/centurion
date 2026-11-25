@@ -9,7 +9,17 @@ pub const FILE: &str = "/var/lib/centurion/oc-journal.jsonl";
 const MAX_BYTES: u64 = 256 * 1024;
 const KEEP_BYTES: usize = 128 * 1024;
 
-pub fn record(state: &str) {
+/// Same fingerprint as centurion_helpers::ocjournal::fingerprint (FNV-1a 64 of the compact JSON, 8 hex).
+pub fn fingerprint(values: &serde_json::Value) -> String {
+    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+    for b in values.to_string().bytes() { h ^= u64::from(b); h = h.wrapping_mul(0x0100_0000_01b3); }
+    format!("{:08x}", (h >> 32) as u32 ^ h as u32)
+}
+
+pub fn record(state: &str) { record_values(state, None) }
+
+/// With the profile that was applied: its fingerprint always, the values themselves up to 8 KiB.
+pub fn record_values(state: &str, values: Option<&serde_json::Value>) {
     if unsafe { libc::geteuid() } != 0 { return; }
     // Root-owned directory only (ensure_dir refuses any other owner), then an atomic O_EXCL tmp + rename:
     // a user-owned directory must not be able to redirect the rotation through a planted symlink.
@@ -23,10 +33,14 @@ pub fn record(state: &str) {
         }
     }
     let boot = std::fs::read_to_string("/proc/sys/kernel/random/boot_id").map(|s| s.trim().to_owned()).unwrap_or_default();
-    let line = serde_json::json!({
+    let mut line = serde_json::json!({
         "t": std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0),
         "boot": boot, "kind": "gpu_curve", "state": state,
     });
+    if let Some(v) = values.filter(|v| !v.is_null()) {
+        line["fp"] = serde_json::json!(fingerprint(v));
+        if v.to_string().len() <= 8192 { line["values"] = v.clone(); }
+    }
     if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).mode(0o644)
         .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC).open(FILE) {
         let _ = writeln!(f, "{line}");

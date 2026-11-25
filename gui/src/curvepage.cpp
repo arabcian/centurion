@@ -1,4 +1,5 @@
 #include "curvepage.h"
+#include "curvevalues.h"
 #include "memtestbox.h"
 #include "cpustressbox.h"
 #include "gpustressbox.h"
@@ -54,7 +55,7 @@ static bool nvidiaOnBus() {
 
 static QString groupOf(const QString &kind) { return kind == QLatin1String("gpu_curve") ? QStringLiteral("gpu") : QStringLiteral("cpu"); }
 
-struct Rec { qint64 t; QString boot, group, state; };
+struct Rec { qint64 t; QString boot, group, state, kind, fp; QJsonValue values; };
 
 static QList<Rec> journal() {
     QList<Rec> out;
@@ -65,9 +66,24 @@ static QList<Rec> journal() {
         if (o.isEmpty()) continue;
         QString st = o.value("state").toString();
         if (st == QLatin1String("reset")) st = QStringLiteral("stock");
-        out.append({o.value("t").toInteger(), o.value("boot").toString(), groupOf(o.value("kind").toString()), st});
+        // fp / values: written by newer helpers (the values themselves; equal names with other values differ in fp).
+        QString fp = o.value("fp").toString();
+        if (fp.size() != 8 || st == QLatin1String("stock")) fp.clear();
+        out.append({o.value("t").toInteger(), o.value("boot").toString(), groupOf(o.value("kind").toString()), st,
+                    o.value("kind").toString(), fp, o.value("values")});
     }
     std::stable_sort(out.begin(), out.end(), [](const Rec &a, const Rec &b) { return a.t < b.t; });
+    return out;
+}
+
+QJsonObject CurvePage::currentCurve(const QString &group) {
+    const QString boot = bootId();
+    QJsonObject out{{"state", QStringLiteral("stock")}};
+    for (const Rec &r : journal()) if (r.boot == boot && r.group == group) {
+        out = QJsonObject{{"state", r.state}, {"kind", r.kind}};
+        if (!r.fp.isEmpty()) out["fp"] = r.fp;
+        if (!r.values.isUndefined() && !r.values.isNull()) out["values"] = r.values;
+    }
     return out;
 }
 
@@ -149,8 +165,8 @@ void CurvePage::showEvent(QShowEvent *e) {
 
 namespace {
 struct Boot { QString id; qint64 start = 0, end = 0; };
-struct Interval { QString group, state, boot8; qint64 from, to; };
-struct Stat { double hours = 0; int errors = 0; QString last; qint64 lastT = 0; };
+struct Interval { QString group, state, boot8, key; qint64 from, to; };
+struct Stat { double hours = 0; int errors = 0; QString last; qint64 lastT = 0; QString state, fp, kind; QJsonValue values; };
 }
 
 void CurvePage::recompute() {
@@ -183,22 +199,26 @@ void CurvePage::recompute() {
         if (order[i].end <= order[i].start) order[i].end = order[i + 1].start;
 
     QList<Interval> iv;
-    QMap<QString, Stat> stats;  // "group|state"
+    QMap<QString, Stat> stats;  // "group|state|fp": the same name with other values is another curve
     for (const Boot &b : order) {
         if (b.end <= b.start) continue;
         for (const char *gc : {"gpu", "cpu"}) {
             const QString g = QLatin1String(gc);
-            QString state = QStringLiteral("stock");
+            Rec cur{0, b.id, g, QStringLiteral("stock"), QString(), QString(), QJsonValue()};
             qint64 from = b.start;
             auto close = [&](qint64 to) {
                 if (to <= from) return;
-                iv.append({g, state, b.id.left(8), from, to});
-                stats[g + '|' + state].hours += (to - from) / 3600.0;
+                const QString key = g + '|' + cur.state + '|' + cur.fp;
+                iv.append({g, cur.state, b.id.left(8), key, from, to});
+                Stat &st = stats[key];
+                st.hours += (to - from) / 3600.0;
+                st.state = cur.state; st.fp = cur.fp; st.kind = cur.kind;
+                if (!cur.values.isUndefined() && !cur.values.isNull()) st.values = cur.values;
             };
             for (const Rec &r : recs) {
                 if (r.boot != b.id || r.group != g || r.t < b.start) continue;
                 close(r.t);
-                state = r.state;
+                cur = r;
                 from = r.t;
             }
             close(b.end);
@@ -230,7 +250,7 @@ void CurvePage::recompute() {
             for (const Interval &x : std::as_const(iv))
                 if (x.group == g && x.boot8 == b8 && t >= x.from && t <= x.to + EVENT_SLACK_S) hit = &x;
             if (!hit) { ++unmatched; continue; }
-            Stat &s = stats[g + '|' + hit->state];
+            Stat &s = stats[hit->key];
             ++s.errors;
             if (t >= s.lastT) { s.lastT = t; s.last = m.captured(1) + QStringLiteral("  ") + title.left(60); }
         }
@@ -239,18 +259,29 @@ void CurvePage::recompute() {
     table_->clear();
     const bool cpuIntel = sysinfo::isIntel();
     for (auto it = stats.cbegin(); it != stats.cend(); ++it) {
-        const QString g = it.key().section('|', 0, 0), state = it.key().section('|', 1);
+        const QString g = it.key().section('|', 0, 0);
         const Stat &s = it.value();
+        const QString state = s.state;
         if (s.hours < 0.01 && !s.errors) continue;
         const double rate = s.hours > 0 ? s.errors / s.hours * 10 : 0;
         auto *item = new QTreeWidgetItem({g == QLatin1String("gpu") ? QStringLiteral("GPU (NVIDIA)") : cpuIntel ? QStringLiteral("CPU (undervolt)") : QStringLiteral("CPU (Curve Optimizer)"),
-                                          pretty(state), QStringLiteral("%1 h").arg(s.hours, 0, 'f', s.hours < 10 ? 1 : 0),
+                                          curvevalues::label(pretty(state), s.fp), QStringLiteral("%1 h").arg(s.hours, 0, 'f', s.hours < 10 ? 1 : 0),
                                           QString::number(s.errors), s.hours >= 0.5 ? QString::number(rate, 'f', 2) : QStringLiteral("—"), s.last});
         // Worse than stock of the same curve by a clear margin: highlighted.
-        const Stat stock = stats.value(g + QStringLiteral("|stock"));
+        const Stat stock = stats.value(g + QStringLiteral("|stock|"));
         const double stockRate = stock.hours > 0 ? stock.errors / stock.hours * 10 : 0;
         if (state != QLatin1String("stock") && s.errors >= 2 && s.hours >= 0.5 && rate > std::max(0.2, 2 * stockRate))
             for (int i = 0; i < 6; ++i) item->setForeground(i, QColor(QLatin1String(theme::WARN)));
+        // The values that were written (newer journal lines): which core had which offset while the errors came.
+        const QStringList values = curvevalues::lines(s.kind, s.values);
+        for (const QString &line : values) {
+            auto *child = new QTreeWidgetItem({QString(), line});
+            child->setFirstColumnSpanned(false);
+            item->addChild(child);
+        }
+        if (!values.isEmpty()) item->setToolTip(1, values.join(QLatin1Char('\n')));
+        else if (state != QLatin1String("stock"))
+            item->setToolTip(1, QStringLiteral("Recorded before Centurion kept the values of each curve: only the name is known."));
         table_->addTopLevelItem(item);
     }
     if (!table_->topLevelItemCount())

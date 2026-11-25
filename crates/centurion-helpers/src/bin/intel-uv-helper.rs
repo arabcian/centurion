@@ -99,7 +99,10 @@ fn run() -> Value {
                 let mut out = intel_uv::apply_atomic(&p);
                 if out["ok"] == true {
                     let name = v["name"].as_str().filter(|n| !n.is_empty() && n.len() <= 64).unwrap_or("custom");
-                    centurion_helpers::ocjournal::record("cpu_uv", &format!("profile:{name}"));
+                    // The offsets themselves, so two profiles saved under one name stay apart in the journal.
+                    let mut values = v.clone();
+                    if let Some(o) = values.as_object_mut() { o.remove("name"); }
+                    centurion_helpers::ocjournal::record_values("cpu_uv", &format!("profile:{name}"), Some(&values));
                 }
                 if hold && out["ok"] == true {
                     if let Err(e) = write_hold(Some(&v)) { out["hold_error"] = json!(e); out["ok"] = json!(false); }

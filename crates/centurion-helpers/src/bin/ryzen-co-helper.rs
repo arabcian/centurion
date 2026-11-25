@@ -245,7 +245,9 @@ fn run() -> Value {
     let out = handler(params).unwrap_or_else(|Invalid(m)| json!({"ok": false, "error": format!("invalid request: {m}")}));
     if out["ok"] == true {
         let op = op.and_then(Value::as_str).unwrap_or("");
-        record_state(op, params);
+        // The whole Curve Optimizer state after this write (per-core batches update their cores).
+        let values = record_state(op, params);
+        let rec = |state: &str| centurion_helpers::ocjournal::record_values("cpu_co", state, values.as_ref());
         // Curve journal (Health → Curve stability). A saved profile applied by name (scenes, tray) is
         // journalled by that name, like the Intel and NVIDIA helpers, so the curve guard can offer it back.
         let profile = params.get("profile").and_then(Value::as_str).filter(|n| !n.is_empty() && n.len() <= 64);
@@ -253,12 +255,12 @@ fn run() -> Value {
             ("reset", _) => centurion_helpers::ocjournal::record("cpu_co", "reset"),
             ("set_coall", p) => match (params.get("value").and_then(Value::as_i64), p) {
                 (Some(0), _) => centurion_helpers::ocjournal::record("cpu_co", "reset"),
-                (Some(_), Some(n)) => centurion_helpers::ocjournal::record("cpu_co", &format!("profile:{n}")),
-                (Some(v), None) => centurion_helpers::ocjournal::record("cpu_co", &format!("all-core {v}")),
+                (Some(_), Some(n)) => rec(&format!("profile:{n}")),
+                (Some(v), None) => rec(&format!("all-core {v}")),
                 (None, _) => {}
             },
-            ("set_coper_batch", Some(n)) => centurion_helpers::ocjournal::record("cpu_co", &format!("profile:{n}")),
-            ("set_coper_batch", None) => centurion_helpers::ocjournal::record("cpu_co", "per-core"),
+            ("set_coper_batch", Some(n)) => rec(&format!("profile:{n}")),
+            ("set_coper_batch", None) => rec("per-core"),
             _ => {}
         }
     }
@@ -268,7 +270,7 @@ fn run() -> Value {
 /// What the SMU now holds (tmpfs: a reboot resets both): calibration records it as context, since
 /// a curve offset changes the clock every temperature buys. All-core offsets replace the state;
 /// per-core batches update their cores.
-fn record_state(op: &str, params: &Map<String, Value>) {
+fn record_state(op: &str, params: &Map<String, Value>) -> Option<Value> {
     let mut st: Value = read_root_file(centurion_helpers::calctx::CO_STATE, 64 * 1024).and_then(|s| serde_json::from_str(&s).ok())
         .filter(|v: &Value| v["state"].is_object() || v["state"].is_string()).unwrap_or_else(|| json!({"state": "reset"}));
     match op {
@@ -281,9 +283,10 @@ fn record_state(op: &str, params: &Map<String, Value>) {
                 st["state"][k] = e["coper"].clone();
             }
         }
-        _ => return,
+        _ => return None,
     }
     if secure_dir("/run/centurion").is_ok() { let _ = write_root_file(centurion_helpers::calctx::CO_STATE, st.to_string().as_bytes()); }
+    st["state"].is_object().then(|| st["state"].clone())
 }
 
 fn main() {

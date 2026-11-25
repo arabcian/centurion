@@ -574,6 +574,12 @@ Silmek, kayıtların kapladığı EFI değişkenlerini serbest bırakır. Arşiv
 %1
 </translation>
     </message>
+        <message>
+            <source>%1 at the end of this boot:
+</source>
+            <translation>Bu önyüklemenin sonunda %1:
+</translation>
+        </message>
   </context>
     <context>
         <name>BootLogoDialog</name>
@@ -9603,6 +9609,14 @@ Centurion kapanırsa da geri döner). Yönetici parolası sorar; bir oyun ayarla
         <message>
             <source>Wait for the previous tuning preset to be restored.</source>
             <translation>Önceki optimizasyon ön ayarının geri yüklenmesini bekleyin.</translation>
+        </message>
+        <message>
+            <source>%1 at offset %2</source>
+            <translation>%1, ofset %2</translation>
+        </message>
+        <message>
+            <source>Last core under load: %1 at offset %2</source>
+            <translation>Yük altındaki son çekirdek: %1, ofset %2</translation>
         </message>
     </context>
     <context>
@@ -27222,5 +27236,20 @@ Kayıt kimliği: %6
         <source>View visible data table</source>
         <translation>Görünür Veri Tablosunu Aç</translation>
     </message>
+</context>
+<context>
+    <name>curvevalues</name>
+        <message>
+            <source>All cores: %1</source>
+            <translation>Tüm çekirdekler: %1</translation>
+        </message>
+        <message>
+            <source>CCD%1 CCX%2 core %3: %4</source>
+            <translation>CCD%1 CCX%2 çekirdek %3: %4</translation>
+        </message>
+        <message>
+            <source>CCD%1 core %2: %3</source>
+            <translation>CCD%1 çekirdek %2: %3</translation>
+        </message>
 </context>
 </TS>

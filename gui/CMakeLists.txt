@@ -117,7 +117,7 @@ add_executable(centurion
     src/coolingpage.cpp  src/coolingpage.h
     src/i18n.cpp         src/i18n.h
     src/trialbar.cpp     src/trialbar.h
-    src/curvepage.cpp    src/curvepage.h
+    src/curvepage.cpp    src/curvepage.h      src/curvevalues.h
     src/memtest.cpp      src/memtest.h
     src/memtestbox.cpp   src/memtestbox.h
     src/gpustress.cpp    src/gpustress.h
@@ -429,7 +429,7 @@ if(CENTURION_BUILD_TESTS)
     target_link_libraries(centurion-cpustress-test PRIVATE Qt6::Core)
     target_compile_definitions(centurion-cpustress-test PRIVATE QT_NO_KEYWORDS)
     add_test(NAME cpustress COMMAND centurion-cpustress-test)
-    foreach(test IN ITEMS coarchive cohistory calibrationcoverage curvereadback curvejournal structuredtools autotuneprogress tunejournal autotunehistory)
+    foreach(test IN ITEMS coarchive cohistory calibrationcoverage curvereadback curvejournal structuredtools autotuneprogress tunejournal autotunehistory curvevalues)
         add_executable(centurion-${test}-test tests/${test}_test.cpp)
         target_link_libraries(centurion-${test}-test PRIVATE Qt6::Core)
         target_compile_definitions(centurion-${test}-test PRIVATE QT_NO_KEYWORDS)

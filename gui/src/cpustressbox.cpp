@@ -2,6 +2,7 @@
 #include "stresscoverage.h"
 
 #include "curvepage.h"
+#include "curvevalues.h"
 #include "optimizetab.h"
 #include "privileged.h"
 #include "ryzentab.h"
@@ -163,8 +164,10 @@ CpuStressBox::CpuStressBox(QWidget *parent) : QWidget(parent) {
         const QJsonObject c = crashed.last().toObject();
         const int cpu = c.value(QStringLiteral("cpu")).toInt(-1);
         const QString where = cpu >= 0 ? tr("while %1 was loaded").arg(cpuName(cpu)) : tr("during the all-core test");
-        const QString msg = tr("The machine went down %1 (CPU curve: %2). Back that offset off before trusting it.")
-                                .arg(where, c.value(QStringLiteral("curve")).toString());
+        QString curve = curvevalues::label(c.value(QStringLiteral("curve")).toString(), c.value(QStringLiteral("curve_fp")).toString());
+        if (c.contains(QStringLiteral("core_offset")))
+            curve += QStringLiteral(", ") + tr("%1 at offset %2").arg(c.value(QStringLiteral("core")).toString()).arg(c.value(QStringLiteral("core_offset")).toInt());
+        const QString msg = tr("The machine went down %1 (CPU curve: %2). Back that offset off before trusting it.").arg(where, curve);
         note(msg, theme::DANGER);
         QTimer::singleShot(0, this, [this, msg] { Q_EMIT alert(tr("CPU test: the machine went down"), msg); });
     }
@@ -295,12 +298,31 @@ QJsonObject CpuStressBox::record(const QString &verdict) const {
     if (!cpus.isEmpty()) o[QStringLiteral("cpus")] = cpus;
     if (tempMin_ <= tempMax_) { o[QStringLiteral("temp_min")] = tempMin_; o[QStringLiteral("temp_max")] = tempMax_; }
     if (!profileHash_.isEmpty()) o[QStringLiteral("profile_hash")] = profileHash_;
+    // What was really written (the curve journal), not only its name: a profile saved again under the same
+    // name with other offsets keeps its own fingerprint, and a crash shows the offset of the core under load.
+    if (curveRecord_.contains(QStringLiteral("fp"))) o[QStringLiteral("curve_fp")] = curveRecord_.value(QStringLiteral("fp"));
+    if (curveRecord_.contains(QStringLiteral("values"))) {
+        o[QStringLiteral("curve_values")] = curveRecord_.value(QStringLiteral("values"));
+        if (const auto hit = coreOf_.constFind(run_state_.cpu); hit != coreOf_.cend())
+            if (const auto off = curvevalues::coOffset(curveRecord_.value(QStringLiteral("values")), hit->first, hit->second)) {
+                o[QStringLiteral("core")] = QStringLiteral("CCD%1 core %2").arg(hit->first).arg(hit->second);
+                o[QStringLiteral("core_offset")] = *off;
+            }
+    }
     return o;
 }
 
 void CpuStressBox::launch() {
     id_ = QDateTime::currentSecsSinceEpoch();
     curve_ = CurvePage::currentState(QStringLiteral("cpu"));  // what the result is about: the curve in effect at the start
+    curveRecord_ = CurvePage::currentCurve(QStringLiteral("cpu"));
+    coreOf_.clear();
+    if (sysinfo::isAmd() && curveRecord_.contains(QStringLiteral("values"))) {
+        const ryzen::Layout l = ryzen::detect();
+        for (auto it = l.cores.cbegin(); it != l.cores.cend(); ++it)
+            for (int slot = 0; slot < it.value().size(); ++slot)
+                for (int cpu : it.value().at(slot).cpus) coreOf_.insert(cpu, {it.key(), slot});
+    }
     profileHash_.clear();
     if (const QString pf = profileFile(curve_); !pf.isEmpty()) {
         QFile f(pf);
@@ -453,7 +475,13 @@ void CpuStressBox::fill() {
             test, v == QLatin1String("crashed") ? QStringLiteral("-") : tr("%n min", nullptr, int(o.value(QStringLiteral("seconds")).toInteger() / 60)),
             v == QLatin1String("crashed") ? QStringLiteral("-") : errors, shown,
             badNames.isEmpty() ? QStringLiteral("-") : tr("CPU %1").arg(badNames.join(QStringLiteral(", "))),
-            o.value(QStringLiteral("curve")).toString()});
+            curvevalues::label(o.value(QStringLiteral("curve")).toString(), o.value(QStringLiteral("curve_fp")).toString())});
+        if (const QStringList vals = curvevalues::lines(QStringLiteral("cpu_co"), o.value(QStringLiteral("curve_values"))); !vals.isEmpty()) {
+            QString tip = vals.join(QLatin1Char('\n'));
+            if (o.contains(QStringLiteral("core_offset")))
+                tip.prepend(tr("Last core under load: %1 at offset %2").arg(o.value(QStringLiteral("core")).toString()).arg(o.value(QStringLiteral("core_offset")).toInt()) + QStringLiteral("\n\n"));
+            it->setToolTip(6, tip);
+        }
         if (!bad.isEmpty()) it->setToolTip(5, cpuList(bad));
         // What a pass covered; a short scan is marked so it is not read as long verification.
         it->setToolTip(1, stresscoverage::describe(o));

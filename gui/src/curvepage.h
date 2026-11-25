@@ -35,6 +35,8 @@ public:
     void resetGpuCurve(const QString &title);
     /// "stock" or the journal's state of the last curve write this boot, for "gpu" / "cpu".
     static QString currentState(const QString &group);
+    /// The last curve write this boot for "gpu" / "cpu": {"state", "kind"?, "fp"?, "values"?} ({"state": "stock"} without one).
+    static QJsonObject currentCurve(const QString &group);
 
 Q_SIGNALS:
     void alert(const QString &title, const QString &message);
