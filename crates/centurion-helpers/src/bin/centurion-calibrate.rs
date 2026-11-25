@@ -12,7 +12,7 @@
 //!   sudo centurion-calibrate --restore          put back what an interrupted run changed
 //!   sudo centurion-calibrate --restore --drop   same, and give up originals that cannot be written back
 //!   sudo centurion-calibrate --scene NAME [...] measure in a scene's power context (profile, limits, fan)
-//!   sudo centurion-calibrate --verify NAME [--rounds N] [--io] [--phase load] [--goal G|all] [--sequential] [--require-improvement]
+//!   sudo centurion-calibrate --verify NAME [--rounds N] [--io] [--phase load] [--goal G|all] [--verify-weights JSON] [--sequential] [--require-improvement]
 //!                                               whole preset vs the boot state (ABBA); --sequential stops once decided
 //!   sudo centurion-calibrate --gpu-coupling [--secs S]   CPU-GPU power coupling while a GPU-bound load runs
 //!   sudo centurion-calibrate --field LOG... [--game NAME] import game sessions' frame-time logs (FLM / MangoHud)
@@ -752,7 +752,7 @@ const PRIOR_REFS: f64 = 6.0;
 /// put a knob on the same scale.
 fn metric_weights(refs: &[&Run], ms: &[Metric], prior: &BTreeMap<Metric, f64>) -> BTreeMap<Metric, f64> {
     let var = |m: Metric| -> Option<f64> {
-        let v: Vec<f64> = refs.iter().filter_map(|r| r.s.get(&m)).filter(|x| **x + m.eps() > 0.0).map(|x| (x + m.eps()).ln()).collect();
+        let v: Vec<f64> = refs.iter().filter_map(|r| r.s.get(&m)).filter(|x| x.is_finite() && **x + m.eps() > 0.0).map(|x| (x + m.eps()).ln()).collect();
         let own = robust_sd(&v).map(|s| (v.len() as f64, s * s));
         match (own, prior.get(&m).map(|p| p * p)) {
             (Some((n, s)), Some(p)) => Some((n * s + PRIOR_REFS * p) / (n + PRIOR_REFS)),
@@ -789,24 +789,28 @@ fn compute_rows(runs: &[Run], phase: Phase, sess: u64, kernel: &str, n_total: us
     let refs: Vec<&Run> = runs.iter().filter(|r| r.cfg.is_empty()).collect();
     let base_runs: Vec<&Run> = if refs.len() >= 3 { refs.clone() } else { runs.iter().collect() };
     let mut base: BTreeMap<Metric, f64> = BTreeMap::new();
+    let full_count = runs.iter().filter(|r| r.full).count();
     for m in Metric::ALL {
         // Fast probes intentionally omit heap/THP metrics. Establish the objective's
         // metric vocabulary ONLY from full-suite runs, never an 80%-of-all-runs gate
         // that would silently eliminate entire objectives when many candidates are fast.
-        let full_count = runs.iter().filter(|r| r.full).count();
-        if full_count == 0 || runs.iter().filter(|r| r.full && r.s.contains_key(&m)).count() * 5 < full_count * 4 { continue; }
-        let mut v: Vec<f64> = base_runs.iter().filter_map(|r| r.s.get(&m).copied()).collect();
+        let sample = |r: &Run| r.s.get(&m).copied().filter(|v| v.is_finite() && v + m.eps() > 0.0);
+        if full_count == 0 || runs.iter().filter(|r| r.full && sample(r).is_some()).count() * 5 < full_count * 4 { continue; }
+        let mut v: Vec<f64> = base_runs.iter().filter_map(|r| sample(r)).collect();
         if let Some(b) = calib::median(&mut v) { base.insert(m, b); }
     }
     // Weights over the metrics this phase actually measured (the others are not in any row).
     let wts = metric_weights(&refs, &base.keys().copied().collect::<Vec<_>>(), &meta.sd[phase.idx()]);
     let gain = calib::family_counts(base.keys().copied()).map(calib::objective_gain);
     runs.iter().map(|r| {
+        let mut complete = [true; 4];
         let mut fam: BTreeMap<(usize, &str), (f64, f64)> = BTreeMap::new();
         for (m, b) in &base {
-            let Some(&v) = r.s.get(m) else { continue };
             let e = m.eps();
-            if v + e <= 0.0 || b + e <= 0.0 { continue; }
+            let Some(&v) = r.s.get(m).filter(|v| v.is_finite() && **v + e > 0.0 && b + e > 0.0) else {
+                complete[obj_index(*m)] = false;
+                continue;
+            };
             let mut d = ((v + e) / (b + e)).ln();
             if !m.higher_better() { d = -d; }
             let w = wts.get(m).copied().unwrap_or(1.0);
@@ -820,7 +824,7 @@ fn compute_rows(runs: &[Run], phase: Phase, sess: u64, kernel: &str, n_total: us
             // A fast CPU run has a complete power objective, but its memory, throughput
             // and latency metric families are NOT the same suite as the reference.
             // Missing objectives stay NaN, so GP::obs(Some(i)) excludes them.
-            if acc[i].1 > 0 && (r.full || i == 2) { y[i] = acc[i].0 / acc[i].1 as f64 * gain[i]; }
+            if complete[i] && acc[i].1 > 0 && (r.full || i == 2) { y[i] = acc[i].0 / acc[i].1 as f64 * gain[i]; }
         }
         let tc = match (r.temp, if is_hot(&r.cfg) { t_hot } else { t_cool }) { (Some(t), Some(m)) => t - m, _ => f64::NAN };
         Row { phase, sess, pos: (r.order as f64 / n_total.max(runs.len()) as f64).min(1.0), t: r.t, kernel: kernel.into(), cfg: r.cfg.clone(), y, w: r.w,
@@ -1273,7 +1277,10 @@ struct Analysis { risk: f64, doubt_pairs: usize, optima: Vec<(Goal, Cfg, f64, f6
 /// A goal's objective weights in one phase: the IO phase's objectives count with the storage
 /// weight, exactly as autotune weighs them, so the margin means the same in both.
 fn goal_wts(g: Goal, phase: Phase) -> [f64; 4] {
-    let w = Weights::for_goal(g);
+    phase_weights(Weights::for_goal(g), phase)
+}
+
+fn phase_weights(w: Weights, phase: Phase) -> [f64; 4] {
     if phase == Phase::Dev { return [0.0, 0.0, w.power, 0.0]; }
     let k = if phase == Phase::Io { w.storage } else { 1.0 };
     [w.latency * k, w.throughput * k, w.power * k, w.footprint * k]
@@ -2063,6 +2070,11 @@ fn main() {
     let phase = opt("--phase").unwrap_or_else(|| "both".into());
     // Every numeric option is read here, before anything is locked or held: a bad value ends the run
     // through die(), which skips the teardown.
+    let verify_weights: Value = if flag("--verify-weights") {
+        opt("--verify-weights").and_then(|s| serde_json::from_str::<Value>(&s).ok())
+            .filter(|v| v.as_object().is_some_and(|o| o.iter().all(|(k, x)| Weights::KEYS.contains(&k.as_str()) && x.is_number())))
+            .unwrap_or_else(|| die("--verify-weights expects a JSON object of numeric autotune weights"))
+    } else { json!({}) };
     let budget_min: Option<f64> = num(&args, "--budget");
     let budget = if flag("--all") { f64::INFINITY } else { budget_secs(budget_min.unwrap_or(15.0)).unwrap_or_else(|e| die(&e)) };
     let (sessions, rounds_max, seed, secs): (Option<u64>, Option<usize>, Option<u64>, Option<u64>) =
@@ -2274,7 +2286,7 @@ fn main() {
     cal.on_battery = src == "battery";
     let kernel = std::fs::read_to_string("/proc/sys/kernel/osrelease").unwrap_or_default().trim().to_owned();
     if let Some(name) = opt("--verify") {
-        let r = verify_main(&mut cal, &ctx, &name, rounds_max.unwrap_or(4), flag("--io"), opt("--goal"), rate, ram, &kernel,
+        let r = verify_main(&mut cal, &ctx, &name, rounds_max.unwrap_or(4), flag("--io"), opt("--goal"), &verify_weights, rate, ram, &kernel,
                             phase == "load", flag("--sequential"), flag("--require-improvement"));
         centurion_helpers::autotune::evidence_taint(&ev0);
         drop(td); // restore fan, power context and calibration hold before failing
@@ -2674,7 +2686,7 @@ const NOT_IN_VERIFY: &[&str] = &["cpu.smt", "cpu.ccd_park", "cpu.pstate_status",
 /// calibrated part; keeps the result in the signature, and the runs as design rows when every
 /// change is a calibrated knob.
 #[allow(clippy::too_many_arguments)]
-fn verify_main(cal: &mut Calibration, ctx: &Ctx, name: &str, rounds: usize, with_io: bool, goal: Option<String>, rate: u64, ram: u64, kernel: &str,
+fn verify_main(cal: &mut Calibration, ctx: &Ctx, name: &str, rounds: usize, with_io: bool, goal: Option<String>, overrides: &Value, rate: u64, ram: u64, kernel: &str,
                load: bool, sequential: bool, require_improvement: bool) -> Result<(), String> {
     if name.is_empty() || name.len() > 64 || !name.chars().all(|c| c.is_ascii_alphanumeric() || " _-.".contains(c)) || name.starts_with('.') { return Err(format!("invalid preset name '{name}'")); }
     let text = centurion_helpers::read_root_file(&format!("/etc/centurion/presets/{name}.json"), 256 * 1024)
@@ -2694,11 +2706,15 @@ fn verify_main(cal: &mut Calibration, ctx: &Ctx, name: &str, rounds: usize, with
     // `--goal all`: every goal's gain from the same runs; the preset's own goal (from its name) decides
     // the sequential stop and the model check.
     let all_goals = goal.as_deref() == Some("all");
+    if let Some(g) = goal.as_deref() {
+        if g != "all" && Goal::parse(g).is_none() { return Err(format!("unknown verification goal {g}")); }
+    }
     let goal = goal.as_deref().and_then(Goal::parse).or_else(|| {
         let n = name.to_lowercase();
         [("gam", Goal::Gaming), ("throughput", Goal::Throughput), ("compile", Goal::Throughput), ("power", Goal::PowerSave), ("battery", Goal::PowerSave)]
             .iter().find(|(p, _)| n.contains(p)).map(|x| x.1)
     }).unwrap_or(Goal::Desktop);
+    let weights = Weights::for_goal(goal).with_overrides(overrides);
     let rounds = rounds.clamp(2, 12);
     // The reference runs are the live state. Their rows may join the design log only when that state
     // is the calibration's reference for every knob the idle model holds: a knob whose live value
@@ -2718,12 +2734,16 @@ fn verify_main(cal: &mut Calibration, ctx: &Ctx, name: &str, rounds: usize, with
     let mut runs: BTreeMap<usize, Vec<Run>> = BTreeMap::new();
     // (round, ABBA position) of every run kept, per phase: a run that drops out must not shift the pairing.
     let mut tags: BTreeMap<usize, Vec<(usize, usize)>> = BTreeMap::new();
-    let phases: Vec<Phase> = if with_io && ctx.disk.is_some() { vec![main, Phase::Io] } else { vec![main] };
+    if with_io && ctx.disk.is_none() { return Err("--io requested but no supported storage target is available".into()); }
+    let phases: Vec<Phase> = if with_io { vec![main, Phase::Io] } else { vec![main] };
     let meta = Meta::new(cal, if ctx.battery { calib::PowerSrc::Battery } else { calib::PowerSrc::Rapl }, ctx.cx.clone());
     let sess = now() + 7;
     // Rows of every phase with their (round, position) tags, and a goal's utility per kept run of each phase.
     let rows_of = |runs: &BTreeMap<usize, Vec<Run>>, tags: &BTreeMap<usize, Vec<(usize, usize)>>| -> Vec<(Phase, Vec<Row>, Vec<(usize, usize)>)> {
-        runs.iter().map(|(pi, rs)| { let ph = Phase::from_idx(*pi as u64); (ph, compute_rows(rs, ph, sess, kernel, rs.len(), &meta), tags_of(tags, *pi)) }).collect()
+        phases.iter().map(|&ph| {
+            let rs = runs.get(&ph.idx()).map(Vec::as_slice).unwrap_or_default();
+            (ph, compute_rows(rs, ph, sess, kernel, rs.len(), &meta), tags_of(tags, ph.idx()))
+        }).collect()
     };
     let looks = rounds.saturating_sub(SEQ_MIN - 1).max(1);
     let mut decided_at = None;
@@ -2762,7 +2782,7 @@ fn verify_main(cal: &mut Calibration, ctx: &Ctx, name: &str, rounds: usize, with
         // Sequential: after every block from the third, stop once the goal's interval at the per-look
         // level (Bonferroni over the looks the rounds allow) excludes 0.
         if sequential && r + 1 >= SEQ_MIN && r + 1 < rounds {
-            let d = block_diffs(joint_utility(&vruns(&rows_of(&runs, &tags), goal)).into_iter());
+            let d = block_diffs(joint_utility(&vruns(&rows_of(&runs, &tags), weights)).into_iter());
             if seq_decided(&d, looks) { decided_at = Some(r + 1); eprintln!("\ndecided after {} ABBA block(s): stopping", r + 1); break; }
         }
     }
@@ -2775,7 +2795,17 @@ fn verify_main(cal: &mut Calibration, ctx: &Ctx, name: &str, rounds: usize, with
     let names = ["latency", "throughput", "power", "memory"];
     // Every kept run of every phase as (round, position, is B, goal utility of the phase, objectives).
     let prows = rows_of(&runs, &tags);
-    let tagged = vruns(&prows, goal);
+    let tagged = vruns(&prows, weights);
+    // Predict before these verification rows enter the design log.
+    // What the model predicts for the calibrated part of the preset (main phase, the session's context).
+    cal.set_target(vec![(1.0, cal.ctx_cfg(main, &ctx.cx))]);
+    let pred = cal.phase_model(main, phase_weights(weights, main)).map(|m| {
+        let keys: Vec<(String, String)> = cfg.iter().filter(|(k, _)| m.space.has(k)).cloned().collect();
+        let mut j = Joint::new(Some(m), None, None, 0.5);
+        j.ctxs = cal.target.borrow().clone();
+        let (mu, var) = j.eval(&keys);
+        (keys.len(), mu, var.sqrt())
+    });
     for ((ph, rows, _), vr) in prows.iter().zip(&tagged) {
         let ph = *ph;
         // Per objective: one B-A difference per ABBA block (drift inside the block cancels).
@@ -2786,7 +2816,7 @@ fn verify_main(cal: &mut Calibration, ctx: &Ctx, name: &str, rounds: usize, with
             }
         }
         // The runs join the design log when every change is a knob the model calibrates from the same reference.
-        if ph == Phase::Idle && drifted.is_empty() && cfg.iter().all(|(k, _)| cal.refs.contains_key(k) && calib::phases_for(k, tune::find(k).map_or("", |t| t.group)).iter().any(|p| p.0 == Phase::Idle)) {
+        if ph == Phase::Idle && !rows.is_empty() && drifted.is_empty() && cfg.iter().all(|(k, _)| cal.refs.contains_key(k) && calib::phases_for(k, tune::find(k).map_or("", |t| t.group)).iter().any(|p| p.0 == Phase::Idle)) {
             cal.put_session(ph, sess, rows.clone());
             stored = true;
         }
@@ -2796,17 +2826,8 @@ fn verify_main(cal: &mut Calibration, ctx: &Ctx, name: &str, rounds: usize, with
     let blocks = gain.as_ref().map_or(0, |g| g.n);
     // Every other goal's gain from the same runs (`--goal all`).
     let others: Vec<(Goal, Option<Paired>)> = if all_goals {
-        Goal::ALL.into_iter().filter(|g| *g != goal).map(|g| (g, paired_stats(&block_diffs(joint_utility(&vruns(&prows, g)).into_iter())))).collect()
+        Goal::ALL.into_iter().filter(|g| *g != goal).map(|g| (g, paired_stats(&block_diffs(joint_utility(&vruns(&prows, Weights::for_goal(g))).into_iter())))).collect()
     } else { Vec::new() };
-    // What the model predicts for the calibrated part of the preset (main phase, the session's context).
-    cal.set_target(vec![(1.0, cal.ctx_cfg(main, &ctx.cx))]);
-    let pred = cal.phase_model(main, goal_wts(goal, main)).map(|m| {
-        let keys: Vec<(String, String)> = cfg.iter().filter(|(k, _)| m.space.has(k)).cloned().collect();
-        let mut j = Joint::new(Some(m), None, None, 0.5);
-        j.ctxs = cal.target.borrow().clone();
-        let (mu, var) = j.eval(&keys);
-        (keys.len(), mu, var.sqrt())
-    });
     println!("\nverify \"{name}\" for {}: {blocks} ABBA block(s), gains as paired B-A differences per block:", goal.label());
     for (k, x) in &objectives { println!("  {k:<16} {:+6.1} % ± {:.1}", x[0].as_f64().unwrap_or(0.0) * 100.0, x[1].as_f64().unwrap_or(0.0) * 100.0); }
     // Sequential: the verdict is read at the per-look level, as the stopping rule was (else repeated looks inflate it).
@@ -2826,17 +2847,21 @@ fn verify_main(cal: &mut Calibration, ctx: &Ctx, name: &str, rounds: usize, with
                   None => println!("  {:<16} not measurable", g.key()) }
     }
     if ooms[1] > 0 { println!("  OOM kills        {} under the preset ({} under the boot state): verification FAILED whatever the gain", ooms[1], ooms[0]); }
-    if let Some((k, mu, sd)) = pred {
-        let agree = use_.is_finite() && (um - mu).abs() <= 2.0 * (use_ * use_ + sd * sd).sqrt();
-        if use_.is_finite() { cal.note_predcheck_in(sess, "verify", main.name(), goal.key(), mu, (use_ * use_ + sd * sd).sqrt(), um); }
-        println!("  model predicted  {mu:+.3} ± {sd:.3} for its {k} calibrated change(s) of {} -> {}", cfg.len(),
-                 if agree { "as predicted" } else { "SURPRISE: the uncalibrated part or interactions the model has not seen matter" });
+    // The prediction covers the main phase. Compare it to that phase alone
+    // even when the overall verification also measured storage.
+    let main_gain = paired_stats(&block_diffs(tagged[0].iter().map(|r| (r.round, r.b, r.u))));
+    if let (Some((k, mu, sd)), Some(observed)) = (pred, main_gain) {
+        let uncertainty = observed.se.hypot(sd);
+        let agree = (observed.mean - mu).abs() <= 2.0 * uncertainty;
+        cal.note_predcheck_in(sess, "verify", main.name(), goal.key(), mu, uncertainty, observed.mean);
+        println!("  model predicted  {mu:+.3} ± {sd:.3} for its {k} calibrated change(s) of {} in {} -> {}",
+                 cfg.len(), main.name(), if agree { "as predicted" } else { "outside the predicted interval" });
     }
     if stored { println!("  the runs joined the design log (every change is a calibrated knob)"); }
     else if !drifted.is_empty() { println!("  the runs stay out of the design log: {} differ(s) from the calibration's reference now", drifted.join(", ")); }
     cal.verify.push(json!({"t": now(), "preset": name, "goal": goal.key(), "changes": cfg.len(), "rounds": blocks, "paired": true, "objectives": objectives,
                            "gain": [round3(um), round3(use_)], "ci95": gain.as_ref().map(|g| json!([round3(g.lo), round3(g.hi)])),
-                           "phase": main.name(), "verification_v": 1, "verified_values": preset_values,
+                           "phase": main.name(), "verification_v": 2, "weight_overrides": overrides, "weights": weights.to_json(), "verified_values": preset_values,
                            "skipped": skipped, "complete": skipped.is_empty() && blocks >= 3 && ended.is_none(),
                            "ended_early": ended,
                            "decision_ci": if lo.is_finite() && hi.is_finite() { json!([lo, hi]) } else { Value::Null },
@@ -2866,11 +2891,15 @@ fn verification_passes(blocks: usize, skipped: &[String], lower_bound: f64, pres
 fn tags_of(tags: &BTreeMap<usize, Vec<(usize, usize)>>, pi: usize) -> Vec<(usize, usize)> { tags.get(&pi).cloned().unwrap_or_default() }
 
 /// Every phase's kept runs with goal `g`'s utility in that phase.
-fn vruns(prows: &[(Phase, Vec<Row>, Vec<(usize, usize)>)], g: Goal) -> Vec<Vec<VRun>> {
+fn vruns(prows: &[(Phase, Vec<Row>, Vec<(usize, usize)>)], weights: Weights) -> Vec<Vec<VRun>> {
     prows.iter().map(|(ph, rows, tg)| {
-        let wts = goal_wts(g, *ph);
+        let wts = phase_weights(weights, *ph);
+        // Use one objective set throughout the phase. A sporadically missing
+        // weighted outcome invalidates that slot instead of contributing zero.
+        let measured: Vec<usize> = (0..4).filter(|&o| wts[o] > 0.0 && rows.iter().any(|r| r.y[o].is_finite())).collect();
         rows.iter().zip(tg).map(|(r, &(round, pos))| VRun { round, pos, b: !r.cfg.is_empty(), y: r.y,
-            u: (0..4).filter(|o| r.y[*o].is_finite()).map(|o| wts[o] * r.y[o]).sum() }).collect()
+            u: if measured.is_empty() && wts.iter().any(|&w| w > 0.0) { f64::NAN }
+               else { measured.iter().map(|&o| wts[o] * r.y[o]).sum() } }).collect()
     }).collect()
 }
 
@@ -2925,11 +2954,11 @@ fn joint_utility(phases: &[Vec<VRun>]) -> Vec<(usize, bool, f64)> {
 }
 
 /// One B-A difference per ABBA block (round): mean of its B runs minus mean of its A runs; a block
-/// missing either side gives none.
+/// needs both A and both B runs to cancel linear drift.
 fn block_diffs(xs: impl Iterator<Item = (usize, bool, f64)>) -> Vec<f64> {
     let mut by: BTreeMap<usize, [(f64, usize); 2]> = BTreeMap::new();
-    for (r, b, v) in xs { let e = &mut by.entry(r).or_insert([(0.0, 0); 2])[b as usize]; e.0 += v; e.1 += 1; }
-    by.values().filter(|s| s[0].1 > 0 && s[1].1 > 0).map(|s| s[1].0 / s[1].1 as f64 - s[0].0 / s[0].1 as f64).collect()
+    for (r, b, v) in xs.filter(|(_, _, v)| v.is_finite()) { let e = &mut by.entry(r).or_insert([(0.0, 0); 2])[b as usize]; e.0 += v; e.1 += 1; }
+    by.values().filter(|s| s[0].1 == 2 && s[1].1 == 2).map(|s| s[1].0 / s[1].1 as f64 - s[0].0 / s[0].1 as f64).collect()
 }
 
 /// Mean of paired differences, its standard error and a 95 % t interval. None with fewer than 2.
@@ -3139,7 +3168,7 @@ mod tests {
             for r in 0..3usize { for pos in 0..4usize {
                 if Some((r, pos)) == drop { continue; }
                 let b = if r % 2 == 0 { pos == 1 || pos == 2 } else { pos == 0 || pos == 3 };
-                let u = r as f64 + if b { 0.1 } else { 0.0 };
+                let u = r as f64 + pos as f64 * 0.03 + if b { 0.1 } else { 0.0 };
                 v.push(VRun { round: r, pos, b, y: [u, f64::NAN, f64::NAN, f64::NAN], u });
             } }
             v
@@ -3148,7 +3177,7 @@ mod tests {
         let j = joint_utility(&[idle, io]);
         assert_eq!(j.len(), 11, "the slot io lost is left out of the sum");
         let d = block_diffs(j.into_iter());
-        assert_eq!(d.len(), 3);
+        assert_eq!(d.len(), 2);
         assert!(d.iter().all(|x| (x - 0.2).abs() < 1e-12), "{d:?}: 0.1 per phase, never a round's drift");
         // Summing by index (the old pairing) mixed rounds once a run dropped out.
         let (a, b) = (mk(None), mk(Some((0, 1))));
@@ -3158,7 +3187,7 @@ mod tests {
         assert!((st.mean - 0.105).abs() < 1e-12 && st.n == 4);
         assert!((st.hi - st.mean - 3.182 * st.se).abs() < 1e-12 && st.lo < st.mean);
         assert!(paired_stats(&[0.1]).is_none());
-        assert_eq!(block_diffs([(0, true, 1.0), (1, false, 0.0), (1, true, 0.5)].into_iter()), vec![0.5], "a block without an A side gives nothing");
+        assert!(block_diffs([(0, true, 1.0), (1, false, 0.0), (1, true, 0.5)].into_iter()).is_empty());
         assert!(t975(1) > 12.0 && (t975(1000) - 1.96).abs() < 0.01);
     }
     #[test]
@@ -3342,6 +3371,40 @@ mod tests {
         assert!(rows[3].y[0].is_nan() && rows[3].y[1].is_nan() && rows[3].y[3].is_nan(), "{:?}", rows[3].y);
         assert!(rows[3].y[2].is_finite(), "power still measured: {:?}", rows[3].y);
         assert!(rows[0].y[0].is_finite(), "full reference remains a latency observation");
+    }
+
+    #[test]
+    fn missing_probe_does_not_change_the_goal_being_compared() {
+        let sample = [(Metric::FrameP99Us, 10.0), (Metric::WakeP99Us, 20.0), (Metric::IdleW, 2.0)];
+        let mut runs: Vec<_> = (0..8).map(|i| {
+            let cfg = if matches!(i, 1 | 2 | 4 | 7) { vec![("cpu.k".into(), "1".into())] } else { vec![] };
+            run(cfg, &sample)
+        }).collect();
+        runs[1].s.remove(&Metric::WakeP99Us);
+        let rows = compute_rows(&runs, Phase::Idle, 1, "", runs.len(), &meta());
+        assert!(rows[1].y[0].is_nan() && rows[1].y[2].is_finite());
+        let phases = [(Phase::Idle, rows, (0..8).map(|i| (i / 4, i % 4)).collect())];
+        let weights = Weights::for_goal(Goal::Gaming);
+        let gains = |w| block_diffs(joint_utility(&vruns(&phases, w)).into_iter());
+        assert_eq!(gains(weights).len(), 1);
+        assert_eq!(gains(Weights { latency: 0.0, ..weights }).len(), 2);
+    }
+
+    #[test]
+    fn saved_weights_can_reverse_verification_of_the_same_tradeoff() {
+        let rows = (0..4).map(|i| {
+            let mut row = Row::default();
+            if i == 1 || i == 2 {
+                row.cfg = vec![("cpu.k".into(), "1".into())];
+                row.y = [0.1, 0.0, -0.1, 0.0];
+            } else { row.y = [0.0; 4]; }
+            row
+        }).collect();
+        let phases = [(Phase::Idle, rows, (0..4).map(|i| (0, i)).collect())];
+        let gain = |w| block_diffs(joint_utility(&vruns(&phases, w)).into_iter())[0];
+        let w = Weights::for_goal(Goal::Gaming);
+        assert!(gain(w) > 0.0);
+        assert!(gain(w.with_overrides(&json!({"power": 2.0}))) < 0.0);
     }
 
     #[test]

@@ -2737,7 +2737,7 @@ void OptimizeTab::showAutotuneReport(const QJsonObject &d, const QStringList &no
 // Only a *matching*, recent ABBA proof can authorize a high-risk autotuned
 // preset. The signature is root-owned; older verification records do not
 // carry the exact value snapshot and therefore cannot be treated as proof.
-static bool verifiedAutotunePreset(const QString &name, const QJsonObject &values) {
+static bool verifiedAutotunePreset(const QString &name, const QJsonObject &values, const QJsonObject &criteria) {
     QFile signatureFile(QStringLiteral("/var/lib/centurion/signature.json"));
     // A calibration signature may be several MiB (unlike a 256 KiB preset).
     // Use the same 8 MiB upper bound as calib::MAX_FILE; fail closed.
@@ -2748,7 +2748,10 @@ static bool verifiedAutotunePreset(const QString &name, const QJsonObject &value
     for (int i = records.size() - 1; i >= 0; --i) {
         const QJsonObject v = records.at(i).toObject();
         if (v.value(QStringLiteral("preset")).toString() != name ||
-            v.value(QStringLiteral("verification_v")).toInt() != 1 ||
+            v.value(QStringLiteral("verification_v")).toInt() != 2 ||
+            v.value(QStringLiteral("goal")) != criteria.value(QStringLiteral("goal")) ||
+            (v.value(QStringLiteral("weights")).toObject() != criteria.value(QStringLiteral("weights")).toObject() &&
+             v.value(QStringLiteral("weight_overrides")).toObject() != criteria.value(QStringLiteral("weights")).toObject()) ||
             !v.value(QStringLiteral("paired")).toBool() ||
             !v.value(QStringLiteral("complete")).toBool() ||
             !v.value(QStringLiteral("passed")).toBool() ||
@@ -2787,7 +2790,8 @@ void OptimizeTab::applySelected(const QString &home) {
     int changed = 0;
     for (const Row &r : rows_) if (values.contains(r.key) && differs(r)) ++changed;
     const bool highRisk = !risky.isEmpty() || changed >= 12;
-    if (autoPreset && highRisk && !verifiedAutotunePreset(loadedPreset_, values)) {
+    const QJsonObject criteria = preset.value(QStringLiteral("autotune")).toObject();
+    if (autoPreset && highRisk && !verifiedAutotunePreset(loadedPreset_, values, criteria)) {
         if (!validPresetName(loadedPreset_) || !storeHas(loadedPreset_) ||
             preset.value(QStringLiteral("values")).toObject() != values) {
             QMessageBox::warning(this, tr("Verify before apply"),
@@ -2829,12 +2833,12 @@ void OptimizeTab::applySelected(const QString &home) {
         progress->setMinimumDuration(0);
         setBusy(true);
         connect(proc, &QProcess::finished, this,
-            [this, proc, progress, values, name = loadedPreset_](int exitCode, QProcess::ExitStatus st) {
+            [this, proc, progress, values, criteria, name = loadedPreset_](int exitCode, QProcess::ExitStatus st) {
                 const QString tail = QString::fromUtf8(proc->readAllStandardError()).right(650);
                 progress->close();
                 progress->deleteLater();
                 setBusy(false);
-                if (st != QProcess::NormalExit || exitCode != 0 || !verifiedAutotunePreset(name, values)) {
+                if (st != QProcess::NormalExit || exitCode != 0 || !verifiedAutotunePreset(name, values, criteria)) {
                     QMessageBox::warning(this, tr("ABBA verification failed"),
                         tr("The preset was not applied. Check the results and restore journaled settings if needed:\n"
                            "sudo centurion-calibrate --restore\n\n%1").arg(tail));
@@ -2856,6 +2860,8 @@ void OptimizeTab::applySelected(const QString &home) {
         });
         proc->start(pkexec,
             QStringList{CALIBRATE, QStringLiteral("--verify"), loadedPreset_,
+                        QStringLiteral("--goal"), criteria.value(QStringLiteral("goal")).toString(),
+                        QStringLiteral("--verify-weights"), QString::fromUtf8(QJsonDocument(criteria.value(QStringLiteral("weights")).toObject()).toJson(QJsonDocument::Compact)),
                         QStringLiteral("--rounds"), QStringLiteral("4"),
                         QStringLiteral("--sequential"), QStringLiteral("--require-improvement")});
         progress->show();

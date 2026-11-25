@@ -646,13 +646,22 @@ struct Rapl { zones: Vec<(std::path::PathBuf, u64)> }
 impl Rapl {
     fn new() -> Rapl { Rapl::from_dir(std::path::Path::new("/sys/class/powercap")) }
     fn from_dir(root: &std::path::Path) -> Rapl {
-        let all: Vec<std::path::PathBuf> = std::fs::read_dir(root).into_iter().flatten().flatten().map(|e| e.path())
-            .filter(|p| p.file_name().is_some_and(|n| n.to_string_lossy().matches(':').count() == 1) && p.join("energy_uj").exists()).collect();
-        let name = |p: &std::path::Path| std::fs::read_to_string(p.join("name")).unwrap_or_default().trim().to_owned();
-        let msr_pkg: Vec<std::path::PathBuf> = all.iter().filter(|p| name(p).starts_with("package")
-            && p.file_name().is_some_and(|n| n.to_string_lossy().starts_with("intel-rapl:"))).cloned().collect();
-        let pick = if !msr_pkg.is_empty() { msr_pkg } else { all.into_iter().filter(|p| name(p) != "psys").take(1).collect() };
-        Rapl { zones: pick.into_iter().map(|p| {
+        // Some sockets expose both MSR and MMIO, others only one. Choose
+        // one counter per named package, with deterministic MSR preference.
+        let mut packages = std::collections::BTreeMap::new();
+        for entry in std::fs::read_dir(root).into_iter().flatten().flatten() {
+            let p = entry.path();
+            let fname = entry.file_name();
+            let zone = fname.to_string_lossy();
+            if zone.matches(':').count() != 1 || !p.join("energy_uj").exists() { continue; }
+            let Ok(name) = std::fs::read_to_string(p.join("name")) else { continue };
+            let name = name.trim();
+            if !name.starts_with("package") { continue; }
+            let candidate = (!zone.starts_with("intel-rapl:"), p);
+            let best = packages.entry(name.to_owned()).or_insert_with(|| candidate.clone());
+            if candidate < *best { *best = candidate; }
+        }
+        Rapl { zones: packages.into_values().map(|(_, p)| {
             let range = std::fs::read_to_string(p.join("max_energy_range_uj")).ok().and_then(|s| s.trim().parse().ok()).unwrap_or(0);
             (p, range)
         }).collect() }
@@ -1616,6 +1625,12 @@ mod tests {
         zone("intel-rapl-mmio:0", "package-0"); zone("intel-rapl:1", "psys");
         assert_eq!(Rapl::from_dir(&root).zones.len(), 1);
         assert!(Rapl::from_dir(&root).zones[0].0.ends_with("intel-rapl-mmio:0"));
+        zone("intel-rapl:0", "package-0");
+        zone("intel-rapl-mmio:2", "package-1");
+        zone("other:0", "dram");
+        let both = Rapl::from_dir(&root);
+        assert_eq!(both.zones.len(), 2);
+        assert_eq!(both.joules(&[1_000_000, 3_000_000], &[2_000_000, 5_000_000]), Some(3.0));
         let _ = std::fs::remove_dir_all(&root);
     }
 

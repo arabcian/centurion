@@ -1145,6 +1145,18 @@ verification never automatically applies the preset; run
 unrestored journal. Ordinary manual presets retain their previous warning
 and apply workflow.
 
+The GUI passes the goal and objective weights saved with the autotuned preset, including
+when the preset has a custom name. A verification record matches those criteria and the exact
+setting values. Records from before version 2 remain in the history and require a new run
+for approval. On the CLI, `--goal` selects the primary goal and `--verify-weights` accepts
+a JSON object of overrides, for example `--goal gaming --verify-weights '{"power":2}'`.
+
+Each counted block has two baseline and two candidate observations at the planned positions
+in every requested phase. A missing measurement of an otherwise sampled weighted objective
+excludes that slot from the gain. Objectives without a sensor throughout the phase provide
+no evidence. A disabled objective can be missing without discarding the block. Model checks
+compare the main phase to a prediction made before its rows are added to the training history.
+
 Equivalent shell command, after saving and approving the preset:
 
 ```sh
