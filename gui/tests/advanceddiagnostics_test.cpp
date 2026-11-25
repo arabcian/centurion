@@ -77,6 +77,9 @@ int main(int argc, char **argv) {
         const diag::Report r = ad::nvmeHealth(nv);
         CHECK(r.verdict() == Level::Ok);
         CHECK(has(r, Level::Info, QStringLiteral("1200 logged errors are rejected admin commands")));
+        // Technical details are labelled lines, not JSON.
+        CHECK(r.raw.contains(QStringLiteral("Temperature: 41 °C")) && r.raw.contains(QStringLiteral("Available spare: 100 %")));
+        CHECK(r.raw.contains(QStringLiteral("Invalid Field in Command · admin queue")) && !r.raw.contains(QLatin1Char('{')));
         QJsonObject bad = nv;
         QJsonArray cs = bad.value(QStringLiteral("controllers")).toArray();
         QJsonObject c = cs.at(0).toObject();

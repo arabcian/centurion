@@ -20807,6 +20807,114 @@ Günlük okunamıyor, bu yüzden onu tutmak hiçbir şeyi korumaz ve yalnızca b
             <source>USB / charging</source>
             <translation>USB / şarj</translation>
         </message>
+        <message>
+            <source>Critical warning flags</source>
+            <translation>Kritik uyarı bayrakları</translation>
+        </message>
+        <message>
+            <source>Temperature</source>
+            <translation>Sıcaklık</translation>
+        </message>
+        <message>
+            <source>Available spare</source>
+            <translation>Kullanılabilir yedek alan</translation>
+        </message>
+        <message>
+            <source>Spare threshold (drive's minimum)</source>
+            <translation>Yedek alan eşiği (sürücünün alt sınırı)</translation>
+        </message>
+        <message>
+            <source>Rated endurance used</source>
+            <translation>Kullanılan dayanıklılık ömrü</translation>
+        </message>
+        <message>
+            <source>Data written</source>
+            <translation>Yazılan veri</translation>
+        </message>
+        <message>
+            <source>Power-on time</source>
+            <translation>Açık kalma süresi</translation>
+        </message>
+        <message>
+            <source>Power cycles</source>
+            <translation>Açma-kapama sayısı</translation>
+        </message>
+        <message>
+            <source>Media and data-integrity errors</source>
+            <translation>Ortam ve veri bütünlüğü hataları</translation>
+        </message>
+        <message>
+            <source>Error log entries (lifetime)</source>
+            <translation>Hata günlüğü kayıtları (ömür boyu)</translation>
+        </message>
+        <message>
+            <source>Time above warning temperature</source>
+            <translation>Uyarı sıcaklığının üstünde geçen süre</translation>
+        </message>
+        <message>
+            <source>Time above critical temperature</source>
+            <translation>Kritik sıcaklığın üstünde geçen süre</translation>
+        </message>
+        <message>
+            <source>Light thermal throttling events</source>
+            <translation>Hafif ısıl yavaşlatma olayları</translation>
+        </message>
+        <message>
+            <source>Heavy thermal throttling events</source>
+            <translation>Ağır ısıl yavaşlatma olayları</translation>
+        </message>
+        <message>
+            <source> (firmware %1)</source>
+            <translation> (ürün yazılımı %1)</translation>
+        </message>
+        <message>
+            <source>Controller state: %1</source>
+            <translation>Denetleyici durumu: %1</translation>
+        </message>
+        <message>
+            <source>SMART / Health log: %1</source>
+            <translation>SMART / Sağlık günlüğü: %1</translation>
+        </message>
+        <message>
+            <source>none</source>
+            <translation>yok</translation>
+        </message>
+        <message>
+            <source> (%1 days)</source>
+            <translation> (%1 gün)</translation>
+        </message>
+        <message>
+            <source>Error Information Log: %1</source>
+            <translation>Hata Bilgisi Günlüğü: %1</translation>
+        </message>
+        <message>
+            <source>error #%1</source>
+            <translation>hata #%1</translation>
+        </message>
+        <message>
+            <source>admin queue</source>
+            <translation>yönetim kuyruğu</translation>
+        </message>
+        <message>
+            <source>I/O queue %1</source>
+            <translation>G/Ç kuyruğu %1</translation>
+        </message>
+        <message>
+            <source>command id %1</source>
+            <translation>komut kimliği %1</translation>
+        </message>
+        <message>
+            <source>namespace %1</source>
+            <translation>ad alanı %1</translation>
+        </message>
+        <message>
+            <source>block %1</source>
+            <translation>blok %1</translation>
+        </message>
+        <message>
+            <source>Collection limits: %1</source>
+            <translation>Toplama sınırları: %1</translation>
+        </message>
     </context>
     <context>
         <name>evidencereports</name>

@@ -218,6 +218,66 @@ QString nvmeStatus(quint64 sf, bool *media) {
     return tr("status type %1, code 0x%2").arg(sct).arg(sc, 2, 16, QLatin1Char('0'));
 }
 
+// Technical details of H06 as labelled lines instead of the helper's JSON: every field it read, with units.
+static QString nvmeDetails(const QJsonObject &nv) {
+    struct Field { const char *key, *label, *unit; };
+    static const Field fields[] = {
+        {"critical_warning", QT_TRANSLATE_NOOP("advanceddiagnostics", "Critical warning flags"), ""},
+        {"temp_c", QT_TRANSLATE_NOOP("advanceddiagnostics", "Temperature"), " °C"},
+        {"spare_pct", QT_TRANSLATE_NOOP("advanceddiagnostics", "Available spare"), " %"},
+        {"spare_threshold_pct", QT_TRANSLATE_NOOP("advanceddiagnostics", "Spare threshold (drive's minimum)"), " %"},
+        {"life_used_pct", QT_TRANSLATE_NOOP("advanceddiagnostics", "Rated endurance used"), " %"},
+        {"written_tb", QT_TRANSLATE_NOOP("advanceddiagnostics", "Data written"), " TB"},
+        {"power_on_hours", QT_TRANSLATE_NOOP("advanceddiagnostics", "Power-on time"), " h"},
+        {"power_cycles", QT_TRANSLATE_NOOP("advanceddiagnostics", "Power cycles"), ""},
+        {"unsafe_shutdowns", QT_TRANSLATE_NOOP("advanceddiagnostics", "Unsafe shutdowns"), ""},
+        {"media_errors", QT_TRANSLATE_NOOP("advanceddiagnostics", "Media and data-integrity errors"), ""},
+        {"error_log_entries", QT_TRANSLATE_NOOP("advanceddiagnostics", "Error log entries (lifetime)"), ""},
+        {"warning_temp_minutes", QT_TRANSLATE_NOOP("advanceddiagnostics", "Time above warning temperature"), " min"},
+        {"critical_temp_minutes", QT_TRANSLATE_NOOP("advanceddiagnostics", "Time above critical temperature"), " min"},
+        {"throttle_light", QT_TRANSLATE_NOOP("advanceddiagnostics", "Light thermal throttling events"), ""},
+        {"throttle_heavy", QT_TRANSLATE_NOOP("advanceddiagnostics", "Heavy thermal throttling events"), ""}};
+    auto number = [](const QJsonValue &v) { const double d = v.toDouble(); return d == qint64(d) ? QString::number(qint64(d)) : QString::number(d, 'f', 2); };
+    QStringList out;
+    for (const QJsonValue &cv : nv.value(QStringLiteral("controllers")).toArray()) {
+        const QJsonObject c = cv.toObject();
+        const QString model = c.value(QStringLiteral("model")).toString(), fw = c.value(QStringLiteral("firmware")).toString();
+        out << QStringLiteral("%1%2%3").arg(c.value(QStringLiteral("name")).toString(), model.isEmpty() ? QString() : QStringLiteral(" — ") + model,
+                                            fw.isEmpty() ? QString() : tr(" (firmware %1)").arg(fw));
+        if (c.contains(QStringLiteral("state"))) out << QStringLiteral("  ") + tr("Controller state: %1").arg(c.value(QStringLiteral("state")).toString());
+        out << QStringLiteral("  ") + tr("SMART / Health log: %1").arg(c.value(QStringLiteral("smart_status")).toString());
+        const QJsonObject s = c.value(QStringLiteral("smart")).toObject();
+        QSet<QString> shown;
+        for (const Field &f : fields) {
+            if (!s.contains(QLatin1String(f.key))) continue;
+            shown.insert(QLatin1String(f.key));
+            QString v = number(s.value(QLatin1String(f.key))) + QString::fromUtf8(f.unit);
+            if (QLatin1String(f.key) == QLatin1String("critical_warning"))
+                v = s.value(QLatin1String(f.key)).toInt() ? QStringLiteral("0x%1").arg(s.value(QLatin1String(f.key)).toInt(), 2, 16, QLatin1Char('0')) : tr("none");
+            if (QLatin1String(f.key) == QLatin1String("power_on_hours"))
+                v += tr(" (%1 days)").arg(qint64(s.value(QLatin1String(f.key)).toDouble() / 24));
+            out << QStringLiteral("    %1: %2").arg(tr(f.label), v);
+        }
+        for (auto it = s.begin(); it != s.end(); ++it)  // a field added later by the helper still shows
+            if (!shown.contains(it.key())) out << QStringLiteral("    %1: %2").arg(it.key(), number(it.value()));
+        const QJsonArray items = c.value(QStringLiteral("error_log")).toObject().value(QStringLiteral("items")).toArray();
+        out << QStringLiteral("  ") + tr("Error Information Log: %1").arg(c.value(QStringLiteral("error_status")).toString());
+        for (const QJsonValue &ev : items) {
+            const QJsonObject e = ev.toObject();
+            QStringList parts{tr("error #%1").arg(number(e.value(QStringLiteral("error_count"))))};
+            if (e.contains(QStringLiteral("status_field"))) parts << nvmeStatus(quint64(e.value(QStringLiteral("status_field")).toDouble()));
+            if (e.contains(QStringLiteral("sqid"))) parts << (e.value(QStringLiteral("sqid")).toInt() == 0 ? tr("admin queue") : tr("I/O queue %1").arg(e.value(QStringLiteral("sqid")).toInt()));
+            if (e.contains(QStringLiteral("cmdid"))) parts << tr("command id %1").arg(number(e.value(QStringLiteral("cmdid"))));
+            if (e.contains(QStringLiteral("nsid"))) parts << tr("namespace %1").arg(number(e.value(QStringLiteral("nsid"))));
+            if (e.contains(QStringLiteral("lba"))) parts << tr("block %1").arg(number(e.value(QStringLiteral("lba"))));
+            out << QStringLiteral("    ") + parts.join(QStringLiteral(" · "));
+        }
+        out << QString();
+    }
+    if (nv.contains(QStringLiteral("limits"))) out << tr("Collection limits: %1").arg(nv.value(QStringLiteral("limits")).toString());
+    return out.join(QLatin1Char('\n'));
+}
+
 Report nvmeHealth(const QJsonObject &nv) {
     Report r;
     r.code = QStringLiteral("H06");
@@ -335,7 +395,7 @@ Report nvmeHealth(const QJsonObject &nv) {
     }
     r.tables << drives;
     if (!errors.rows.isEmpty()) r.tables << errors;
-    r.raw = QString::fromUtf8(QJsonDocument(nv).toJson(QJsonDocument::Indented));
+    r.raw = nvmeDetails(nv);
     return r;
 }
 
