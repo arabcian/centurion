@@ -712,12 +712,12 @@ HealthTab::HealthTab(QWidget *parent) : QWidget(parent) {
     connect(bClear, &QPushButton::clicked, this, [this] {
         if (QMessageBox::question(this, tr("Clear saved log"),
                 tr("Delete all locally saved kernel errors from previous and current boots?")) != QMessageBox::Yes) return;
-        QFile::remove(logPath());
-        QFile::remove(logPath() + QStringLiteral(".1"));
+        const bool cleared = diagsrc::clearSavedLog(diagsrc::SavedLog::Health);
         updateLogInfo();
         refreshDays();
         loadHistoryDay();
         applyDayFilter();
+        if (!cleared) logInfo_->setText(tr("Could not clear all saved log files."));
     });
     logRow->addWidget(bClear);
     technicalLayout->addLayout(logRow);
@@ -1855,13 +1855,16 @@ void HealthTab::updateSummary() {
 }
 
 QString HealthTab::logPath() {
-    QString dir = qEnvironmentVariable("XDG_STATE_HOME");  // GenericStateLocation needs Qt 6.7
-    if (dir.isEmpty()) dir = QDir::homePath() + QStringLiteral("/.local/state");
-    return dir + QStringLiteral("/centurion/health.log");
+    return diagsrc::savedLogPath(diagsrc::SavedLog::Health);
 }
 
 void HealthTab::persist(const QJsonArray &ev, const QString &bootId) {
-    if (!bootId.isEmpty() && bootId != savedBoot_) { savedBoot_ = bootId; savedSeq_ = 0; }
+    const auto fullBoot = QString::fromStdString(diagnostichistory::fullBoot(bootId.toStdString()));
+    if (fullBoot.isEmpty()) {
+        logInfo_->setText(tr("Saved log requires a full boot identity."));
+        return;
+    }
+    if (fullBoot != savedBoot_) { savedBoot_ = fullBoot; savedSeq_ = 0; }
     QStringList lines;
     // Kernel timestamps count from boot; wall time = now - uptime + ts.
     timespec now{};
@@ -1870,26 +1873,33 @@ void HealthTab::persist(const QJsonArray &ev, const QString &bootId) {
     quint64 top = savedSeq_;
     for (const QJsonValue &v : ev) {
         const QJsonObject e = v.toObject();
-        const quint64 seq = quint64(e.value(QStringLiteral("seq")).toDouble());
+        const auto sequence = e.value(QStringLiteral("seq")).toInteger(-1);
+        const auto timestamp = e.value(QStringLiteral("ts_us")).toInteger(-1);
+        if (sequence < 0 || timestamp < 0) {
+            logInfo_->setText(tr("A malformed event prevented the saved log from being updated."));
+            return;
+        }
+        const auto seq = quint64(sequence);
         if (seq <= savedSeq_) continue;
         top = std::max(top, seq);
-        const qint64 tsMs = qint64(e.value(QStringLiteral("ts_us")).toDouble() / 1000);
+        const qint64 tsMs = timestamp / 1000;
+        auto title = e.value(QStringLiteral("title")).toString();
+        auto message = e.value(QStringLiteral("text")).toString();
+        for (QString *field : {&title, &message}) {
+            field->replace(QLatin1Char('\n'), QStringLiteral(" ⏎ "));
+            field->replace(QLatin1Char('\r'), QStringLiteral(" ⏎ "));
+        }
         lines << QStringLiteral("%1  boot=%2 seq=%3  %4 %5  %6  |  %7")
                      .arg(QDateTime::fromMSecsSinceEpoch(bootMs + tsMs).toString(QStringLiteral("yyyy-MM-dd HH:mm:ss")))
                      .arg(savedBoot_).arg(seq)
                      .arg(e.value(QStringLiteral("level")).toString().toUpper(), -8)
                      .arg(e.value(QStringLiteral("kind")).toString().toUpper(), -6)
-                     .arg(e.value(QStringLiteral("title")).toString(), e.value(QStringLiteral("text")).toString());
+                     .arg(title, message);
     }
     if (lines.isEmpty()) return;
-    const QString path = logPath();
-    QDir().mkpath(QFileInfo(path).absolutePath());
-    if (QFileInfo(path).size() > LOG_MAX_BYTES) { QFile::remove(path + QStringLiteral(".1")); QFile::rename(path, path + QStringLiteral(".1")); }
-    QFile f(path);
-    if (!f.open(QIODevice::Append | QIODevice::Text)) { logInfo_->setText(QStringLiteral("Saved log: cannot write ") + path); return; }
     const QByteArray bytes = (lines.join(QLatin1Char('\n')) + QLatin1Char('\n')).toUtf8();
-    if (f.write(bytes) != bytes.size() || !f.flush()) {
-        logInfo_->setText(QStringLiteral("Saved log: cannot write ") + path);
+    if (!diagsrc::appendSavedLog(diagsrc::SavedLog::Health, bytes, LOG_MAX_BYTES)) {
+        logInfo_->setText(tr("Could not write the saved log."));
         return;
     }
     savedSeq_ = top;

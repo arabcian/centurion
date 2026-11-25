@@ -6,6 +6,7 @@
 #include <QDialogButtonBox>
 #include <QFontDatabase>
 #include <QHBoxLayout>
+#include <QInputDialog>
 #include <QJsonArray>
 #include <QLabel>
 #include <QLineEdit>
@@ -20,6 +21,7 @@
 #include <QSplitter>
 #include <QSignalBlocker>
 #include <QVBoxLayout>
+#include <limits>
 
 namespace {
 constexpr int TextRole = Qt::UserRole;
@@ -151,13 +153,23 @@ ReportPreview::ReportPreview(const QJsonObject &preview, const QString &snapshot
     pageStatus_->setWordWrap(true);
     previousPage_ = new QPushButton(tr("Previous page"));
     nextPage_ = new QPushButton(tr("Next page"));
-    for (auto *button : {previousPage_, nextPage_}) button->setAutoDefault(false);
+    jumpPage_ = new QPushButton(tr("Go to page…"));
+    for (auto *button : {previousPage_, nextPage_, jumpPage_}) button->setAutoDefault(false);
     navigation->addWidget(pageStatus_, 1);
     navigation->addWidget(previousPage_);
     navigation->addWidget(nextPage_);
+    navigation->addWidget(jumpPage_);
     v->addWidget(pager_);
     connect(previousPage_, &QPushButton::clicked, this, [this] { showPage(page_ - 1); });
     connect(nextPage_, &QPushButton::clicked, this, [this] { showPage(page_ + 1); });
+    connect(jumpPage_, &QPushButton::clicked, this, [this] {
+        if (loadingPage_ || pageCount_ <= 1 || pageCount_ > std::numeric_limits<int>::max()) return;
+        const auto generation = generation_;
+        bool accepted = false;
+        const int target = QInputDialog::getInt(this, tr("Go to page"), tr("Page number"),
+            int(page_ + 1), 1, int(pageCount_), 1, &accepted);
+        if (accepted && generation == generation_) showPage(target - 1);
+    });
     connect(list_, &QListWidget::currentItemChanged, this, [this](QListWidgetItem *item, QListWidgetItem *) {
         selectFile(item);
     });
@@ -226,6 +238,7 @@ void ReportPreview::updatePageControls() {
     pager_->setVisible(pageCount_ > 1);
     previousPage_->setEnabled(!loadingPage_ && page_ > 0);
     nextPage_->setEnabled(!loadingPage_ && page_ + 1 < pageCount_);
+    jumpPage_->setEnabled(!loadingPage_ && pageCount_ > 1 && pageCount_ <= std::numeric_limits<int>::max());
     pageStatus_->setText(loadingPage_ ? tr("Reading preview page…") : tr("Page %1 of %2").arg(page_ + 1).arg(pageCount_));
 }
 

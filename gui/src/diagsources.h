@@ -38,6 +38,9 @@ struct LogLine {
 };
 std::optional<LogLine> parseLine(const QString &line);
 enum class SavedLog { Health, Kernel };
+QString savedLogPath(SavedLog source);
+bool appendSavedLog(SavedLog source, const QByteArray &records, qint64 rotateAfter);
+bool clearSavedLog(SavedLog source);
 enum class LogFileState { Missing, Unreadable, Read };
 struct LogFileCoverage {
     LogFileState state = LogFileState::Missing;

@@ -23,7 +23,7 @@ checks = {
     "SMART remains accessible directly": 'addPage(hardware, smartTool' in health,
     "event/search filters": 'severityFilter_->addItem' in health and 'eventSearch_->setClearButtonEnabled' in health,
     "simple and technical event views": 'friendlyEvent(' in health and 'technicalEvents_' in header,
-    "older saved event days": 'savedLog(diagsrc::SavedLog::Health, MAX_ROWS, LOG_MAX_BYTES, dayFilter_)' in health and 'name + QStringLiteral(".1")' in sources,
+    "older saved event days": 'savedLog(diagsrc::SavedLog::Health, MAX_ROWS, LOG_MAX_BYTES, dayFilter_)' in health and 'path + QStringLiteral(".1")' in sources,
     "archived rows excluded from live DBus events": 'if (list_->topLevelItem(i)->data(0, Qt::UserRole + 3).toBool()) continue' in health,
     "read errors visible in simple view": 'scanWarning_->setVisible(true)' in health,
     "user acknowledgment does not delete logs": 'void HealthTab::markSeen()' in health and 'guiSettings().setValue(QStringLiteral("health/seen_ms")' in health,

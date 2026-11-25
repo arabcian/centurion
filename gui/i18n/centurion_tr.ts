@@ -1574,6 +1574,22 @@ Bir adım geri alınamadı; "Lenovo logosuna dön" varsayılanı geri getirir.</
     <context>
         <name>HealthTab</name>
         <message>
+            <source>Could not clear all saved log files.</source>
+            <translation>Kayıtlı günlük dosyalarının tümü temizlenemedi.</translation>
+        </message>
+        <message>
+            <source>Could not write the saved log.</source>
+            <translation>Kayıtlı günlüğe yazılamadı.</translation>
+        </message>
+        <message>
+            <source>Saved log requires a full boot identity.</source>
+            <translation>Günlüğe yazmak için tam açılış kimliği gerekiyor.</translation>
+        </message>
+        <message>
+            <source>A malformed event prevented the saved log from being updated.</source>
+            <translation>Geçersiz bir olay nedeniyle kayıtlı günlük güncellenemedi.</translation>
+        </message>
+        <message>
             <source>Some saved history is outside the scan or display limits, or could not be read.</source>
             <translation>Bazı geçmiş kayıtları tarama veya gösterim sınırının dışında kaldı ya da okunamadı.</translation>
         </message>
@@ -3777,6 +3793,14 @@ Kapalı: artık klavyeyi izlemez; kendi parlaklığı buradan ayarlanamaz.</tran
 </context>
     <context>
         <name>KlogPage</name>
+        <message>
+            <source>Could not clear all saved log files.</source>
+            <translation>Kayıtlı günlük dosyalarının tümü temizlenemedi.</translation>
+        </message>
+        <message>
+            <source>Could not write the saved log.</source>
+            <translation>Kayıtlı günlüğe yazılamadı.</translation>
+        </message>
         <message>
             <source>Some saved records could not be scanned.</source>
             <translation>Bazı kayıtlar taranamadı.</translation>
@@ -6343,6 +6367,18 @@ Seçilen dosyalar önizlemeyle eşleşti. Otomatik anonimleştirme kesin sonuç 
 </context>
     <context>
         <name>ReportPreview</name>
+        <message>
+            <source>Go to page…</source>
+            <translation>Sayfaya git…</translation>
+        </message>
+        <message>
+            <source>Go to page</source>
+            <translation>Sayfaya git</translation>
+        </message>
+        <message>
+            <source>Page number</source>
+            <translation>Sayfa numarası</translation>
+        </message>
         <message><source>Find on this page…</source><translation>Bu sayfada bul…</translation></message>
         <message><source>Find on this page</source><translation>Bu sayfada bul</translation></message>
         <message><source>Previous match</source><translation>Önceki eşleşme</translation></message>

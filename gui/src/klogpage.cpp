@@ -193,10 +193,10 @@ KlogPage::KlogPage(QWidget *parent) : QWidget(parent) {
     connect(bClear, &QPushButton::clicked, this, [this] {
         if (QMessageBox::question(this, QStringLiteral("Clear saved log"),
                 QStringLiteral("Delete the saved kernel log of every boot?")) != QMessageBox::Yes) return;
-        QFile::remove(logPath());
-        QFile::remove(logPath() + QStringLiteral(".1"));
+        const bool cleared = diagsrc::clearSavedLog(diagsrc::SavedLog::Kernel);
         // Keep savedSeq_: what this boot already showed is not written again.
         render();
+        if (!cleared) info_->setText(tr("Could not clear all saved log files."));
     });
 
     {
@@ -350,9 +350,7 @@ void KlogPage::onReply(const QJsonObject &r, bool viaRoot) {
 }
 
 QString KlogPage::logPath() {
-    QString dir = qEnvironmentVariable("XDG_STATE_HOME");  // GenericStateLocation needs Qt 6.7
-    if (dir.isEmpty()) dir = QDir::homePath() + QStringLiteral("/.local/state");
-    return dir + QStringLiteral("/centurion/kernel.log");
+    return diagsrc::savedLogPath(diagsrc::SavedLog::Kernel);
 }
 
 bool KlogPage::persist(const QJsonArray &records, const QString &bootId) {
@@ -385,13 +383,11 @@ bool KlogPage::persist(const QJsonArray &records, const QString &bootId) {
                      .arg(message);
     }
     if (lines.isEmpty()) return true;
-    const QString path = logPath();
-    QDir().mkpath(QFileInfo(path).absolutePath());
-    if (QFileInfo(path).size() > LOG_MAX_BYTES) { QFile::remove(path + QStringLiteral(".1")); QFile::rename(path, path + QStringLiteral(".1")); }
-    QFile f(path);
-    if (!f.open(QIODevice::Append | QIODevice::Text)) { info_->setText(QStringLiteral("Cannot write ") + path); return false; }
-    const QByteArray bytes=(lines.join(QLatin1Char('\n'))+QLatin1Char('\n')).toUtf8();
-    if(f.write(bytes)!=bytes.size() || !f.flush()) { info_->setText(tr("Kernel log write failed; capture cursor not advanced.")); return false; }
+    const QByteArray bytes = (lines.join(QLatin1Char('\n')) + QLatin1Char('\n')).toUtf8();
+    if (!diagsrc::appendSavedLog(diagsrc::SavedLog::Kernel, bytes, LOG_MAX_BYTES)) {
+        info_->setText(tr("Could not write the saved log."));
+        return false;
+    }
     savedSeq_ = top; return true;
 }
 

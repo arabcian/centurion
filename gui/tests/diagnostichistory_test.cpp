@@ -81,5 +81,15 @@ int main(int argc,char **argv) {
     CHECK(QFile::link(diagsrc::stateDir() + QStringLiteral("/health.log"),
                       diagsrc::stateDir() + QStringLiteral("/kernel.log.1")));
     CHECK(diagsrc::savedLog(diagsrc::SavedLog::Kernel, 10).files.at(0).state == diagsrc::LogFileState::Unreadable);
+    const auto kernel = diagsrc::SavedLog::Kernel;
+    const auto path = diagsrc::savedLogPath(kernel);
+    CHECK(diagsrc::clearSavedLog(kernel));
+    CHECK(diagsrc::appendSavedLog(kernel, "previous\n", 4));
+    CHECK(diagsrc::appendSavedLog(kernel, "current\n", 4));
+    CHECK(diagsrc::readRecord(path, 64).value_or(QByteArray()) == "current\n");
+    CHECK(diagsrc::readRecord(path + QStringLiteral(".1"), 64).value_or(QByteArray()) == "previous\n");
+    CHECK(diagsrc::clearSavedLog(kernel));
+    CHECK(QFile::link(diagsrc::savedLogPath(diagsrc::SavedLog::Health), path));
+    CHECK(!diagsrc::appendSavedLog(kernel, "rejected\n", 4));
     return EXIT_SUCCESS;
 }

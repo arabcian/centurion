@@ -9,12 +9,14 @@
 #include <QFileInfo>
 #include <QHash>
 #include <QJsonDocument>
+#include <QLockFile>
 #include <QRegularExpression>
 #include <QSaveFile>
 #include <QSet>
 #include <QStandardPaths>
 #include <algorithm>
 #include <cerrno>
+#include <cstdio>
 #include <fcntl.h>
 #include <sys/stat.h>
 #include <unistd.h>
@@ -42,16 +44,62 @@ QString dataDir() { return QStandardPaths::writableLocation(QStandardPaths::Gene
 
 QString bootId() { return read(QStringLiteral("/proc/sys/kernel/random/boot_id"), 80); }
 
-static bool openRegular(QFile &f, const QString &path, bool *missing = nullptr) {
+static bool openRegular(QFile &f, const QString &path, bool *missing = nullptr, bool append = false) {
     const QByteArray encoded = QFile::encodeName(path);
-    const int fd = ::open(encoded.constData(), O_RDONLY | O_CLOEXEC | O_NONBLOCK | O_NOFOLLOW);
+    const int flags = append ? O_WRONLY | O_CREAT | O_APPEND : O_RDONLY;
+    const int fd = ::open(encoded.constData(), flags | O_CLOEXEC | O_NONBLOCK | O_NOFOLLOW, 0600);
     if (missing) *missing = fd < 0 && errno == ENOENT;
     if (fd < 0) return false;
     struct stat st{};
-    if (::fstat(fd, &st) != 0 || !S_ISREG(st.st_mode) || !f.open(fd, QIODevice::ReadOnly, QFileDevice::AutoCloseHandle)) {
+    const auto mode = append ? QIODevice::WriteOnly | QIODevice::Append : QIODevice::ReadOnly;
+    if (::fstat(fd, &st) != 0 || !S_ISREG(st.st_mode) || !f.open(fd, mode, QFileDevice::AutoCloseHandle)) {
         ::close(fd); return false;
     }
     return true;
+}
+
+QString savedLogPath(SavedLog source) {
+    return stateDir() + (source == SavedLog::Health ? QStringLiteral("/health.log") : QStringLiteral("/kernel.log"));
+}
+
+bool appendSavedLog(SavedLog source, const QByteArray &records, qint64 rotateAfter) {
+    if (records.isEmpty()) return true;
+    const QString path = savedLogPath(source);
+    if (!QDir().mkpath(stateDir())) return false;
+    QLockFile lock(path + QStringLiteral(".lock"));
+    if (!lock.tryLock()) return false;
+
+    QFile file;
+    if (!openRegular(file, path, nullptr, true)) return false;
+    if (file.size() > rotateAfter) {
+        const auto current = QFile::encodeName(path);
+        const auto rotated = current + ".1";
+        // Replacing the old rotation and moving the current file is one operation.
+        // A failed rename leaves both paths intact.
+        if (::rename(current.constData(), rotated.constData()) != 0) return false;
+        file.close();
+        if (!openRegular(file, path, nullptr, true)) return false;
+    }
+    return file.write(records) == records.size() && file.flush();
+}
+
+bool clearSavedLog(SavedLog source) {
+    const QString path = savedLogPath(source);
+    if (!QDir().mkpath(stateDir())) return false;
+    QLockFile lock(path + QStringLiteral(".lock"));
+    if (!lock.tryLock()) return false;
+    bool cleared = true;
+    for (const auto &file : {path, path + QStringLiteral(".1")}) {
+        const auto encoded = QFile::encodeName(file);
+        if (::unlink(encoded.constData()) != 0 && errno != ENOENT) cleared = false;
+    }
+    return cleared;
+}
+
+static bool sameVersion(const struct stat &before, const struct stat &after) {
+    return before.st_size == after.st_size
+        && before.st_mtim.tv_sec == after.st_mtim.tv_sec && before.st_mtim.tv_nsec == after.st_mtim.tv_nsec
+        && before.st_ctim.tv_sec == after.st_ctim.tv_sec && before.st_ctim.tv_nsec == after.st_ctim.tv_nsec;
 }
 
 std::optional<QByteArray> readRecord(const QString &path, qint64 limit) {
@@ -61,9 +109,7 @@ std::optional<QByteArray> readRecord(const QString &path, qint64 limit) {
     if (::fstat(f.handle(), &before) != 0 || before.st_size < 0 || before.st_size > limit) return std::nullopt;
     const auto data = f.read(limit + 1);
     if (f.error() != QFileDevice::NoError || data.size() != before.st_size || !f.atEnd()
-        || ::fstat(f.handle(), &after) != 0 || before.st_size != after.st_size
-        || before.st_mtim.tv_sec != after.st_mtim.tv_sec || before.st_mtim.tv_nsec != after.st_mtim.tv_nsec
-        || before.st_ctim.tv_sec != after.st_ctim.tv_sec || before.st_ctim.tv_nsec != after.st_ctim.tv_nsec) {
+        || ::fstat(f.handle(), &after) != 0 || !sameVersion(before, after)) {
         return std::nullopt;
     }
     return data;
@@ -108,26 +154,27 @@ std::array<LogFileCoverage, 2> scanSavedLog(
     std::array<LogFileCoverage, 2> files{};
     maxBytesPerFile = std::clamp<qint64>(maxBytesPerFile, 0, 16LL << 20);
     if (!maxBytesPerFile) return files;
-    const bool health = source == SavedLog::Health;
-    const QString name = health ? QStringLiteral("health.log") : QStringLiteral("kernel.log");
+    const QString path = savedLogPath(source);
     const QByteArray dayPrefix = day.isEmpty() ? QByteArray() : (day + QLatin1Char(' ')).toLatin1();
     for (int index = 0; index < 2; ++index) {
         const bool rotated = index == 0;
-        const QString file = rotated ? name + QStringLiteral(".1") : name;
+        const QString file = rotated ? path + QStringLiteral(".1") : path;
         auto &coverage = files.at(index);
         QFile f;
         bool missing = false;
-        if (!openRegular(f, stateDir() + QLatin1Char('/') + file, &missing)) {
+        if (!openRegular(f, file, &missing)) {
             coverage.state = missing ? LogFileState::Missing : LogFileState::Unreadable;
             continue;
         }
         coverage.state = LogFileState::Unreadable;
-        const qint64 size = f.size(), start = std::max<qint64>(0, size - maxBytesPerFile);
-        if (size < 0) continue;
+        struct stat before{}, after{};
+        if (::fstat(f.handle(), &before) != 0 || before.st_size < 0) continue;
+        const qint64 size = before.st_size, start = std::max<qint64>(0, size - maxBytesPerFile);
         char previous = '\n';
         if (start > 0 && (!f.seek(start - 1) || !f.getChar(&previous))) continue;
         const auto bytes = f.read(size - start);
-        if (f.error() != QFileDevice::NoError || bytes.size() != size - start) continue;
+        if (f.error() != QFileDevice::NoError || bytes.size() != size - start
+            || ::fstat(f.handle(), &after) != 0 || !sameVersion(before, after)) continue;
         coverage.state = LogFileState::Read;
         coverage.omittedBytes = start;
         coverage.incompleteTail = !bytes.isEmpty() && !bytes.endsWith('\n');

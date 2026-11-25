@@ -284,7 +284,8 @@ fn private_field_name(key: &str) -> bool {
         "ipv4address" | "ipv6address" | "serial" | "serialnumber" | "deviceserial" |
         "diskserial" | "idserial" | "idserialshort" | "uuid" | "gpuuuid" | "diskuuid" |
         "filesystemuuid" | "partuuid" | "assettag" | "wwid" | "idwwn" | "mountpoint" |
-        "password" | "passwd" | "apikey" | "accesstoken" | "refreshtoken" | "authorization" | "psk")
+        "password" | "passwd" | "apikey" | "accesstoken" | "refreshtoken" | "authorization" | "psk" |
+        "clientsecret" | "sessiontoken" | "bearertoken" | "privatekey" | "cookie" | "setcookie" | "proxyauthorization")
 }
 
 // Structured records can carry private fields without a textual label delimiter.
@@ -901,6 +902,9 @@ mod tests {
         assert!(serde_json::from_str::<Value>(&text).is_ok());
         assert!(mask_structured("{broken").is_none());
         assert_eq!(count, 3); assert!(!text.contains("secret-")); assert!(text.contains("3"));
+        let (text, count) = mask_structured(r#"{"headers":{"Proxy-Authorization":"secret-proxy","Set-Cookie":"secret-cookie"},"client_secret":"secret-client","session_token":"secret-session"}"#).unwrap();
+        assert_eq!(count, 4);
+        assert!(!text.contains("secret-"));
         let root = temp("bounded-capture"); let path = root.join("log");
         std::fs::write(&path, "serial=long-secret-without-newline").unwrap();
         assert_ne!(fetch(&path, 8, None).0, "included");

@@ -29,6 +29,7 @@ private:
     QWidget *pager_;
     QPushButton *previousPage_;
     QPushButton *nextPage_;
+    QPushButton *jumpPage_;
     QLabel *pageStatus_;
     const QString snapshotPath_;
     const qint64 pageBytes_;
