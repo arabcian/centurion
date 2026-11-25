@@ -3,6 +3,7 @@
 #include "userhelper.h"
 #include "workspacestate.h"
 
+#include <QCryptographicHash>
 #include <QDialogButtonBox>
 #include <QFontDatabase>
 #include <QHBoxLayout>
@@ -20,6 +21,7 @@
 #include <QRegularExpression>
 #include <QSplitter>
 #include <QSignalBlocker>
+#include <QHash>
 #include <QVBoxLayout>
 #include <limits>
 
@@ -53,25 +55,40 @@ ReportPreview::ReportPreview(const QJsonObject &preview, const QString &snapshot
     text_->setReadOnly(true);
     text_->setLineWrapMode(QPlainTextEdit::NoWrap);
     text_->setFont(QFontDatabase::systemFont(QFontDatabase::FixedFont));
-    for (const QJsonValue &f : preview.value(QStringLiteral("files")).toArray()) {
+    const auto files = preview.value(QStringLiteral("files")).toArray();
+    QHash<QString, int> nameCounts;
+    for (const auto &file : files) ++nameCounts[file.toObject().value(QStringLiteral("name")).toString()];
+    const QRegularExpression digestPattern(QStringLiteral("^[0-9a-f]{64}$"));
+    for (const QJsonValue &f : files) {
         const QJsonObject o = f.toObject();
+        const QString name = o.value(QStringLiteral("name")).toString();
         const QString status = o.value(QStringLiteral("status")).toString();
-        auto *it = new QListWidgetItem(o.value(QStringLiteral("name")).toString() + QStringLiteral("   ") + statusText(status));
-        const bool truncated = o.value(QStringLiteral("truncated")).toBool(true);
+        auto *it = new QListWidgetItem(name + QStringLiteral("   ") + statusText(status));
+        const auto truncatedValue = o.value(QStringLiteral("truncated"));
+        const bool truncated = truncatedValue.toBool(true);
         const QString digest = o.value(QStringLiteral("sha256")).toString();
+        const auto shown = o.value(QStringLiteral("text"));
+        const QByteArray shownBytes = shown.toString().toUtf8();
+        const auto bytes = o.value(QStringLiteral("bytes")).toInteger(-1);
+        const bool matchesPreview = truncated
+            ? !shownBytes.isEmpty() && bytes > shownBytes.size()
+            : bytes == shownBytes.size() && QCryptographicHash::hash(shownBytes, QCryptographicHash::Sha256).toHex() == digest.toLatin1();
         const bool eligible = preview.value(QStringLiteral("preview_schema")).toInt() == 2 && status == QLatin1String("included")
-            && QRegularExpression(QStringLiteral("^[0-9a-f]{64}$")).match(digest).hasMatch();
-        it->setData(TextRole, o.value(QStringLiteral("text")).toString());
+            && !name.isEmpty() && nameCounts.value(name) == 1 && shown.isString() && truncatedValue.isBool()
+            && digestPattern.match(digest).hasMatch() && matchesPreview;
+        it->setData(TextRole, shown.toString());
         it->setFlags(it->flags() & ~Qt::ItemIsUserCheckable);
         if (eligible) {
-            it->setData(NameRole, o.value(QStringLiteral("name")).toString());
+            it->setData(NameRole, name);
             it->setData(DigestRole, digest);
-            it->setData(BytesRole, o.value(QStringLiteral("bytes")).toInteger());
+            it->setData(BytesRole, bytes);
             it->setData(TruncatedRole, truncated);
             it->setFlags(it->flags() | Qt::ItemIsUserCheckable);
             it->setCheckState(truncated ? Qt::Unchecked : Qt::Checked);
             if (truncated && !canPage) it->setText(it->text() + tr(" (partial preview; full file if selected)"));
         }
+        if (status == QLatin1String("included") && !eligible)
+            it->setText(it->text() + tr(" (invalid preview metadata)"));
         if (status != QLatin1String("included")) it->setForeground(QColor(QLatin1String(theme::MUTED)));
         list_->addItem(it);
     }

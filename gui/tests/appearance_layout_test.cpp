@@ -53,6 +53,10 @@ int main(int argc, char **argv) {
     chart.setPoints(samples,QStringLiteral("ms"));
     CHECK(chart.viewRange().second==99999);
     chart.setViewRange(200,400); CHECK(chart.viewRange().first==200 && chart.viewRange().second==400);
+    auto shifted = samples.mid(20);
+    chart.setPoints(shifted, QStringLiteral("ms"));
+    CHECK(chart.viewRange().first == 181 && chart.viewRange().second == 381);
+    chart.setPoints(samples, QStringLiteral("ms"));
     chart.setViewRange(-20,200000); CHECK(chart.viewRange().first==0 && chart.viewRange().second==99999);
     chart.resize(800,500); chart.show(); app.processEvents(); CHECK(!chart.grab().isNull());
     chart.setViewRange(999999,999999); CHECK(chart.viewRange().second-chart.viewRange().first==1);
@@ -68,6 +72,10 @@ int main(int argc, char **argv) {
     bar.setViewRange(100,200); CHECK(bar.viewRange().first==100 && bar.viewRange().second==200);
     bar.setViewRange(999999,999999); CHECK(bar.viewRange().first==99999 && bar.viewRange().second==100000);
     bar.setBars({}); CHECK(bar.viewRange().first==0 && bar.viewRange().second==0);
+    bar.setBars({{QStringLiteral("a"), 1, {}}, {QStringLiteral("b"), 2, {}}, {QStringLiteral("c"), 3, {}}});
+    bar.setViewRange(1, 3);
+    bar.setBars({{QStringLiteral("b"), 4, {}}, {QStringLiteral("c"), 5, {}}, {QStringLiteral("d"), 6, {}}});
+    CHECK(bar.viewRange().first == 0 && bar.viewRange().second == 2);
 
     const QString csvPath = tmp.filePath(QStringLiteral("samples.csv"));
     QTimer picker;
@@ -112,6 +120,9 @@ int main(int argc, char **argv) {
     CHECK(days.viewRange().first==1 && days.viewRange().second==2);
     CHECK(days.accessibleDescription().contains(QStringLiteral("2026-01-03")));
     CHECK(!days.accessibleDescription().contains(QStringLiteral("2026-01-04")));
+    QKeyEvent pageDown(QEvent::KeyPress, Qt::Key_PageDown, Qt::NoModifier);
+    QCoreApplication::sendEvent(&days, &pageDown);
+    CHECK(days.viewRange().first == 2 && days.viewRange().second == 3 && dayClicks == 2);
     days.setDays({});CHECK(days.viewRange().first==0 && days.viewRange().second==0);
     return 0;
 }

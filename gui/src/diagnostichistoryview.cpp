@@ -217,7 +217,9 @@ void open(QWidget *owner) {
         right->setEnabled(right->count() > 0);
         diff->setEnabled(right->currentIndex() >= 0);
     };
+    QString desiredSelection;
     QObject::connect(tree,&QTreeWidget::currentItemChanged,&dlg,[&](QTreeWidgetItem *item){
+        if (item) desiredSelection = item->data(0, recordIdentityRole).toString();
         const int i=item?item->data(0,Qt::UserRole).toInt():-1;
         if(i>=0 && i<archive.entries.size()) detail->setPlainText(describe(archive.entries.at(i)));
         else if(i<=-2 && -2-i<events.size()) {
@@ -262,8 +264,8 @@ void open(QWidget *owner) {
                     if (n >= 0) ++shownReports;
                     else ++shownEvents;
                 }
-                item->setHidden(!match);any|=match;
                 if(!match&&tree->currentItem()==item) {tree->setCurrentItem(nullptr);detail->clear();}
+                item->setHidden(!match);any|=match;
             }
             group->setHidden(!any);
             if (any) {
@@ -273,10 +275,12 @@ void open(QWidget *owner) {
         }
         status->setText(filtering ? statusText + QLatin1Char('\n')
             + tr("Matching filters: %1 snapshots and %2 saved events.").arg(shownReports).arg(shownEvents) : statusText);
+        if (!tree->currentItem()) workspace::restoreSelection(tree, desiredSelection, recordIdentityRole);
     };
     const auto key=workspace::key(theme::experimentalEnabled(),QStringLiteral("health/cross-boot-history"));
     workspace::rememberSplitter(split,key+QStringLiteral("/split"));
     const auto saved = workspace::read(key);
+    desiredSelection = saved.value("selected_record").toString();
     for (const auto &value : saved.value("collapsed_groups").toArray()) {
         const auto id = value.toString();
         if (groups.contains(id) && collapsedGroups.size() < 128) collapsedGroups.insert(id);
@@ -297,7 +301,6 @@ void open(QWidget *owner) {
     QObject::connect(sources, &QComboBox::currentIndexChanged, &dlg, applyFilter);
     QObject::connect(boots, &QComboBox::currentIndexChanged, &dlg, applyFilter);
     applyFilter();
-    workspace::restoreSelection(tree, saved.value("selected_record").toString(), recordIdentityRole);
     QObject::connect(tree, &QTreeWidget::itemCollapsed, &dlg, [&](QTreeWidgetItem *item) {
         if (const auto id = item->data(0, groupIdentityRole).toString(); !id.isEmpty()) collapsedGroups.insert(id);
     });
@@ -306,7 +309,6 @@ void open(QWidget *owner) {
     });
     auto *buttons=new QDialogButtonBox(QDialogButtonBox::Close);QObject::connect(buttons,&QDialogButtonBox::rejected,&dlg,&QDialog::reject);layout->addWidget(buttons);
     dlg.exec();
-    const auto *current = tree->currentItem();
     QJsonArray collapsed;
     for (auto it = groups.cbegin(); it != groups.cend() && collapsed.size() < 128; ++it)
         if (collapsedGroups.contains(it.key())) collapsed.append(it.key());
@@ -316,6 +318,6 @@ void open(QWidget *owner) {
                                       {"compare_first", left->currentData(recordIdentityRole).toString()},
                                       {"compare_second", right->currentData(recordIdentityRole).toString()},
                                       {"collapsed_groups", collapsed},
-                                      {"selected_record", current ? current->data(0, recordIdentityRole).toString() : QString()}});
+                                      {"selected_record", desiredSelection}});
 }
 }

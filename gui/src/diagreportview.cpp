@@ -16,6 +16,7 @@
 #include <QItemSelectionModel>
 #include "diagreportview.h"
 #include "diagnostichistoryview.h"
+#include "diagnostichistorydata.h"
 #include <QInputDialog>
 #include "workspacestate.h"
 #include "diagsources.h"
@@ -1114,12 +1115,13 @@ void DiagReportView::archiveWorkspace() {
         QSet<QString> ids;
         for (const auto &v : entries) {
             const auto e = v.toObject();
-            if (e.value(QStringLiteral("id")).toString().isEmpty() || !e.value(QStringLiteral("snapshot")).isObject()) return std::nullopt;
-            const QString id = e.value(QStringLiteral("id")).toString();
+            const QString id = diagnostichistory::full(e.value(QStringLiteral("id")).toString());
+            if (id.isEmpty()) return std::nullopt;
             if (ids.contains(id)) return std::nullopt;
             ids.insert(id);
             const auto snap = e.value(QStringLiteral("snapshot")).toObject();
-            if (snap.value(QStringLiteral("version")).toInt() != 1 || snap.value(QStringLiteral("code")) != captured.value(QStringLiteral("code")) || !snap.value(QStringLiteral("records")).isArray() || !diag::archiveDiff(snap, snap).isEmpty()) return std::nullopt;
+            if (snap.value(QStringLiteral("code")) != captured.value(QStringLiteral("code"))
+                || !diagnostichistory::validSnapshot(snap)) return std::nullopt;
         }
         return entries;
     };
@@ -1147,14 +1149,15 @@ void DiagReportView::archiveWorkspace() {
             + (diff.isEmpty() ? tr("No structured differences.") : diff.join(QLatin1Char('\n')))
             + QStringLiteral("\n\n") + tr("Note: %1").arg(entry.value("note").toString()));
     };
-    auto refill = [&] {
+    auto refill = [&](int preferredIndex) {
         const QSignalBlocker block(list); list->clear();
         for (const auto &v : *entries) { const auto e = v.toObject(); list->addItem(e.value(QStringLiteral("time")).toString() + QStringLiteral(" · ") + e.value(QStringLiteral("boot")).toString(), e.value(QStringLiteral("id")).toString()); }
-        list->setCurrentIndex(list->count() - 1); render();
+        list->setCurrentIndex(std::min(preferredIndex, list->count() - 1)); render();
     };
     connect(list, &QComboBox::currentIndexChanged, &dlg, [&](int) { render(); });
     auto change = [&](bool adding) {
         const QString selected = list->currentData().toString();
+        const int selectedIndex = list->currentIndex();
         if (!adding && (selected.isEmpty() || QMessageBox::question(&dlg, tr("Diagnostic History"), tr("Delete only this archived snapshot?")) != QMessageBox::Yes)) return;
         QLockFile lock(path + QStringLiteral(".lock"));
         if (!lock.tryLock(0)) { QMessageBox::warning(&dlg, tr("Diagnostic History"), tr("History is currently in use.")); return; }
@@ -1170,12 +1173,21 @@ void DiagReportView::archiveWorkspace() {
             if (latest->size() >= 20) { QMessageBox::information(&dlg, tr("Diagnostic History"), tr("History is full. Delete an old snapshot first.")); return; }
             latest->append(QJsonObject{{"id", QUuid::createUuid().toString(QUuid::WithoutBraces)}, {"time", capturedAt}, {"boot", boot}, {"locale", locale}, {"snapshot", captured}});
         } else {
-            for (qsizetype i = latest->size(); i > 0; --i) if (latest->at(i-1).toObject().value(QStringLiteral("id")).toString() == selected) latest->removeAt(i-1);
+            const auto count = latest->size();
+            for (qsizetype i = count; i > 0; --i)
+                if (latest->at(i-1).toObject().value(QStringLiteral("id")).toString() == selected) latest->removeAt(i-1);
+            if (latest->size() == count) {
+                lock.unlock();
+                entries = latest;
+                refill(selectedIndex);
+                QMessageBox::information(&dlg, tr("Diagnostic History"), tr("This snapshot is no longer in the archive."));
+                return;
+            }
         }
         const QString error = diagsrc::saveJson(path, QJsonObject{{"version", 1}, {"entries", *latest}});
         lock.unlock();
         if (!error.isEmpty()) { QMessageBox::warning(&dlg, tr("Diagnostic History"), error); return; }
-        entries = latest; refill();
+        entries = latest; refill(adding ? int(entries->size()) - 1 : selectedIndex);
     };
     connect(save, &QPushButton::clicked, &dlg, [&] { change(true); });
     connect(remove, &QPushButton::clicked, &dlg, [&] { change(false); });
@@ -1194,11 +1206,11 @@ void DiagReportView::archiveWorkspace() {
             e.insert("note",diag::redactPrivateText(note));latest->replace(i,e);
             const auto error=diagsrc::saveJson(path,QJsonObject{{"version",1},{"entries",*latest}});
             if(!error.isEmpty()) {QMessageBox::warning(&dlg,tr("Diagnostic History"),error);return;}
-            entries=latest;refill();list->setCurrentIndex(list->findData(id));return;
+            entries=latest;refill(int(i));return;
         }
         QMessageBox::warning(&dlg,tr("Diagnostic History"),tr("History changed or is damaged."));
     });
-    refill(); dlg.exec();
+    refill(int(entries->size()) - 1); dlg.exec();
 }
 
 void DiagReportView::evidenceWorkspace() {

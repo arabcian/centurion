@@ -6368,6 +6368,10 @@ Seçilen dosyalar önizlemeyle eşleşti. Otomatik anonimleştirme kesin sonuç 
     <context>
         <name>ReportPreview</name>
         <message>
+            <source> (invalid preview metadata)</source>
+            <translation> (geçersiz önizleme bilgisi)</translation>
+        </message>
+        <message>
             <source>Go to page…</source>
             <translation>Sayfaya git…</translation>
         </message>
@@ -24017,6 +24021,10 @@ Günlük okunamıyor, bu yüzden onu tutmak hiçbir şeyi korumaz ve yalnızca b
 </context>
     <context>
         <name>DiagReportView</name>
+        <message>
+            <source>This snapshot is no longer in the archive.</source>
+            <translation>Bu anlık görüntü artık arşivde yok.</translation>
+        </message>
         <message><source>Inspect selected byte offset…</source><translation>Seçili bayt konumunu incele…</translation></message>
         <message>
             <source>Captured report</source>

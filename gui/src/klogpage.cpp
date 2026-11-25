@@ -433,7 +433,8 @@ void KlogPage::render() {
         const std::optional<klogview::Line> p = klogview::parse(l);
         if (!p) return false;
         if (focused) { context.append(*p); return true; }
-        if (!firstBoot.contains(p->key)) firstBoot.insert(p->key, p->boot);
+        const bool identified = klogview::fullBootId(p->boot);
+        if (identified && !firstBoot.contains(p->key)) firstBoot.insert(p->key, p->boot);
         if (!all && (!klogview::fullBootId(boot) || p->boot != boot)) return true;
         if (p->level > levelMax) return true;
         if (!matches(l) || !valid) return true;
@@ -441,7 +442,7 @@ void KlogPage::render() {
         if (!typed.kind.isEmpty() || typed.code>=0) event=eventinfo::classifyLine(p->msg);
         if (!typed.matches(*p,event.value(QStringLiteral("kind")).toString(),event.value(QStringLiteral("code")).toInt(-1),devicePattern)) return true;
         if (muted_.contains(p->key) && !showMuted_->isChecked()) { ++hiddenMuted_; return true; }
-        if (onlyNew_->isChecked() && firstBoot.value(p->key)!=p->boot) return true;
+        if (onlyNew_->isChecked() && identified && firstBoot.value(p->key)!=p->boot) return true;
         ++matching;
         shown.push_back(*p);
         if (shown.size() > MAX_SHOWN_LINES) { shown.pop_front(); tailLimited_ = true; }

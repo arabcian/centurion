@@ -38,6 +38,17 @@ int barRowHeight(const QFontMetrics &fm) { return std::max(20, fm.height() + 8);
 
 QColor colorFrom(const char *hex) { return QColor(hex); }
 
+template<typename Items, typename Predicate>
+qsizetype uniqueIndex(const Items &items, Predicate matches) {
+    qsizetype found = -1;
+    for (qsizetype i = 0; i < items.size(); ++i) {
+        if (!matches(items.at(i))) continue;
+        if (found >= 0) return -1;
+        found = i;
+    }
+    return found;
+}
+
 // A snapshot model, not one QWidget/item per sample; opening a large table is bounded by the data copy.
 class SampleModel final : public QAbstractTableModel {
 public:
@@ -177,6 +188,9 @@ void exportRows(QWidget *parent,const QString &header,const QList<QStringList> &
 LineChart::LineChart(QWidget *parent) : QWidget(parent) { setAccessibleName(QCoreApplication::translate("LineChart", "Line chart")); setMouseTracking(true); setFocusPolicy(Qt::StrongFocus); }
 
 void LineChart::setPoints(const QVector<Point> &points, const QString &yUnit) {
+    const bool narrowed = yUnit == unit_ && begin_ < end_ && (begin_ > 0 || end_ < points_.size());
+    const Point oldFirst = narrowed ? points_.at(begin_) : Point{};
+    const Point oldLast = narrowed ? points_.at(end_ - 1) : Point{};
     points_.clear();
     bool gap = false;
     for (const auto &pt : points) {
@@ -185,6 +199,14 @@ void LineChart::setPoints(const QVector<Point> &points, const QString &yUnit) {
         points_.append(copy); gap = false;
     }
     unit_ = yUnit;
+    if (narrowed) {
+        const auto first = uniqueIndex(points_, [&](const Point &p) { return p.x == oldFirst.x && p.label == oldFirst.label; });
+        const auto last = uniqueIndex(points_, [&](const Point &p) { return p.x == oldLast.x && p.label == oldLast.label; });
+        if (first >= 0 && last >= first) {
+            setViewRange(first, last + 1);
+            return;
+        }
+    }
     resetView();
 }
 
@@ -425,9 +447,25 @@ BarChart::BarChart(QWidget *parent) : QWidget(parent) {
 }
 
 void BarChart::setBars(const QVector<Bar> &bars) {
+    const qsizetype count = end_ - begin_;
+    QString anchor;
+    if (count > 0 && (begin_ > 0 || count < std::min<qsizetype>(128, bars_.size()))) {
+        const QString candidate = bars_.at(begin_).label;
+        if (uniqueIndex(bars_, [&](const Bar &bar) { return bar.label == candidate; }) >= 0)
+            anchor = candidate;
+    }
     bars_ = bars;
     minV_ = maxV_ = 0;
     for (const auto &b : bars_) if (std::isfinite(b.value)) { minV_ = std::min(minV_,b.value); maxV_ = std::max(maxV_,b.value); }
+    if (!anchor.isEmpty()) {
+        const auto index = uniqueIndex(bars_, [&](const Bar &bar) { return bar.label == anchor; });
+        if (index >= 0) {
+            const auto length = std::min(count, bars_.size());
+            const auto first = std::min(index, bars_.size() - length);
+            setViewRange(first, first + length);
+            return;
+        }
+    }
     setViewRange(0,bars_.size());
 }
 
@@ -684,6 +722,14 @@ void DayBars::mouseMoveEvent(QMouseEvent *e) {
 
 void DayBars::keyPressEvent(QKeyEvent *e) {
     const int key = e->key();
+    if (begin_ < end_ && (key == Qt::Key_PageUp || key == Qt::Key_PageDown)) {
+        const auto count = end_ - begin_;
+        const auto first = std::clamp(begin_ + (key == Qt::Key_PageUp ? -count : count),
+            qsizetype(0), days_.size() - count);
+        setViewRange(first, first + count);
+        e->accept();
+        return;
+    }
     const bool activate = key == Qt::Key_Return || key == Qt::Key_Enter || key == Qt::Key_Space;
     if (begin_ >= end_ || (!activate && key != Qt::Key_Left && key != Qt::Key_Right && key != Qt::Key_Home && key != Qt::Key_End)) {
         QWidget::keyPressEvent(e); return;

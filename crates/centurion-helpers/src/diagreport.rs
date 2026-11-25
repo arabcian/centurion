@@ -199,26 +199,27 @@ fn mask_ipv4(text: &str) -> (String, u64) {
     (out, n)
 }
 
-/// 2001:db8::1, fe80::1c2d:3e4f:5a6b:7c8d → <ip>. A token of hex digits and colons that parses as an IPv6
+/// 2001:db8::1, ::ffff:192.168.1.23 → <ip>. A token that parses as an IPv6
 /// address; clock times ("10:00:00") and PCI addresses ("0000:01:00.0") have too few groups to be one.
-/// Runs after mask_macs and mask_ipv4, so what is left of a MAC or an IPv4-mapped address is not looked at.
+/// Runs after MAC masking and before IPv4 masking so mapped addresses stay one token.
 fn mask_ipv6(text: &str) -> (String, u64) {
     let b = text.as_bytes();
-    let part = |c: u8| c.is_ascii_hexdigit() || c == b':';
+    let part = |c: u8| c.is_ascii_hexdigit() || matches!(c, b':' | b'.');
     let mut out = String::with_capacity(text.len());
     let (mut i, mut n) = (0, 0);
     while i < b.len() {
         if part(b[i]) && (i == 0 || !(b[i - 1].is_ascii_alphanumeric() || b[i - 1] == b'.')) {
             let end = i + b[i..].iter().take_while(|&&c| part(c)).count();
-            // Hex digits and colons only: ASCII, so `end` is a character boundary.
-            let token = &text[i..end];
+            let candidate = &text[i..end];
+            let token = candidate.trim_end_matches('.');
             let ends = b.get(end).map_or(true, |c| !c.is_ascii_alphanumeric());
             let digits = token.bytes().any(|c| c != b':');  // a bare "::" is punctuation, not an address
             if ends && digits && token.matches(':').count() >= 2 && token.parse::<std::net::Ipv6Addr>().is_ok() {
                 out.push_str("<ip>");
+                out.push_str(&candidate[token.len()..]);
                 n += 1;
             } else {
-                out.push_str(token);
+                out.push_str(candidate);
             }
             i = end;
             continue;
@@ -339,8 +340,8 @@ pub fn sanitize(text: &str) -> (String, u64) {
     let (tagged, boots) = mask_boot_tags(&scrubbed);
     let (a, serials) = mask_serials(&tagged);
     let (b, macs) = mask_macs(&a);
-    let (c, ips) = mask_ipv4(&b);
-    let (d, ips6) = mask_ipv6(&c);
+    let (c, ips6) = mask_ipv6(&b);
+    let (d, ips) = mask_ipv4(&c);
     let (e, homes) = mask_home(&d);
     (e, addr + boots + serials + macs + ips + ips6 + homes)
 }
@@ -555,7 +556,17 @@ pub fn write_archive(entries: &[Entry], root: &str, out: &Path) -> Result<u64, S
     write_archive_with_policy(entries, root, out, true)
 }
 
+fn report_component(name: &str) -> bool {
+    name.len() <= 128 && name.as_bytes().first().is_some_and(u8::is_ascii_alphanumeric)
+        && name.bytes().all(|b| b.is_ascii_alphanumeric() || b".-".contains(&b))
+}
+
 fn write_archive_with_policy(entries: &[Entry], root: &str, out: &Path, replace_existing: bool) -> Result<u64, String> {
+    let mut names = std::collections::BTreeSet::new();
+    if !report_component(root) || entries.iter().filter(|e| e.status == "included")
+        .any(|e| !report_component(&e.name) || !names.insert(e.name.as_str())) {
+        return Err("invalid or duplicate report entry name".to_owned());
+    }
     let name = out.file_name().and_then(|n| n.to_str()).unwrap_or("");
     if !out.is_absolute() || !name.ends_with(".tar.gz") {
         return Err("the report must be saved to an absolute path ending in .tar.gz".to_owned());
@@ -656,9 +667,7 @@ fn thaw_entries(path: &Path) -> Option<Vec<Entry>> {
     if entries.len() > 32 { return None; }
     let mut names = std::collections::BTreeSet::new();
     for (name, _) in &entries {
-        if name.is_empty() || name.len() > 128 || name.starts_with('.')
-            || !name.bytes().all(|b| b.is_ascii_alphanumeric() || b".-".contains(&b))
-            || !names.insert(name) {
+        if !report_component(name) || !names.insert(name) {
             return None;
         }
     }
@@ -803,9 +812,9 @@ mod tests {
                      "CPU:2 (1a:44:0) MC1_STATUS", "boot=abcdef12 seq=7", "::", "dead:beef", "ünïcode: ok"] {
             assert_eq!(mask_ipv6(keep), (keep.to_owned(), 0), "{keep}");
         }
-        // Through the whole chain: an IPv4-mapped address leaves nothing of the IPv4 part behind.
+        // Through the whole chain: an IPv4-mapped address is masked as one token.
         let (s, n) = sanitize("peer ::ffff:192.168.1.23 via fe80::1");
-        assert!(!s.contains("192.168") && !s.contains("fe80"), "{s}");
+        assert_eq!(s, "peer <ip> via <ip>");
         assert_eq!(n, 2);
     }
 
