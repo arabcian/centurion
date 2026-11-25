@@ -40,7 +40,7 @@ static QJsonArray schedSysctls() {
 
 KernelParamsPage::KernelParamsPage(QWidget *parent) : QWidget(parent) {
     auto *lay = new QVBoxLayout(this);
-    auto *about = new QLabel(tr("Live values of kernel settings, including the root-only debugfs ones (read-only: nothing is changed here)."));
+    auto *about = new QLabel(tr("Live values of kernel settings, including the root-only debugfs ones (read-only: nothing is changed here). The last column names the Centurion knob that sets a row, if any."));
     about->setWordWrap(true);
     about->setStyleSheet(QStringLiteral("color:%1;").arg(theme::FG_DIM));
     lay->addWidget(about);
@@ -89,6 +89,8 @@ KernelParamsPage::KernelParamsPage(QWidget *parent) : QWidget(parent) {
     tree_->horizontalHeader()->setSectionResizeMode(0, QHeaderView::Interactive);
     tree_->horizontalHeader()->resizeSection(0, 520);
     tree_->horizontalHeader()->setSectionResizeMode(1, QHeaderView::Stretch);
+    tree_->horizontalHeader()->setSectionResizeMode(3, QHeaderView::Interactive);
+    tree_->horizontalHeader()->resizeSection(3, 280);
     tree_->setSortingEnabled(true); tree_->sortByColumn(0,Qt::AscendingOrder);
     lay->addWidget(tree_, 1);
     const auto stateKey=workspace::key(theme::experimentalEnabled(),QStringLiteral("health/kernel-parameters"));
@@ -99,7 +101,7 @@ KernelParamsPage::KernelParamsPage(QWidget *parent) : QWidget(parent) {
     const auto width=saved.value(QStringLiteral("width")).toInt(520);
     if(width>=40 && width<=4000) tree_->setColumnWidth(0,width);
     const auto sort=saved.value(QStringLiteral("sort")).toInt(0);
-    if(sort>=0 && sort<3) tree_->sortByColumn(sort,saved.value(QStringLiteral("descending")).toBool()?Qt::DescendingOrder:Qt::AscendingOrder);
+    if(sort>=0 && sort<4) tree_->sortByColumn(sort,saved.value(QStringLiteral("descending")).toBool()?Qt::DescendingOrder:Qt::AscendingOrder);
     applyFilter();
     const auto saveState=[this,stateKey] {
         workspace::write(stateKey,QJsonObject{{"scope",scope_->currentData().toString()},{"filter",filter_->text()},

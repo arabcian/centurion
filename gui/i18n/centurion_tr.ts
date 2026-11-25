@@ -24779,8 +24779,8 @@ Satırlar sıralamadan bağımsız karşılaştırılır; değişen satırlar si
     <context>
         <name>KernelParamsPage</name>
         <message>
-            <source>Live values of kernel settings, including the root-only debugfs ones (read-only: nothing is changed here).</source>
-            <translation>Çekirdek ayarlarının canlı değerleri; yalnızca root'un okuyabildiği debugfs ayarları dahil (salt okunur: burada hiçbir şey değiştirilmez).</translation>
+            <source>Live values of kernel settings, including the root-only debugfs ones (read-only: nothing is changed here). The last column names the Centurion knob that sets a row, if any.</source>
+            <translation>Çekirdek ayarlarının canlı değerleri; yalnızca root'un okuyabildiği debugfs ayarları dahil (salt okunur: burada hiçbir şey değiştirilmez). Son sütun, bir satırı ayarlayan Centurion ayarını (varsa) gösterir.</translation>
         </message>
         <message>
             <source>Scheduler (EEVDF)</source>
@@ -24862,6 +24862,16 @@ Satırlar sıralamadan bağımsız karşılaştırılır; değişen satırlar si
         <message><source>Saved %1 captured settings.</source><translation>Yakalanan %1 ayar kaydedildi.</translation></message>
             <message><source>Invalid or duplicate setting paths in capture.</source><translation>Yakalamada geçersiz veya yinelenen ayar yolları var.</translation></message>
         <message><source>Reading… previous capture is shown until the new read completes.</source><translation>Okunuyor… yeni okuma tamamlanana kadar önceki yakalama gösteriliyor.</translation></message>
+        <message>
+            <source>Centurion knob</source>
+            <translation>Centurion ayarı</translation>
+        </message>
+        <message numerus="yes">
+            <source>%n scheduler feature bits</source>
+            <translation>
+                <numerusform>%n zamanlayıcı özellik biti</numerusform>
+            </translation>
+        </message>
     </context>
     <context>
         <name>toolcatalog</name>

@@ -25,5 +25,11 @@ int main(int argc,char **argv) {
     proxy.setFilterFixedString(QStringLiteral("second"));CHECK(proxy.rowCount()==1);
     rows.removeAt(0);rows.append(row(10000));CHECK(m.replace(rows));CHECK(keep.isValid()&&inserted==1&&removed==1&&!resets);
     rows.append(row(23));CHECK(!m.replace(rows));CHECK(m.rowCount()==10000&&keep.isValid());
+    // The knob column: exact files, per-policy wildcards, every feature bit of sched/features, nothing for unknown files.
+    CHECK(knobsForPath(QStringLiteral("/sys/kernel/debug/sched/base_slice_ns"))==QStringList{QStringLiteral("sched.base_slice_ns")});
+    CHECK(knobsForPath(QStringLiteral("/sys/devices/system/cpu/cpufreq/policy12/scaling_governor")).contains(QStringLiteral("cpu.governor")));
+    CHECK(knobsForPath(QStringLiteral("/sys/devices/system/cpu/cpufreq/policy12/x/scaling_governor")).isEmpty());
+    CHECK(knobsForPath(QStringLiteral("/sys/kernel/debug/sched/features")).size()>20);
+    CHECK(knobsForPath(QStringLiteral("/sys/kernel/debug/sched/verbose")).isEmpty());
     return EXIT_SUCCESS;
 }
