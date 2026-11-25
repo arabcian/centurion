@@ -192,7 +192,9 @@ private:
     bool incomplete_ = false;
     int deferredInFlight_ = 0;
     bool startupPending_ = false;  // login scene waiting for the first readable power source
+    bool loginAfterCalibration_ = false;
     bool deferred_ = false;  // a power-source switch waiting for the game to end
+    bool orphanPruneActive_ = false;
     bool calDeferred_ = false;  // a switch waiting for centurion-calibrate to release its hold
     bool nextAuto_ = false, pendingAuto_ = false, autoApply_ = false;  // the apply being started / queued / running came from automatic switching
     QString expectedProfile_;   // platform profile of the scene that was just applied ("" = scene does not set one)

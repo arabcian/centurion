@@ -729,7 +729,14 @@ void DayBars::paintEvent(QPaintEvent *) {
 
 void DayBars::mousePressEvent(QMouseEvent *e) {
     const int i = columnAt(e->position());
-    if (e->button()==Qt::LeftButton && i >= 0) Q_EMIT dayClicked(days_[i].date);
+    if (e->button() == Qt::LeftButton && i >= 0) {
+        const auto date = days_.at(i).date;
+        setSelected(date);
+        Q_EMIT dayClicked(date);
+        e->accept();
+        return;
+    }
+    QWidget::mousePressEvent(e);
 }
 
 void DayBars::mouseMoveEvent(QMouseEvent *e) {
@@ -754,13 +761,14 @@ void DayBars::keyPressEvent(QKeyEvent *e) {
     if (begin_ >= end_ || (!activate && key != Qt::Key_Left && key != Qt::Key_Right && key != Qt::Key_Home && key != Qt::Key_End)) {
         QWidget::keyPressEvent(e); return;
     }
+    if (activate && e->isAutoRepeat()) { e->accept(); return; }
     qsizetype i = begin_;
     while (i < end_ && days_[i].date != selected_) ++i;
     if (key == Qt::Key_End) i = end_ - 1;
     else if (key == Qt::Key_Home || i == end_) i = begin_;
     else if (!activate) i = std::clamp(i + (key == Qt::Key_Left ? -1 : 1), begin_, end_ - 1);
     const QString date = days_.at(i).date;
-    if (date != selected_ || (activate && !e->isAutoRepeat())) {
+    if (date != selected_ || activate) {
         setSelected(date);
         Q_EMIT dayClicked(date);
     }
@@ -774,9 +782,19 @@ void DayBars::setViewRange(qsizetype begin,qsizetype end) {
     update();
 }
 void DayBars::wheelEvent(QWheelEvent *e) {
-    if(!(e->modifiers()&Qt::ControlModifier)||days_.isEmpty()||!e->angleDelta().y()){e->ignore();return;}
-    const auto count=end_-begin_;const auto length=std::clamp(e->angleDelta().y()>0?count*3/4:count+std::max(qsizetype(1),count/3),qsizetype(1),days_.size());
-    const auto first=std::clamp(begin_+(count-length)/2,qsizetype(0),days_.size()-length);setViewRange(first,first+length);e->accept();
+    if (!(e->modifiers() & Qt::ControlModifier) || begin_ >= end_ || !e->angleDelta().y()) { e->ignore(); return; }
+    const auto count = end_ - begin_;
+    const auto length = std::clamp(e->angleDelta().y() > 0 ? count * 3 / 4 : count + std::max(qsizetype(1), count / 3),
+                                   qsizetype(1), days_.size());
+    if (length != count) {
+        const auto anchor = columnAt(e->position());
+        const double fraction = anchor >= 0 && count > 1 ? double(anchor - begin_) / double(count - 1) : 0.5;
+        const auto first = std::clamp(begin_ + qsizetype(std::llround((count - length) * fraction)),
+                                      qsizetype(0), days_.size() - length);
+        setToolTip(QString());
+        setViewRange(first, first + length);
+    }
+    e->accept();
 }
 void DayBars::contextMenuEvent(QContextMenuEvent *e) {
     if(days_.isEmpty())return;

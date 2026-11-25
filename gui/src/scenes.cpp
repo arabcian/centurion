@@ -25,6 +25,7 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QKeySequence>
+#include <QLockFile>
 #include <QProcess>
 #include <QRegularExpression>
 #include <QSaveFile>
@@ -417,17 +418,22 @@ QString bootGuardReason() {
 }
 
 static QString loginGuardFile() {
-    const QString base = qEnvironmentVariableIsEmpty("XDG_STATE_HOME")
-        ? QDir::homePath() + QStringLiteral("/.local/state") : qEnvironmentVariable("XDG_STATE_HOME");
-    return base + QStringLiteral("/centurion/login-guard.json");
+    return diagsrc::stateDir() + QStringLiteral("/login-guard.json");
 }
 
 QString loginGuardReason() {
     const QJsonObject o = readObject(loginGuardFile());
-    return o.value("tripped").toBool() ? o.value("reason").toString() : QString();
+    if (!o.value("tripped").toBool()) return {};
+    const auto reason = o.value("reason").toString();
+    return reason.isEmpty() ? QStringLiteral("login scenes are paused") : reason;
 }
 
-void resumeLoginGuard() { writeObject(loginGuardFile(), {{"state", "ok"}, {"boot_id", bootId()}}, nullptr); }
+void resumeLoginGuard() {
+    const auto file = loginGuardFile();
+    if (!QDir().mkpath(QFileInfo(file).absolutePath())) return;
+    QLockFile lock(file + QStringLiteral(".lock"));
+    if (lock.tryLock()) writeObject(file, {{"state", "ok"}, {"boot_id", bootId()}}, nullptr);
+}
 
 } // namespace scenes
 
@@ -520,11 +526,15 @@ SceneEngine::SceneEngine(MainWindow *win) : QObject(win), win_(win), auto_(loadA
 static constexpr int LOGIN_WINDOW_MS = 120000;
 
 void SceneEngine::startupApply() {
-    if (!ac_) ac_ = onAc();
+    if (const auto source = onAc(); source && source != ac_) {
+        ac_ = source;
+        Q_EMIT powerSourceChanged(*ac_);
+    }
     if (!auto_.enabled || auto_.paused) return;
     // A calibration scheduled for this boot holds the machine at its boot state: the login scene waits.
     if (calibrationHold()) {
         calDeferred_ = true;
+        loginAfterCalibration_ = true;
         Q_EMIT finished(QString(), true, {QStringLiteral("a calibration holds the machine at its boot state — the login scene is applied when it ends")});
         retunePoll();
         return;
@@ -532,9 +542,17 @@ void SceneEngine::startupApply() {
     // Source still unreadable (EC busy at login): the login scene used to be dropped for good here.
     // pollPower() runs this again at the first successful read (and polls fast until then).
     if (!ac_) { startupPending_ = true; retunePoll(); return; }
+    if (!validName(*ac_ ? auto_.onAc : auto_.onBattery)) return;
     const QString file = loginGuardFile();
-    QJsonObject g = readObject(file);
     const QString cur = bootId();
+    const QString attempt = QUuid::createUuid().toString(QUuid::WithoutBraces);
+    const auto guardFailed = [this] {
+        Q_EMIT finished(QString(), false, {QStringLiteral("automatic scene at login skipped — could not arm the login guard")});
+    };
+    if (cur.isEmpty() || !QDir().mkpath(QFileInfo(file).absolutePath())) { guardFailed(); return; }
+    QLockFile lock(file + QStringLiteral(".lock"));
+    if (!lock.tryLock()) { guardFailed(); return; }
+    QJsonObject g = readObject(file);
     // A login that was still inside its window when the machine went down
     // trips the guard -- unless that boot is known to have shut down cleanly
     // (centurion-boot-guard records it at service stop): a normal reboot or poweroff
@@ -548,19 +566,30 @@ void SceneEngine::startupApply() {
         g["reason"] = QStringLiteral("the last login ended without a clean shutdown within 2 minutes of applying its scene");
         writeObject(file, g, nullptr);
     }
-    QString why = g.value("tripped").toBool() ? g.value("reason").toString() : QString();
+    QString why;
+    if (g.value("tripped").toBool()) {
+        why = g.value("reason").toString();
+        if (why.isEmpty()) why = QStringLiteral("login scenes are paused");
+    }
     if (why.isEmpty()) why = bootGuardReason();
     if (!why.isEmpty()) {
+        lock.unlock();
         Q_EMIT finished(QString(), false, {QStringLiteral("automatic scene at login skipped — ") + why});
         return;
     }
-    writeObject(file, {{"state", "applying"}, {"boot_id", cur}}, nullptr);
-    // Cleared after the window, and on a clean quit (logout / shutdown / Quit).
-    QTimer::singleShot(LOGIN_WINDOW_MS, this, [file, cur] { writeObject(file, {{"state", "ok"}, {"boot_id", cur}}, nullptr); });
-    const auto markOk = [file, cur] {
+    const bool armed = writeObject(file, {{"state", "applying"}, {"boot_id", cur}, {"attempt", attempt}}, nullptr);
+    lock.unlock();
+    if (!armed) { guardFailed(); return; }
+    // The timer and clean exit may clear only the record this login armed.
+    const auto markOk = [file, cur, attempt] {
+        QLockFile guard(file + QStringLiteral(".lock"));
+        if (!guard.tryLock()) return;
         const QJsonObject o = readObject(file);
-        if (o.value("state").toString() == QLatin1String("applying")) writeObject(file, {{"state", "ok"}, {"boot_id", cur}}, nullptr);
+        if (!o.value("tripped").toBool() && o.value("state").toString() == QLatin1String("applying")
+            && o.value("boot_id").toString() == cur && o.value("attempt").toString() == attempt)
+            writeObject(file, {{"state", "ok"}, {"boot_id", cur}}, nullptr);
     };
+    QTimer::singleShot(LOGIN_WINDOW_MS, this, markOk);
     connect(qApp, &QCoreApplication::aboutToQuit, this, markOk);
     // X11 session managers announce logout/shutdown here before the app is
     // killed; SIGTERM/SIGHUP end in aboutToQuit (main.cpp).
@@ -758,7 +787,9 @@ void SceneEngine::pollPower(bool timerTick) {
     if (timerTick) checkGameEnd();
     if (timerTick && calDeferred_ && !calibrationHold()) {
         calDeferred_ = false;
-        if (auto_.enabled && !auto_.paused && ac_) {
+        if (std::exchange(loginAfterCalibration_, false)) {
+            startupApply();
+        } else if (auto_.enabled && !auto_.paused && ac_) {
             Q_EMIT finished(QString(), true, {QStringLiteral("calibration finished — applying the scene for the power source")});
             applyForSource(*ac_);
         }
@@ -832,7 +863,7 @@ void SceneEngine::checkGameEnd() {
     const bool sceneOn = gameSceneActive();
     if (sceneOn) sawGameScene_ = true;
     if (!deferred_ && !sceneOn) { gameGoneReads_ = 0; sawGameScene_ = false; return; }
-    if (busy_ || gameSessions() > 0 || gameStarting()) { gameGoneReads_ = 0; return; }
+    if (busy_ || orphanPruneActive_ || gameSessions() > 0 || gameStarting()) { gameGoneReads_ = 0; return; }
     ++gameGoneReads_;
     if (!sceneOn) {
         if (sawGameScene_) {  // POST left the game scene and applied the right one itself
@@ -852,7 +883,7 @@ void SceneEngine::checkGameEnd() {
     if (gameGoneReads_ < GAME_ORPHAN_READS) return;
     gameGoneReads_ = 0;
     deferred_ = sawGameScene_ = false;
-    QString before;
+    QString before, generation;
     {
         // Claim the clean-up under the lock: a POST that got there first has already left the scene.
         const StateLock lock;
@@ -860,20 +891,38 @@ void SceneEngine::checkGameEnd() {
         QJsonObject st = readObject(stateFile());
         if (const QJsonValue g = st.value("game_scene"); !g.isString() || g.toString().isEmpty()) return;
         before = st.value("before_game").toString();
+        generation = st.value("scene_generation").toString();
         st["game_scene"] = QJsonValue::Null;
         st["before_game"] = QJsonValue::Null;
         st["ab_a"] = QJsonValue::Null;     // a dead A launch (gameSessions() no longer counts it)
         st["ab_owner"] = QJsonValue::Null;
         if (!writeObject(stateFile(), st, nullptr)) return;
     }
+    const auto localTransaction = transactionId_;
+    orphanPruneActive_ = true;
     Q_EMIT finished(QString(), true, {QStringLiteral("the game launcher exited without its POST hook — leaving the game scene")});
-    const QString target = auto_.enabled && ac_ ? (*ac_ ? auto_.onAc : auto_.onBattery) : before;
     // Ends the dead session and restores the game tuning (tune-helper prune).
-    privileged::run(privileged::helperPath("tune-profile-helper"), QJsonObject{{"op", "prune"}}, this,
-                    [this, target](const privileged::Result &) { if (validName(target) && !auto_.paused) apply(target); }, 120000);
+    privileged::runUntilExit(privileged::helperPath("tune-profile-helper"), QJsonObject{{"op", "prune"}}, this,
+        [this, before, generation, localTransaction](const privileged::Result &) {
+            orphanPruneActive_ = false;
+            if (!pending_.isEmpty() && !pendingAuto_) {
+                apply(std::exchange(pending_, QString()));
+                return;
+            }
+            if (busy_ || auto_.paused || transactionId_ != localTransaction || gameSessions() > 0 || gameStarting()) return;
+            const auto state = readObject(stateFile());
+            if (state.value("scene_generation").toString() != generation || !state.value("game_scene").toString().isEmpty()) return;
+            if (auto_.enabled) {
+                const auto source = onAc();
+                if (source || ac_) applyForSource(source.value_or(ac_.value_or(false)) && !flapHold_);
+            } else if (validName(before)) {
+                apply(before);
+            }
+        }, 120000);
 }
 
 void SceneEngine::applyForSource(bool onAc) {
+    if (loginAfterCalibration_ || orphanPruneActive_) return;
     if (sceneplan::sourceAction(auto_.paused,false,false,true,false,false)==sceneplan::SourceAction::Paused) { deferred_ = false; return; }
     if (sceneplan::sourceAction(false,calibrationHold(),false,true,false,false)==sceneplan::SourceAction::CalibrationDeferred) {
         if (!calDeferred_) Q_EMIT finished(QString(), true, {QStringLiteral("a calibration is measuring — scene switch deferred until it ends")});
@@ -910,7 +959,7 @@ void SceneEngine::applyForSource(bool onAc) {
 }
 
 void SceneEngine::apply(const QString &name) {
-    if (busy_) {
+    if (busy_ || orphanPruneActive_) {
         const bool automatic = std::exchange(nextAuto_, false);
         if (automatic && !pending_.isEmpty() && !pendingAuto_) return;
         pending_ = name;
@@ -1139,7 +1188,7 @@ QStringList SceneEngine::preview(const Scene &s) const {
 }
 
 bool SceneEngine::operationActive() const {
-    return busy_ || (gpuDefer_ && gpuDefer_->isActive()) || deferredInFlight_ > 0;
+    return busy_ || orphanPruneActive_ || (gpuDefer_ && gpuDefer_->isActive()) || deferredInFlight_ > 0;
 }
 
 void SceneEngine::emitStep(const QString &step, const QString &state, const QString &detail) {
@@ -1576,6 +1625,7 @@ void SceneEngine::gpuDeferredFire() {
                                         + QStringLiteral("GPU curve '%1' (%2 s after scene '%3'): %4").arg(name).arg(GPU_DEFER_MS / 1000).arg(scene, m)});
     };
     // Same rule as the remaining steps of an automatic switch: a game that started meanwhile wins.
+    if (gpuDeferAuto_ && (!auto_.enabled || auto_.paused)) { report(true, QStringLiteral("skipped (automatic scenes paused or disabled)")); return; }
     if (gpuDeferAuto_ && (gameSessions() > 0 || gameStarting() || gameSceneActive())) { report(true, QStringLiteral("dropped, a game started")); return; }
     if (!nvidiaUsable()) { report(true, QStringLiteral("skipped (NVIDIA dGPU is off)")); return; }
     if (win_->nvidia() && win_->nvidia()->busy()) { report(false, QStringLiteral("the NVIDIA tab is busy; skipped")); return; }
@@ -1594,7 +1644,7 @@ void SceneEngine::armVerify() {
 }
 
 void SceneEngine::verifyPass() {
-    if (verifyTriesLeft_ <= 0 || busy_ || !auto_.enabled || auto_.paused || expectedProfile_.isEmpty()) return;
+    if (verifyTriesLeft_ <= 0 || busy_ || orphanPruneActive_ || !auto_.enabled || auto_.paused || expectedProfile_.isEmpty()) return;
     const auto source = onAc();
     if (!source || calibrationHold() || (*source && flapHold_)
         || (*source ? auto_.onAc : auto_.onBattery) != current_) return;

@@ -1186,10 +1186,16 @@ void DiagReportView::archiveWorkspace() {
             + (diff.isEmpty() ? tr("No structured differences.") : diff.join(QLatin1Char('\n')))
             + QStringLiteral("\n\n") + tr("Note: %1").arg(entry.value("note").toString()));
     };
-    auto refill = [&](int preferredIndex) {
+    auto refill = [&](int preferredIndex, const QString &preferredId = {}) {
         const QSignalBlocker block(list); list->clear();
-        for (const auto &v : *entries) { const auto e = v.toObject(); list->addItem(e.value(QStringLiteral("time")).toString() + QStringLiteral(" · ") + e.value(QStringLiteral("boot")).toString(), e.value(QStringLiteral("id")).toString()); }
-        list->setCurrentIndex(std::min(preferredIndex, list->count() - 1)); render();
+        for (const auto &v : *entries) {
+            const auto e = v.toObject();
+            list->addItem(e.value(QStringLiteral("time")).toString() + QStringLiteral(" · ") + e.value(QStringLiteral("boot")).toString(),
+                          diagnostichistory::full(e.value(QStringLiteral("id")).toString()));
+        }
+        const int found = preferredId.isEmpty() ? -1 : list->findData(preferredId);
+        list->setCurrentIndex(found >= 0 ? found : std::min(preferredIndex, list->count() - 1));
+        render();
     };
     connect(list, &QComboBox::currentIndexChanged, &dlg, [&](int) { render(); });
     auto change = [&](bool adding) {
@@ -1199,20 +1205,24 @@ void DiagReportView::archiveWorkspace() {
         QLockFile lock(path + QStringLiteral(".lock"));
         if (!lock.tryLock(0)) { QMessageBox::warning(&dlg, tr("Diagnostic History"), tr("History is currently in use.")); return; }
         auto latest = read();
-        if (!latest) { QMessageBox::warning(&dlg, tr("Diagnostic History"), tr("History changed or is damaged.")); return; }
+        if (!latest) { lock.unlock(); QMessageBox::warning(&dlg, tr("Diagnostic History"), tr("History changed or is damaged.")); return; }
         if (adding) {
             for(const auto &v:*latest) {
                 const auto e=v.toObject();
                 if(e.value("time").toString()==capturedAt && e.value("boot").toString()==boot && e.value("locale").toString()==locale && e.value("snapshot").toObject()==captured) {
+                    lock.unlock(); entries = latest; refill(selectedIndex, selected);
                     QMessageBox::information(&dlg,tr("Diagnostic History"),tr("This capture is already archived."));return;
                 }
             }
-            if (latest->size() >= 20) { QMessageBox::information(&dlg, tr("Diagnostic History"), tr("History is full. Delete an old snapshot first.")); return; }
+            if (latest->size() >= 20) {
+                lock.unlock(); entries = latest; refill(selectedIndex, selected);
+                QMessageBox::information(&dlg, tr("Diagnostic History"), tr("History is full. Delete an old snapshot first.")); return;
+            }
             latest->append(QJsonObject{{"id", QUuid::createUuid().toString(QUuid::WithoutBraces)}, {"time", capturedAt}, {"boot", boot}, {"locale", locale}, {"snapshot", captured}});
         } else {
             const auto count = latest->size();
             for (qsizetype i = count; i > 0; --i)
-                if (latest->at(i-1).toObject().value(QStringLiteral("id")).toString() == selected) latest->removeAt(i-1);
+                if (diagnostichistory::full(latest->at(i-1).toObject().value(QStringLiteral("id")).toString()) == selected) latest->removeAt(i-1);
             if (latest->size() == count) {
                 lock.unlock();
                 entries = latest;
@@ -1236,16 +1246,21 @@ void DiagReportView::archiveWorkspace() {
         if(note.size()>4096) {QMessageBox::warning(&dlg,tr("Diagnostic History"),tr("Note exceeds 4096 characters."));return;}
         QLockFile lock(path+QStringLiteral(".lock"));
         if(!lock.tryLock(0)) {QMessageBox::warning(&dlg,tr("Diagnostic History"),tr("History is currently in use."));return;}
-        auto latest=read();if(!latest) {QMessageBox::warning(&dlg,tr("Diagnostic History"),tr("History changed or is damaged."));return;}
+        auto latest=read();if(!latest) {lock.unlock();QMessageBox::warning(&dlg,tr("Diagnostic History"),tr("History changed or is damaged."));return;}
         for(qsizetype i=0;i<latest->size();++i) {
-            auto e=latest->at(i).toObject(); if(e.value("id").toString()!=id) continue;
-            if(e.value("note").toString()!=old) {QMessageBox::warning(&dlg,tr("Diagnostic History"),tr("History changed or is damaged."));return;}
+            auto e=latest->at(i).toObject(); if(diagnostichistory::full(e.value("id").toString())!=id) continue;
+            if(e.value("note").toString()!=old) {
+                lock.unlock(); entries=latest; refill(int(i), id);
+                QMessageBox::warning(&dlg,tr("Diagnostic History"),tr("This note changed while you were editing it."));return;
+            }
             e.insert("note",diag::redactPrivateText(note));latest->replace(i,e);
             const auto error=diagsrc::saveJson(path,QJsonObject{{"version",1},{"entries",*latest}});
+            lock.unlock();
             if(!error.isEmpty()) {QMessageBox::warning(&dlg,tr("Diagnostic History"),error);return;}
             entries=latest;refill(int(i));return;
         }
-        QMessageBox::warning(&dlg,tr("Diagnostic History"),tr("History changed or is damaged."));
+        lock.unlock(); entries=latest; refill(list->currentIndex());
+        QMessageBox::information(&dlg,tr("Diagnostic History"),tr("This snapshot is no longer in the archive."));
     });
     refill(int(entries->size()) - 1); dlg.exec();
 }
