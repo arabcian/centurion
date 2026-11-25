@@ -193,7 +193,7 @@ fn validate_dynamic(p: &Discovered, raw: &str) -> Result<String, String> {
     let err = || format!("{}: unsupported type or out-of-range value ({})", p.name, p.ty);
     if p.ty == "bool" { return match raw { "0" | "N" | "n" => Ok("0".into()), "1" | "Y" | "y" => Ok("1".into()), _ => Err(err()) }; }
     if raw.len() > 24 { return Err(err()); }
-    let n = if let Some(h) = raw.strip_prefix("0x").or_else(|| raw.strip_prefix("0X")) { i128::from_str_radix(h, 16).ok() } else { raw.parse::<i128>().ok() }.ok_or_else(|| err())?;
+    let n = if let Some(h) = raw.strip_prefix("0x").or_else(|| raw.strip_prefix("0X")) { i128::from_str_radix(h, 16).ok() } else { raw.parse::<i128>().ok() }.ok_or_else(&err)?;
     let (lo, hi) = match p.ty.as_str() {
         "int" => (i32::MIN as i128, i32::MAX as i128), "uint" => (0, u32::MAX as i128),
         "short" => (i16::MIN as i128, i16::MAX as i128), "ushort" => (0, u16::MAX as i128),

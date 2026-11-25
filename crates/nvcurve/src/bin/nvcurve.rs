@@ -572,24 +572,6 @@ fn validate_draft_fields(draft: &Map<String, Value>, max_delta: i64) -> Result<(
     Ok(())
 }
 
-#[cfg(test)]
-mod draft_tests {
-    use super::*;
-    #[test]
-    fn read_only_draft_schema_rejects_bad_values_before_gpu_access() {
-        for bad in [json!({"name":"_live","curve_deltas":{"01":0}}),
-            json!({"name":"_live","curve_deltas":{"1":900000}}),
-            json!({"name":"_live","curve_deltas":{"1":true}}),
-            json!({"name":"_live","mem_locked_min_mhz":2000,"mem_locked_max_mhz":1000}),
-            json!({"name":"_live","gpu_clock_cap_mhz":99999}),
-            json!({"name":"_live","unknown":null})] {
-            assert!(validate_draft_fields(bad.as_object().unwrap(), 200000).is_err());
-        }
-        let good = json!({"name":"_live","curve_deltas":{"1":-15000},"gpu_clock_cap_mhz":null});
-        assert!(validate_draft_fields(good.as_object().unwrap(), 200000).is_ok());
-    }
-}
-
 /// Explicit user-requested validation. Never calls require_root or writes a
 /// profile, snapshot, journal or GPU setting. It can read/wake the chosen GPU.
 fn cmd_validate_draft(a: &Args, cfg: &Config) {
@@ -646,5 +628,23 @@ fn main() {
             die(2, format!("nvcurve: '{c}' is not ported yet in the Rust build")),
         Some(c) => die(2, format!("nvcurve: unknown command '{c}'\n\n{USAGE}")),
         None => { print!("{USAGE}"); exit(2); }
+    }
+}
+
+#[cfg(test)]
+mod draft_tests {
+    use super::*;
+    #[test]
+    fn read_only_draft_schema_rejects_bad_values_before_gpu_access() {
+        for bad in [json!({"name":"_live","curve_deltas":{"01":0}}),
+            json!({"name":"_live","curve_deltas":{"1":900000}}),
+            json!({"name":"_live","curve_deltas":{"1":true}}),
+            json!({"name":"_live","mem_locked_min_mhz":2000,"mem_locked_max_mhz":1000}),
+            json!({"name":"_live","gpu_clock_cap_mhz":99999}),
+            json!({"name":"_live","unknown":null})] {
+            assert!(validate_draft_fields(bad.as_object().unwrap(), 200000).is_err());
+        }
+        let good = json!({"name":"_live","curve_deltas":{"1":-15000},"gpu_clock_cap_mhz":null});
+        assert!(validate_draft_fields(good.as_object().unwrap(), 200000).is_ok());
     }
 }

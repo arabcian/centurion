@@ -1760,7 +1760,7 @@ fn run() -> Value {
     let boot_receipt = if op == "boot" {
         match BootReceipt::begin() { Ok(r) => Some(r), Err(e) => { eprintln!("tune-helper: boot receipt unavailable: {e}"); None } }
     } else { None };
-    let mut out = match op {
+    let out = match op {
         "snapshot" => json!({"ok": true}),
         "apply" => op_apply(&req),
         "apply_preset" => op_apply_preset(&req, false),
