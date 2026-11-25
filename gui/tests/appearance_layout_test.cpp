@@ -98,8 +98,15 @@ int main(int argc, char **argv) {
     zone.fit();CHECK(zone.hitZone({80,80})==0 && zone.hitZone({560,80})==3);
     DayBars days;days.setDays({{QStringLiteral("2026-01-01"),{}},{QStringLiteral("2026-01-02"),{{QStringLiteral("Xid"),1}}},{QStringLiteral("2026-01-03"),{}}});
     days.setViewRange(1,3);CHECK(days.viewRange().first==1 && days.viewRange().second==3);
-    QString selected;QObject::connect(&days,&DayBars::dayClicked,&days,[&](const QString &d){selected=d;});
+    QString selected;
+    int dayClicks = 0;
+    QObject::connect(&days,&DayBars::dayClicked,&days,[&](const QString &d){selected=d; ++dayClicks;});
     QKeyEvent home(QEvent::KeyPress,Qt::Key_Home,Qt::NoModifier);QCoreApplication::sendEvent(&days,&home);CHECK(selected==QStringLiteral("2026-01-02"));
+    QCoreApplication::sendEvent(&days, &home);
+    CHECK(dayClicks == 1);
+    QKeyEvent activate(QEvent::KeyPress, Qt::Key_Space, Qt::NoModifier);
+    QCoreApplication::sendEvent(&days, &activate);
+    CHECK(dayClicks == 2 && selected == QStringLiteral("2026-01-02"));
     days.setViewRange(100,100);CHECK(days.viewRange().first==2 && days.viewRange().second==3);
     days.setDays({{QStringLiteral("2026-01-02"),{}},{QStringLiteral("2026-01-03"),{}},{QStringLiteral("2026-01-04"),{}}});
     CHECK(days.viewRange().first==1 && days.viewRange().second==2);

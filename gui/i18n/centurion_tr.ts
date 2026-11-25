@@ -26804,6 +26804,7 @@ Satırlar sıralamadan bağımsız karşılaştırılır; değişen satırlar si
         <message><source>Discovered options have type checks only, not reviewed driver-specific safety limits. Incorrect values can prevent the GPU driver from starting. Write these changes for the next boot?</source><translation>Keşfedilen seçenekler yalnızca tür açısından doğrulanır; sürücüye özgü güvenlik sınırları incelenmemiştir. Yanlış değerler GPU sürücüsünün başlatılmasını engelleyebilir. Sonraki açılış için değişiklikler yazılsın mı?</translation></message>
 </context>
 <context><name>DiagnosticHistory</name>
+<message><source>Matching filters: %1 snapshots and %2 saved events.</source><translation>Filtrelerle eşleşen %1 anlık görüntü ve %2 kayıtlı olay.</translation></message>
         <message><source>%1 (current boot)</source><translation>%1 (mevcut açılış)</translation></message>
         <message><source>%1 snapshots · %2 rejected records or files · %3 saved log entries (up to 1000 per source)</source><translation>%1 anlık görüntü · %2 reddedilen kayıt veya dosya · %3 kayıtlı günlük girdisi (kaynak başına en çok 1000)</translation></message>
         <message><source>Archive scan limit reached; some files were not read.</source><translation>Arşiv tarama sınırına ulaşıldı; bazı dosyalar okunmadı.</translation></message>

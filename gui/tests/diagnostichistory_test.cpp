@@ -33,6 +33,11 @@ int main(int argc,char **argv) {
     auto invalid=snapshot;invalid.insert("records",QJsonArray{QJsonArray{QStringLiteral("row")}});CHECK(!validSnapshot(invalid));
     CHECK(save(dir.path(),report.code,QJsonArray{a,a,b,c}));archive=load(dir.path());CHECK(archive.entries.size()==2&&archive.rejected==2);
     CHECK(save(dir.path(),QStringLiteral("WRONG"),QJsonArray{b}));archive=load(dir.path());CHECK(archive.entries.size()==2&&archive.rejected==3);
+    QFile oversized(dir.filePath(QStringLiteral("0000.json")));
+    CHECK(oversized.open(QIODevice::WriteOnly) && oversized.resize(33LL << 20));
+    oversized.close();
+    archive = load(dir.path());
+    CHECK(archive.entries.size() == 2 && archive.rejected == 4);
     qputenv("XDG_STATE_HOME", dir.path().toUtf8());
     CHECK(QDir().mkpath(diagsrc::stateDir()));
     const QByteArray event = "2026-01-01 10:00:00 boot=example seq=42 warn [1.2] complete line\n";

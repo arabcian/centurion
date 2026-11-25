@@ -2005,7 +2005,8 @@ void NetPage::refreshWifiNets() {
             && ((!iface.isEmpty() && reportedIface != iface) || (!expected.isEmpty() && live != expected)
                 || (!reportedStamp.isEmpty() && live != reportedStamp));
         const bool usable = n.value(QStringLiteral("ok")).toBool() && n.value(QStringLiteral("present")).toBool()
-            && n.value(QStringLiteral("iw")).toBool() && !str(n,"iface").isEmpty() && !wrongAdapter;
+            && n.value(QStringLiteral("iw")).toBool() && !reportedIface.isEmpty() && !wrongAdapter
+            && (!reportedStamp.isEmpty() || !expected.isEmpty());
         wifiScanSnapshot_ = usable ? n : QJsonObject();
         if (usable && reportedStamp.isEmpty() && !expected.isEmpty())
             wifiScanSnapshot_.insert(QStringLiteral("adapter_stamp"), expected);

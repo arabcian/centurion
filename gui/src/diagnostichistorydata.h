@@ -93,8 +93,10 @@ inline Archive load(const QString &dir) {
     qsizetype bytes=0; int fileCount=0;
     for(const auto &fi:files) {
         if(++fileCount>128 || bytes>=32*1024*1024) {out.limited=true;break;}
-        if(fi.size()>32*1024*1024-bytes) {out.limited=true;break;}
-        const auto data=diagsrc::readRecord(fi.absoluteFilePath(),qMin<qint64>(1024*1024,32*1024*1024-bytes));
+        constexpr qint64 entryLimit = 1024 * 1024;
+        if (fi.size() > entryLimit) { ++out.rejected; continue; }
+        if (fi.size() > 32*1024*1024-bytes) { out.limited=true; continue; }
+        const auto data=diagsrc::readRecord(fi.absoluteFilePath(),qMin<qint64>(entryLimit,32*1024*1024-bytes));
         if(!data) {++out.rejected;continue;}
         bytes+=data->size();
         const auto o=QJsonDocument::fromJson(*data).object(); const auto entries=o.value("entries").toArray();

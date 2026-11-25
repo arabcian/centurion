@@ -8,7 +8,6 @@
 #include <QProgressBar>
 #include <QTableView>
 #include <QTimer>
-#include <QStandardItemModel>
 #include <QHeaderView>
 #include <QVBoxLayout>
 #include "theme.h"
@@ -69,6 +68,29 @@ public:
     }
 private:
     QVector<LineChart::Point> points_; QString unit_;
+};
+
+class ChartTableModel final : public QAbstractTableModel {
+public:
+    ChartTableModel(const QStringList &headers, const QList<QStringList> &rows, QObject *parent)
+        : QAbstractTableModel(parent), headers_(headers), rows_(rows), columns_(int(headers.size())) {
+        for (const auto &row : rows_) columns_ = std::max(columns_, int(row.size()));
+    }
+    int rowCount(const QModelIndex &parent = {}) const override { return parent.isValid() ? 0 : int(rows_.size()); }
+    int columnCount(const QModelIndex &parent = {}) const override { return parent.isValid() ? 0 : columns_; }
+    QVariant data(const QModelIndex &index, int role) const override {
+        if (role != Qt::DisplayRole || !checkIndex(index, CheckIndexOption::IndexIsValid)) return {};
+        return rows_.at(index.row()).value(index.column());
+    }
+    QVariant headerData(int section, Qt::Orientation orientation, int role) const override {
+        if (orientation == Qt::Horizontal && role == Qt::DisplayRole && section >= 0 && section < headers_.size())
+            return headers_.at(section);
+        return QAbstractTableModel::headerData(section, orientation, role);
+    }
+private:
+    QStringList headers_;
+    QList<QStringList> rows_;
+    int columns_;
 };
 
 // Text fields from a log are never emitted as executable spreadsheet formulas.
@@ -138,10 +160,9 @@ void writeTextFields(QTextStream &out, const QStringList &row, int numericFrom) 
 namespace chartdata {
 void table(QWidget *parent,const QStringList &headers,const QList<QStringList> &rows) {
     QDialog d(parent);d.setWindowTitle(QCoreApplication::translate("ChartData","Chart data"));d.resize(720,480);
-    auto *layout=new QVBoxLayout(&d);auto *view=new QTableView;auto *model=new QStandardItemModel(view);
-    model->setHorizontalHeaderLabels(headers);
-    for(const auto &row:rows){QList<QStandardItem*> items;for(const auto &cell:row)items<<new QStandardItem(cell);model->appendRow(items);}
-    view->setModel(model);view->setEditTriggers(QAbstractItemView::NoEditTriggers);view->horizontalHeader()->setStretchLastSection(true);layout->addWidget(view);
+    auto *layout=new QVBoxLayout(&d);auto *view=new QTableView;
+    view->setModel(new ChartTableModel(headers, rows, view));
+    view->setEditTriggers(QAbstractItemView::NoEditTriggers);view->horizontalHeader()->setStretchLastSection(true);layout->addWidget(view);
     auto *buttons=new QDialogButtonBox(QDialogButtonBox::Close);QObject::connect(buttons,&QDialogButtonBox::rejected,&d,&QDialog::reject);layout->addWidget(buttons);d.exec();
 }
 void exportRows(QWidget *parent,const QString &header,const QList<QStringList> &rows,int numericFrom) {
@@ -200,7 +221,16 @@ void LineChart::wheelEvent(QWheelEvent *e) {
     const qsizetype count=end_-begin_;
     const qsizetype target=e->angleDelta().y()>0 ? std::max(qsizetype(2),count*3/4) : std::min(points_.size(),count+std::max(qsizetype(1),count/3));
     const auto length=std::min(points_.size(),target);
-    const auto first=std::clamp(begin_+(count-length)/2,qsizetype(0),points_.size()-length);
+    if (length == count) { e->accept(); return; }
+    double fraction = 0.5;
+    if (count > 1 && !plotted_.isEmpty()) {
+        const auto nearest = std::min_element(plotted_.cbegin(), plotted_.cend(), [x = e->position().x()](const auto &a, const auto &b) {
+            return std::abs(a.x() - x) < std::abs(b.x() - x);
+        });
+        const auto sample = plottedIndices_.at(nearest - plotted_.cbegin());
+        fraction = double(sample - begin_) / double(count - 1);
+    }
+    const auto first=std::clamp(begin_+qsizetype(std::llround((count-length)*fraction)),qsizetype(0),points_.size()-length);
     setViewRange(first,first+length); e->accept();
 }
 void LineChart::keyPressEvent(QKeyEvent *e) {
@@ -451,7 +481,9 @@ void BarChart::wheelEvent(QWheelEvent *e) {
     if (!(e->modifiers() & Qt::ControlModifier) || !e->angleDelta().y() || bars_.isEmpty()) { QWidget::wheelEvent(e); return; }
     const auto count=end_-begin_;
     const auto wanted=e->angleDelta().y()>0?std::max<qsizetype>(1,count/2):std::min<qsizetype>(128,count*2);
-    setViewRange(begin_,begin_+std::min(wanted,bars_.size()-begin_));
+    const auto length = std::min(wanted, bars_.size());
+    const auto first = std::min(begin_, bars_.size() - length);
+    if (first != begin_ || length != count) setViewRange(first, first + length);
     e->accept();
 }
 
@@ -651,17 +683,22 @@ void DayBars::mouseMoveEvent(QMouseEvent *e) {
 }
 
 void DayBars::keyPressEvent(QKeyEvent *e) {
-    if (days_.isEmpty() || (e->key()!=Qt::Key_Left && e->key()!=Qt::Key_Right && e->key()!=Qt::Key_Home && e->key()!=Qt::Key_End)) {
+    const int key = e->key();
+    const bool activate = key == Qt::Key_Return || key == Qt::Key_Enter || key == Qt::Key_Space;
+    if (begin_ >= end_ || (!activate && key != Qt::Key_Left && key != Qt::Key_Right && key != Qt::Key_Home && key != Qt::Key_End)) {
         QWidget::keyPressEvent(e); return;
     }
-    if(end_<=begin_)return;
-    qsizetype i=begin_;
-    while (i<end_ && days_[i].date!=selected_) ++i;
-    if (e->key()==Qt::Key_Home) i=begin_;
-    else if (e->key()==Qt::Key_End) i=end_-1;
-    else if (i==end_) i=begin_;
-    else i=std::clamp(i+(e->key()==Qt::Key_Left?-1:1),begin_,end_-1);
-    setSelected(days_[i].date); Q_EMIT dayClicked(selected_); e->accept();
+    qsizetype i = begin_;
+    while (i < end_ && days_[i].date != selected_) ++i;
+    if (key == Qt::Key_End) i = end_ - 1;
+    else if (key == Qt::Key_Home || i == end_) i = begin_;
+    else if (!activate) i = std::clamp(i + (key == Qt::Key_Left ? -1 : 1), begin_, end_ - 1);
+    const QString date = days_.at(i).date;
+    if (date != selected_ || (activate && !e->isAutoRepeat())) {
+        setSelected(date);
+        Q_EMIT dayClicked(date);
+    }
+    e->accept();
 }
 
 void DayBars::setViewRange(qsizetype begin,qsizetype end) {

@@ -257,9 +257,13 @@ fn mask_boot_tags(text: &str) -> (String, u64) {
     let mut out = String::with_capacity(text.len());
     let mut cursor = 0;
     let mut count = 0;
-    for (key, tag) in text.match_indices("boot=") {
-        if key != 0 && !text[..key].ends_with(char::is_whitespace) { continue; }
-        let start = key + tag.len();
+    for (separator, _) in text.match_indices('=') {
+        if separator < cursor { continue; }
+        let key = text[..separator].rsplit(char::is_whitespace).next().unwrap_or("");
+        if !["boot", "boot_id", "boot-id", "boot_uuid", "boot-uuid"].iter().any(|name| key.eq_ignore_ascii_case(name)) {
+            continue;
+        }
+        let start = separator + 1;
         let rest = &text[start..];
         let len = rest.find(char::is_whitespace).unwrap_or(rest.len());
         let value = &rest[..len];
@@ -378,14 +382,14 @@ fn read_bounded(path: &Path, cap: u64, lines: Option<usize>, whole: bool) -> (&'
     let limit = if whole { cap + 1 } else { before.len() - start };
     let mut bytes = Vec::new();
     if (&mut file).take(limit).read_to_end(&mut bytes).is_err() { return ("unreadable", None); }
+    let Ok(after) = file.metadata() else { return ("unreadable", None); };
     if whole {
-        let Ok(after) = file.metadata() else { return ("unreadable", None); };
         if bytes.len() as u64 > cap { return ("too large", None); }
         if bytes.len() as u64 != before.len() || !same_file_version(&before, &after) {
             return ("unreadable", None);
         }
     } else {
-        if bytes.len() as u64 != limit { return ("unreadable", None); }
+        if bytes.len() as u64 != limit || !same_file_version(&before, &after) { return ("unreadable", None); }
         if partial_first_line {
             // Never export a partial first log line whose identity key may have been cut away.
             let Some(newline) = bytes.iter().position(|&b| b == b'\n') else { return ("too large", None); };
@@ -905,6 +909,9 @@ mod tests {
         let (text, count) = mask_structured(r#"{"headers":{"Proxy-Authorization":"secret-proxy","Set-Cookie":"secret-cookie"},"client_secret":"secret-client","session_token":"secret-session"}"#).unwrap();
         assert_eq!(count, 4);
         assert!(!text.contains("secret-"));
+        let (text, count) = mask_boot_tags("BOOT_ID=private boot-uuid=private other_boot=kept");
+        assert_eq!(count, 2);
+        assert_eq!(text, "BOOT_ID=<hidden> boot-uuid=<hidden> other_boot=kept");
         let root = temp("bounded-capture"); let path = root.join("log");
         std::fs::write(&path, "serial=long-secret-without-newline").unwrap();
         assert_ne!(fetch(&path, 8, None).0, "included");

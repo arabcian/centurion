@@ -22,6 +22,7 @@
 #include <QMap>
 #include <QSplitter>
 #include <QSet>
+#include <QSignalBlocker>
 #include <QTreeWidget>
 #include <QVBoxLayout>
 #include <QHBoxLayout>
@@ -108,8 +109,10 @@ void open(QWidget *owner) {
     QDialog dlg(owner); dlg.setWindowTitle(tr("Cross-Boot Diagnostic History"));dlg.resize(1050,700);
     auto *layout=new QVBoxLayout(&dlg);
     auto *note=new QLabel(tr("Saved local reports and bounded saved kernel/health log tails only. Capture boot and event boot are different types of provenance. Sharing a boot does not prove a common device or cause. Wall-clock ordering is descriptive only."));note->setWordWrap(true);layout->addWidget(note);
-    auto *status = new QLabel(tr("%1 snapshots · %2 rejected records or files · %3 saved log entries (up to 1000 per source)")
-                                  .arg(archive.entries.size()).arg(archive.rejected).arg(events.size()));
+    const QString statusText = tr("%1 snapshots · %2 rejected records or files · %3 saved log entries (up to 1000 per source)")
+        .arg(archive.entries.size()).arg(archive.rejected).arg(events.size());
+    auto *status = new QLabel(statusText);
+    status->setWordWrap(true);
     auto *summary = new QHBoxLayout;
     summary->addWidget(status, 1);
     auto *showCoverage = new QPushButton(tr("Log coverage"));
@@ -163,6 +166,7 @@ void open(QWidget *owner) {
     auto *detail=new QPlainTextEdit;detail->setReadOnly(true);split->addWidget(detail);split->setStretchFactor(1,2);
     auto *bar=new QHBoxLayout;auto *left=new QComboBox;auto *right=new QComboBox;auto *diff=new QPushButton(tr("Compare snapshots"));bar->addWidget(left,1);bar->addWidget(right,1);bar->addWidget(diff);layout->addLayout(bar);
     constexpr int recordIdentityRole = Qt::UserRole + 1;
+    constexpr int groupIdentityRole = Qt::UserRole + 2;
     left->setAccessibleName(tr("First snapshot"));
     right->setAccessibleName(tr("Second snapshot"));
     right->setPlaceholderText(tr("No compatible snapshot"));
@@ -173,7 +177,7 @@ void open(QWidget *owner) {
         const auto groupKey=e.boot.isEmpty()?e.id+QStringLiteral("/unknown"):e.boot;
         if(!groups.contains(groupKey)) {
             auto *g=new QTreeWidgetItem(tree,{e.boot.isEmpty()?tr("Unknown capture boot"):e.boot,e.boot.isEmpty()?tr("Unlinked capture"):tr("Full boot identity")});
-            g->setData(0,Qt::UserRole,-1);groups.insert(groupKey,g);
+            g->setData(0,Qt::UserRole,-1);g->setData(0,groupIdentityRole,groupKey);groups.insert(groupKey,g);
         }
         const auto label=e.time+QStringLiteral(" · ")+e.code+QStringLiteral(" · ")+e.title;
         auto *item=new QTreeWidgetItem(groups.value(groupKey),{label,tr("Archived report (capture boot)")});item->setData(0,Qt::UserRole,int(i));
@@ -186,7 +190,7 @@ void open(QWidget *owner) {
         const auto groupKey=e.boot.isEmpty()?QStringLiteral("/unresolved-events"):e.boot;
         if(!groups.contains(groupKey)) {
             auto *g=new QTreeWidgetItem(tree,{e.boot.isEmpty()?tr("Unresolved event boots (not one session)"):e.boot,e.boot.isEmpty()?tr("No boot identity"):tr("Full boot identity")});
-            g->setData(0,Qt::UserRole,-1);groups.insert(groupKey,g);
+            g->setData(0,Qt::UserRole,-1);g->setData(0,groupIdentityRole,groupKey);groups.insert(groupKey,g);
         }
         const auto label=e.time+QStringLiteral(" · ")+logName(e.source)+QStringLiteral(" · ")+(e.title.isEmpty()?e.detail.left(160):e.title);
         auto *item=new QTreeWidgetItem(groups.value(groupKey),{label,e.boot.isEmpty()?tr("Unlinked saved event"):tr("Recorded event boot")});
@@ -229,11 +233,14 @@ void open(QWidget *owner) {
         const int a=left->currentData().toInt(),b=right->currentData().toInt();
         if(a>=0&&b>=0&&a<archive.entries.size()&&b<archive.entries.size()) detail->setPlainText(compare(archive.entries.at(a),archive.entries.at(b)));
     });
+    QSet<QString> collapsedGroups;
     const auto applyFilter=[&]{
         const auto q=filter->text().trimmed();
         const auto sourceFilter = static_cast<RecordSource>(sources->currentData().toInt());
         const auto bootFilter = static_cast<BootScope>(boots->currentData().toInt());
         const auto exactBoot = boots->currentData(exactBootRole).toString();
+        const bool filtering = !q.isEmpty() || sourceFilter != RecordSource::All || bootFilter != BootScope::All;
+        int shownReports = 0, shownEvents = 0;
         for(auto *group:groups) {
             bool any=false;
             for(int i=0;i<group->childCount();++i) {
@@ -251,16 +258,29 @@ void open(QWidget *owner) {
                     match &= matchesScope(e.source, !e.boot.isEmpty(), sourceFilter, bootFilter)
                         && (exactBoot.isEmpty() || e.boot == exactBoot);
                 }
+                if (match) {
+                    if (n >= 0) ++shownReports;
+                    else ++shownEvents;
+                }
                 item->setHidden(!match);any|=match;
                 if(!match&&tree->currentItem()==item) {tree->setCurrentItem(nullptr);detail->clear();}
             }
-            group->setHidden(!any);if (any && (!q.isEmpty() || sourceFilter != RecordSource::All || bootFilter != BootScope::All))
-                group->setExpanded(true);
+            group->setHidden(!any);
+            if (any) {
+                const QSignalBlocker expansion(tree);
+                group->setExpanded(filtering || !collapsedGroups.contains(group->data(0, groupIdentityRole).toString()));
+            }
         }
+        status->setText(filtering ? statusText + QLatin1Char('\n')
+            + tr("Matching filters: %1 snapshots and %2 saved events.").arg(shownReports).arg(shownEvents) : statusText);
     };
     const auto key=workspace::key(theme::experimentalEnabled(),QStringLiteral("health/cross-boot-history"));
     workspace::rememberSplitter(split,key+QStringLiteral("/split"));
     const auto saved = workspace::read(key);
+    for (const auto &value : saved.value("collapsed_groups").toArray()) {
+        const auto id = value.toString();
+        if (groups.contains(id) && collapsedGroups.size() < 128) collapsedGroups.insert(id);
+    }
     const auto savedFirst = saved.value("compare_first").toString();
     const int firstIndex = left->findData(savedFirst, recordIdentityRole);
     if (firstIndex >= 0) left->setCurrentIndex(firstIndex);
@@ -276,17 +296,26 @@ void open(QWidget *owner) {
     QObject::connect(filter, &QLineEdit::textChanged, &dlg, applyFilter);
     QObject::connect(sources, &QComboBox::currentIndexChanged, &dlg, applyFilter);
     QObject::connect(boots, &QComboBox::currentIndexChanged, &dlg, applyFilter);
-    tree->expandAll();
     applyFilter();
     workspace::restoreSelection(tree, saved.value("selected_record").toString(), recordIdentityRole);
+    QObject::connect(tree, &QTreeWidget::itemCollapsed, &dlg, [&](QTreeWidgetItem *item) {
+        if (const auto id = item->data(0, groupIdentityRole).toString(); !id.isEmpty()) collapsedGroups.insert(id);
+    });
+    QObject::connect(tree, &QTreeWidget::itemExpanded, &dlg, [&](QTreeWidgetItem *item) {
+        collapsedGroups.remove(item->data(0, groupIdentityRole).toString());
+    });
     auto *buttons=new QDialogButtonBox(QDialogButtonBox::Close);QObject::connect(buttons,&QDialogButtonBox::rejected,&dlg,&QDialog::reject);layout->addWidget(buttons);
     dlg.exec();
     const auto *current = tree->currentItem();
+    QJsonArray collapsed;
+    for (auto it = groups.cbegin(); it != groups.cend() && collapsed.size() < 128; ++it)
+        if (collapsedGroups.contains(it.key())) collapsed.append(it.key());
     workspace::write(key, QJsonObject{{"filter", filter->text()}, {"source", sources->currentData().toInt()},
                                       {"boot_scope", boots->currentData().toInt()},
                                       {"boot_id", boots->currentData(exactBootRole).toString()},
                                       {"compare_first", left->currentData(recordIdentityRole).toString()},
                                       {"compare_second", right->currentData(recordIdentityRole).toString()},
+                                      {"collapsed_groups", collapsed},
                                       {"selected_record", current ? current->data(0, recordIdentityRole).toString() : QString()}});
 }
 }
