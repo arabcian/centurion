@@ -6,6 +6,7 @@
 #include "diagnostictools.h"
 #include "charts.h"
 #include <QPainter>
+#include <QMouseEvent>
 #include <QTextBlock>
 #include <cmath>
 #include <QSpinBox>
@@ -64,6 +65,7 @@
 #include <QVBoxLayout>
 
 #include <algorithm>
+#include <functional>
 #include <optional>
 #include <QFileInfo>
 
@@ -438,11 +440,31 @@ QWidget *tableWidget(const diag::Table &t, const std::shared_ptr<QJsonObject> &h
 class EdidTimingPlot final : public QWidget {
 public:
     explicit EdidTimingPlot(QWidget *parent = nullptr) : QWidget(parent) { setMinimumHeight(86); }
+    void setOffsetHandler(std::function<void(int)> handler) { offsetSelected_ = std::move(handler); }
     void setData(std::vector<edidfields::Timing> timings, int minimum, int maximum) {
         timings_ = std::move(timings); minimum_ = minimum; maximum_ = maximum; selected_ = -1; update();
     }
     void selectOffset(int offset) { selected_ = offset; update(); }
 protected:
+    void mousePressEvent(QMouseEvent *event) override {
+        if (event->button() == Qt::LeftButton && offsetSelected_ && width() > 24
+            && std::abs(event->position().y() - height()/2) <= 16) {
+            const double high = axisMaximum();
+            const edidfields::Timing *closest = nullptr;
+            double distance = 8;
+            for (const auto &timing : timings_) {
+                const double delta = std::abs(event->position().x() - axisX(timing.refreshHz(), high));
+                if (delta < distance) { closest = &timing; distance = delta; }
+            }
+            if (closest) {
+                offsetSelected_(int(closest->offset));
+                event->accept();
+                return;
+            }
+        }
+        QWidget::mousePressEvent(event);
+    }
+
     void paintEvent(QPaintEvent *) override {
         QPainter p(this); p.setRenderHint(QPainter::Antialiasing);
         const QColor fg(theme::FG), accent(theme::ACCENT), info(theme::INFO);
@@ -452,12 +474,10 @@ protected:
                        QCoreApplication::translate("diag", "No verified progressive timing or explicit VRR range to plot."));
             return;
         }
-        double high = std::max(60.0, double(maximum_));
-        for (const auto &t : timings_) high = std::max(high, t.refreshHz());
-        high = std::ceil(high / 10.0) * 10.0;
+        const double high = axisMaximum();
         const double left = 12, right = width() - 12;
         if (right <= left) return;
-        const auto x = [&](double hz) { return left + hz / high * (right-left); };
+        const auto x = [&](double hz) { return axisX(hz, high); };
         const int axis = height()/2;
         p.setPen(QPen(QColor(theme::BORDER), 2)); p.drawLine(QPointF(left,axis),QPointF(right,axis));
         if (minimum_ > 0 && maximum_ >= minimum_) {
@@ -474,7 +494,15 @@ protected:
         p.drawText(QRectF(left,axis+20,right-left,22),Qt::AlignRight,QStringLiteral("%1 Hz").arg(high,0,'f',0));
     }
 private:
+    double axisMaximum() const {
+        double high = std::max(60.0, double(maximum_));
+        for (const auto &timing : timings_) high = std::max(high, timing.refreshHz());
+        return std::ceil(high / 10.0) * 10.0;
+    }
+    double axisX(double hz, double high) const { return 12 + hz / high * (width() - 24); }
+
     std::vector<edidfields::Timing> timings_;
+    std::function<void(int)> offsetSelected_;
     int minimum_ = 0, maximum_ = 0, selected_ = -1;
 };
 
@@ -520,6 +548,7 @@ void inspectEdid(QWidget *parent, const diag::Table &bytes, const diag::Table &f
     auto *bytePanel = new QWidget; auto *byteLayout = new QVBoxLayout(bytePanel); byteLayout->setContentsMargins(0,0,0,0);
     auto *offset = new QSpinBox; offset->setDisplayIntegerBase(16); offset->setPrefix(QStringLiteral("0x"));
     offset->setAccessibleName(tr("Selected byte offset")); byteLayout->addWidget(offset);
+    plot->setOffsetHandler([offset](int pos) { offset->setValue(pos); });
     auto *detail = text(QString()); byteLayout->addWidget(detail);
     auto *raw = new QPlainTextEdit; raw->setReadOnly(true); raw->setLineWrapMode(QPlainTextEdit::NoWrap);
     raw->setFont(QFontDatabase::systemFont(QFontDatabase::FixedFont)); byteLayout->addWidget(raw, 1);

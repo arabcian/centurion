@@ -393,6 +393,7 @@ Report displays(const QString &root) {
             case K::DetailedTiming: return tr("Detailed timing"); case K::Descriptor: return tr("Display descriptor");
             case K::ExtensionCount: return tr("Extension count"); case K::Checksum: return tr("Checksum byte");
             case K::ExtensionHeader: return tr("Extension header"); case K::CtaData: return tr("CTA data block");
+            case K::DisplayIdData: return tr("DisplayID data block"); case K::DisplayIdChecksum: return tr("DisplayID section checksum");
             case K::Padding: return tr("Padding"); default: return tr("Unknown");
             }
         };

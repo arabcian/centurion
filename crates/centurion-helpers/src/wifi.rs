@@ -271,6 +271,22 @@ pub fn parse_station(text: &str) -> Station {
     s
 }
 
+fn station_for_bssid<'a>(text: &'a str, bssid: &str) -> Option<&'a str> {
+    if bssid.is_empty() { return None; }
+    let mut start = None;
+    let mut offset = 0;
+    for line in text.split_inclusive('\n') {
+        if let Some(header) = line.strip_prefix("Station ") {
+            if let Some(start) = start { return Some(&text[start..offset]); }
+            if header.split_whitespace().next().is_some_and(|peer| peer.eq_ignore_ascii_case(bssid)) {
+                start = Some(offset);
+            }
+        }
+        offset += line.len();
+    }
+    start.map(|start| &text[start..])
+}
+
 /// The number a value starts with ("22.00 dBm").
 fn lead_f64(v: &str) -> Option<f64> {
     let end = v.find(|c: char| !(c.is_ascii_digit() || c == '.' || c == '-')).unwrap_or(v.len());
@@ -513,10 +529,12 @@ pub fn status(req: &Value) -> Value {
     let (ifaces, iface) = pick(req);
     let Some(iface) = iface else { return json!({"ok": true, "present": false}) };
     let Some(bin) = tool("iw") else { return json!({"ok": true, "present": true, "iface": iface, "ifaces": ifaces, "iw": false}) };
-    let (link, station) = match (iw(&bin, &iface, &["link"]), iw(&bin, &iface, &["station", "dump"])) {
-        (Ok(l), Ok(s)) => (parse_link(&l), parse_station(&s)),
+    let (link, dump) = match (iw(&bin, &iface, &["link"]), iw(&bin, &iface, &["station", "dump"])) {
+        (Ok(l), Ok(s)) => (parse_link(&l), s),
         (Err(e), _) | (_, Err(e)) => return json!({"ok": false, "present": true, "iface": iface, "ifaces": ifaces, "iw": true, "error": e}),
     };
+    let mut station = station_for_bssid(&dump, &link.bssid).map(parse_station).unwrap_or_default();
+    station.signal_dbm = station.signal_dbm.or(link.signal_dbm);
     let info = iw(&bin, &iface, &["info"]).map(|t| parse_info(&t)).unwrap_or_default();
     let freq = link.freq.or(info.freq);
     let tx_mode = if link.tx_mode.is_empty() { &link.rx_mode } else { &link.tx_mode };
@@ -524,7 +542,7 @@ pub fn status(req: &Value) -> Value {
            "bssid": link.bssid, "freq": freq, "channel": info.channel.or(freq.and_then(channel)), "band": freq.map_or("", band),
            "width_mhz": info.width_mhz, "tx_power_dbm": info.txpower_dbm,
            "standard": standard(tx_mode), "rx_mode": link.rx_mode, "tx_mode": link.tx_mode,
-           "signal_dbm": station.signal_dbm.or(link.signal_dbm), "signal_avg_dbm": station.signal_avg_dbm, "rx_mbps": link.rx_mbps,
+           "signal_dbm": station.signal_dbm, "signal_avg_dbm": station.signal_avg_dbm, "rx_mbps": link.rx_mbps,
            "tx_mbps": station.tx_mbps.or(link.tx_mbps), "expected_mbps": station.expected_mbps,
            "connected_secs": station.connected_secs, "beacon_loss": station.beacon_loss,
            "rx_packets": station.rx_packets, "rx_bytes": station.rx_bytes, "tx_bytes": station.tx_bytes,

@@ -893,8 +893,10 @@ void SceneEngine::applyForSource(bool onAc) {
     if (action==sceneplan::SourceAction::Coalesce) {
         // The scene being applied right now is already the right one: drop a stale request for the other source
         // instead of applying it and then switching straight back.
-        pending_.clear();
-        pendingAuto_ = false;
+        if (pendingAuto_) {
+            pending_.clear();
+            pendingAuto_ = false;
+        }
         return;
     }
     nextAuto_ = true;
@@ -902,7 +904,13 @@ void SceneEngine::applyForSource(bool onAc) {
 }
 
 void SceneEngine::apply(const QString &name) {
-    if (busy_) { pending_ = name; pendingAuto_ = std::exchange(nextAuto_, false); return; }
+    if (busy_) {
+        const bool automatic = std::exchange(nextAuto_, false);
+        if (automatic && !pending_.isEmpty() && !pendingAuto_) return;
+        pending_ = name;
+        pendingAuto_ = automatic;
+        return;
+    }
     const auto s = load(name);
     if (!s) {
         nextAuto_ = false;
@@ -1539,9 +1547,13 @@ void SceneEngine::finish() {
     }
     if (!pending_.isEmpty()) {
         const QString n = std::exchange(pending_, QString());
-        nextAuto_ = std::exchange(pendingAuto_, false);
-        if (nextAuto_ && (gameSessions() > 0 || gameStarting() || gameSceneActive())) { nextAuto_ = false; deferred_ = true; return; }
-        apply(n);
+        if (!std::exchange(pendingAuto_, false)) {
+            apply(n);
+        } else if (auto_.enabled && ac_) {
+            const bool onAc = *ac_ && !flapHold_;
+            const auto target = onAc ? auto_.onAc : auto_.onBattery;
+            if (target != current_) applyForSource(onAc);
+        }
         return;
     }
     if (ok_ && published) armVerify();
@@ -1583,14 +1595,21 @@ void SceneEngine::armVerify() {
 
 void SceneEngine::verifyPass() {
     if (verifyTriesLeft_ <= 0 || busy_ || !auto_.enabled || auto_.paused || expectedProfile_.isEmpty()) return;
+    const auto source = onAc();
+    if (!source || calibrationHold() || (*source && flapHold_)
+        || (*source ? auto_.onAc : auto_.onBattery) != current_) return;
     const auto state = readObject(stateFile());
-    if (gameSessions() > 0 || gameStarting() || state.value("active").toString() != current_
+    if (gameSessions() > 0 || gameStarting() || !state.value("game_scene").toString().isEmpty()
+        || state.value("active").toString() != current_
         || state.value("scene_generation").toString() != transactionId_) return;
     const auto cur = pp::currentProfile(pp::primaryHandler());
     if (!cur || cur->isEmpty() || *cur == expectedProfile_) return;
     --verifyTriesLeft_;
+    const QString target = current_;
+    const QString generation = transactionId_;
     Q_EMIT finished(QString(), true, {QStringLiteral("the firmware changed the power profile to %1 after the switch — applying '%2' again")
-                                          .arg(HomeTab::profileLabel(*cur), current_)});
+                                          .arg(HomeTab::profileLabel(*cur), target)});
+    if (busy_ || transactionId_ != generation) return;
     nextAuto_ = false;  // one retry only: it is not verified again
-    apply(current_);
+    apply(target);
 }

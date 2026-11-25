@@ -829,7 +829,10 @@ void HealthTab::drainKmsg() {
 }
 
 void HealthTab::scan() {
-    if (busy_) return;
+    if (busy_) {
+        if (!needsRoot_) debounce_->start();
+        return;
+    }
     if (!QFileInfo(helperPath()).isExecutable()) {
         source_->setText(QStringLiteral("tune-helper is not installed."));
         scanWarning_->setText(tr("Kernel event monitoring is unavailable: tune-profile-helper was not found."));
