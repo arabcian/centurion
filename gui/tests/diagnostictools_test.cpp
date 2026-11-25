@@ -208,6 +208,26 @@ int main(int argc, char **argv) {
     CHECK(has(snap, Level::Review, QStringLiteral("lost its driver")));
     CHECK(has(snap, Level::Info, QStringLiteral("6.12 → 6.13")));
     CHECK(diagnostictools::hardwareSnapshot(before, QStringLiteral("then"), before).verdict() == Level::Ok);
+    // Boot parameters stay readable; identifying values are hidden.
+    const QString bp = diagnostictools::bootParameters(QStringLiteral(
+        "BOOT_IMAGE=/vmlinuz root=UUID=0b0e6a1c-1111-2222-3333-444455556666 rw quiet amd_pstate=active nvidia_drm.modeset=1 "
+        "rd.luks.uuid=abcd resume=/dev/nvme0n1p2 mitigations=off zswap.compressor=zstd foo=00:11:22:33:44:55"));
+    CHECK(bp.contains("amd_pstate=active") && bp.contains("zswap.compressor=zstd") && bp.contains("mitigations=off") && bp.contains("rw"));
+    CHECK(bp.contains("root=…") && bp.contains("rd.luks.uuid=…") && bp.contains("resume=…") && bp.contains("foo=…") && !bp.contains("0b0e6a1c"));
+    // An old baseline that hid a value is not a change once the value becomes visible; module versions are shown.
+    QJsonObject oldBase = before, newNow = before;
+    oldBase.insert("host/cmdline", "amd_pstate=… quiet"); newNow.insert("host/cmdline", "amd_pstate=active quiet");
+    oldBase.insert("module/ahci", "loaded"); newNow.insert("module/ahci", "in-tree");
+    newNow.insert("module/zenpower", "0.5.0"); newNow.insert("module/btusb", "in-tree"); newNow.insert("host/kernel", "6.13");
+    const diag::Report hs = diagnostictools::hardwareSnapshot(oldBase, QStringLiteral("then"), newNow);
+    CHECK(!has(hs, Level::Info, QStringLiteral("Boot Parameters changed")));
+    bool sawZen = false, sawAhci = false, sawBt = false;
+    for (const auto &table : hs.tables) for (const auto &row : table.rows) {
+        if (row.value(0) == "zenpower") sawZen = row.value(3) == "0.5.0";
+        if (row.value(0) == "ahci") sawAhci = true;
+        if (row.value(0) == "btusb") sawBt = row.value(3) == "in-tree (kernel 6.13)";
+    }
+    CHECK(sawZen && !sawAhci && sawBt);
 
     // ── S04: a GPU trained narrower than both ends allow.
     const QString gpu = QStringLiteral("/sys/devices/pci0000:00/0000:01:00.0");

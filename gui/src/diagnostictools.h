@@ -16,6 +16,9 @@ namespace diagnostictools {
 // S01. The inventory compared against the baseline: no serial numbers, MACs or UUIDs; boot parameters
 // redacted except an allowlist; no link speeds (they change with power saving).
 QJsonObject snapshot();
+/// /proc/cmdline for the snapshot: every parameter readable, values that identify a disk, a LUKS volume or a
+/// network address (root=, resume=, cryptdevice=, rd.luks.*, ip=, UUIDs, MACs) shown as "name=…".
+QString bootParameters(const QString &raw);
 diag::Report hardwareSnapshot(const QJsonObject &baseline, const QString &capturedAt, const QJsonObject &now);
 /// Empty = saved, else the reason.
 QString saveHardwareBaseline();

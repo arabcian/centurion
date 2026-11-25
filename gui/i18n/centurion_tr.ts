@@ -24144,6 +24144,18 @@ Günlük okunamıyor, bu yüzden onu tutmak hiçbir şeyi korumaz ve yalnızca b
         <source>%1 changed connection state during capture</source>
         <translation>%1 bağlantı durumu okuma sırasında değişti</translation>
     </message>
+        <message>
+            <source>in-tree</source>
+            <translation>çekirdekle birlikte</translation>
+        </message>
+        <message>
+            <source>in-tree (kernel %1)</source>
+            <translation>çekirdekle birlikte (çekirdek %1)</translation>
+        </message>
+        <message>
+            <source>loaded (version not recorded)</source>
+            <translation>yüklü (sürüm kaydedilmemiş)</translation>
+        </message>
 </context>
     <context>
         <name>DiagReportView</name>

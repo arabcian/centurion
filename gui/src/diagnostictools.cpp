@@ -29,20 +29,49 @@ static QString baselinePath() { return diagsrc::dataDir() + QStringLiteral("/har
 
 // ── S01 Hardware snapshot ─────────────────────────────────────────────────────
 
-static QString cmdline() {
-    // Values are kept only for an allowlist of hardware settings; every other parameter keeps its name only
-    // (cryptdevice=, root=UUID=… and the like never reach the file).
-    static const QSet<QString> allow = {"pcie_aspm", "iommu", "amd_iommu", "intel_iommu", "amd_pstate", "nvme_core.default_ps_max_latency_us",
-        "amdgpu.dc", "nvidia-drm.modeset", "nvidia_drm.modeset", "nvidia-drm.fbdev", "nvidia_drm.fbdev", "mem_sleep_default", "zswap.enabled",
-        "transparent_hugepage", "mitigations", "preempt", "processor.max_cstate", "pcie_port_pm", "acpi_osi", "acpi_backlight"};
+QString bootParameters(const QString &raw) {
+    // Parameters whose value names a disk, a LUKS / LVM / ZFS volume, a key or a network address: the name stays, the value
+    // does not reach the file. Any other value that looks like a UUID, a MAC or a by-id path is hidden the same way.
+    static const QSet<QString> identifying = {"root", "resume", "resume_offset", "cryptdevice", "cryptkey", "crypto", "ip", "nfsroot", "netroot",
+        "zfs", "root_trim", "systemd.machine_id", "boot", "rootfstype_uuid", "BOOT_IMAGE", "initrd", "sshkey", "rd.neednet", "bootif", "BOOTIF"};
+    static const QRegularExpression nameRe(QStringLiteral("^[a-zA-Z0-9_.-]{1,80}$"));
+    static const QRegularExpression idRe(QStringLiteral(
+        "[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}|([0-9a-fA-F]{2}[:-]){5}[0-9a-fA-F]{2}|"
+        "/dev/disk/by-|UUID=|LABEL=|[0-9a-fA-F]{16,}"));
     QStringList flags;
-    for (const QString &token : rd(QStringLiteral("/proc/cmdline")).split(QLatin1Char(' '), Qt::SkipEmptyParts)) {
+    for (const QString &token : raw.split(QLatin1Char(' '), Qt::SkipEmptyParts)) {
         const QString name = token.section(QLatin1Char('='), 0, 0);
-        if (!QRegularExpression(QStringLiteral("^[a-zA-Z0-9_.-]{1,80}$")).match(name).hasMatch()) continue;
-        flags << (allow.contains(name) || !token.contains(QLatin1Char('=')) ? token.left(120) : name + QStringLiteral("=…"));
+        if (!nameRe.match(name).hasMatch()) continue;
+        const bool secret = identifying.contains(name) || name.startsWith(QLatin1String("rd.luks.")) || name.startsWith(QLatin1String("luks."))
+            || name.startsWith(QLatin1String("rd.lvm.")) || name.startsWith(QLatin1String("rd.md.")) || name.startsWith(QLatin1String("rd.zfs"))
+            || name.startsWith(QLatin1String("ip6")) || idRe.match(token.section(QLatin1Char('='), 1)).hasMatch();
+        flags << (!token.contains(QLatin1Char('=')) || !secret ? token.left(120) : name + QStringLiteral("=…"));
     }
     flags.sort();
     return flags.join(QLatin1Char(' '));
+}
+
+static QString cmdline() { return bootParameters(rd(QStringLiteral("/proc/cmdline"))); }
+
+// Two snapshots' boot parameters, where an older snapshot hid a value ("name=…") that a newer one shows.
+static bool sameBootParameters(const QString &a, const QString &b) {
+    const QStringList x = a.split(QLatin1Char(' '), Qt::SkipEmptyParts), y = b.split(QLatin1Char(' '), Qt::SkipEmptyParts);
+    if (x.size() != y.size()) return false;
+    for (int i = 0; i < x.size(); ++i) {
+        if (x.at(i) == y.at(i)) continue;
+        const QString nx = x.at(i).section(QLatin1Char('='), 0, 0), ny = y.at(i).section(QLatin1Char('='), 0, 0);
+        if (nx != ny || !(x.at(i).endsWith(QStringLiteral("=…")) || y.at(i).endsWith(QStringLiteral("=…")))) return false;
+    }
+    return true;
+}
+
+// Snapshot value of a loaded module: its own version when it declares one; "in-tree" for a module built with the
+// kernel (its version is the kernel's, shown from the snapshot's kernel row); an out-of-tree module without one
+// keeps a short srcversion so a rebuild still shows as a change. "loaded" is what older snapshots recorded.
+static QString moduleText(const QString &v, const QString &kernel) {
+    if (v == QLatin1String("in-tree")) return kernel.isEmpty() ? tr("in-tree") : tr("in-tree (kernel %1)").arg(kernel);
+    if (v == QLatin1String("loaded")) return tr("loaded (version not recorded)");
+    return v;
 }
 
 QJsonObject snapshot() {
@@ -70,8 +99,14 @@ QJsonObject snapshot() {
     for (const QString &line : rd(QStringLiteral("/proc/modules"), 1 << 20).split(QLatin1Char('\n'))) {
         const QString mod = line.section(QLatin1Char(' '), 0, 0);
         if (mod.isEmpty() || !QRegularExpression(QStringLiteral("^[a-zA-Z0-9_]+$")).match(mod).hasMatch()) continue;
-        const QString v = rd(QStringLiteral("/sys/module/") + mod + QStringLiteral("/version"));
-        o.insert(QStringLiteral("module/") + mod, v.isEmpty() ? QStringLiteral("loaded") : v);
+        const QString base = QStringLiteral("/sys/module/") + mod + QLatin1Char('/');
+        QString v = rd(base + QStringLiteral("version"));
+        if (v.isEmpty()) {
+            const QString taint = rd(base + QStringLiteral("taint")), src = rd(base + QStringLiteral("srcversion"));
+            const bool outOfTree = taint.contains(QLatin1Char('O')) || taint.contains(QLatin1Char('E'));
+            v = !outOfTree ? QStringLiteral("in-tree") : src.isEmpty() ? QStringLiteral("out-of-tree") : QStringLiteral("out-of-tree, srcversion ") + src.left(8);
+        }
+        o.insert(QStringLiteral("module/") + mod, v.left(120));
     }
     return o;
 }
@@ -118,7 +153,7 @@ Report hardwareSnapshot(const QJsonObject &base, const QString &capturedAt, cons
                                                              {"host/microcode", tr("CPU microcode")}, {"host/cmdline", tr("Boot Parameters")}};
     for (const auto &[k, label] : hostKeys) {
         const QString a = base.value(QLatin1String(k)).toString(), b = now.value(QLatin1String(k)).toString();
-        const bool changed = !base.isEmpty() && a != b;
+        const bool changed = !base.isEmpty() && (QLatin1String(k) == QLatin1String("host/cmdline") ? !sameBootParameters(a, b) : a != b);
         host.add({label, base.isEmpty() ? QStringLiteral("—") : a, b}, changed ? Level::Review : Level::Info);
         if (changed) r.add(Level::Info, tr("%1 changed").arg(label), QStringLiteral("%1 → %2").arg(a.left(160), b.left(160)));
     }
@@ -177,10 +212,14 @@ Report hardwareSnapshot(const QJsonObject &base, const QString &capturedAt, cons
     for (auto it = now.begin(); it != now.end(); ++it) if (it.key().startsWith(QStringLiteral("module/"))) mk.insert(it.key());
     QStringList mods = mk.values();
     mods.sort();
+    const QString k0 = base.value(QStringLiteral("host/kernel")).toString(), k1 = now.value(QStringLiteral("host/kernel")).toString();
     for (const QString &k : mods) {
         const QString x = base.value(k).toString(), y = now.value(k).toString();
         if (x == y) continue;
-        mod.add({k.mid(7), x.isEmpty() ? tr("loaded now") : y.isEmpty() ? tr("not loaded now") : tr("version"), x.isEmpty() ? QStringLiteral("—") : x, y.isEmpty() ? QStringLiteral("—") : y});
+        // An older baseline recorded only "loaded": no version to compare, not a change.
+        if (!x.isEmpty() && !y.isEmpty() && (x == QLatin1String("loaded") || y == QLatin1String("loaded"))) continue;
+        mod.add({k.mid(7), x.isEmpty() ? tr("loaded now") : y.isEmpty() ? tr("not loaded now") : tr("version"),
+                 x.isEmpty() ? QStringLiteral("—") : moduleText(x, k0), y.isEmpty() ? QStringLiteral("—") : moduleText(y, k1)});
     }
     if (!mod.rows.isEmpty()) {
         mod.note = tr("Modules load on demand (a USB stick, a VPN); a module not loaded now is not necessarily missing.");
