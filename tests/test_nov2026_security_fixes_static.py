@@ -34,7 +34,7 @@ class Audit20261119(unittest.TestCase):
         guards = s[s.index('let op = obj.get("op")'):s.index('let mut out = match op')]
         self.assertIn('op == Some("boot") && std::env::var_os("PKEXEC_UID").is_some()', guards)
         self.assertRegex(guards, r'(?s)Some\("apply" \| "probe_uv_lock" \| "set_boot" \| "clear_boot"\).*?unlock::refuse')
-        self.assertRegex(guards, r'(?s)Some\("apply" \| "reset" \| "probe_uv_lock"\).*?refuse_during_calibration')
+        self.assertRegex(guards, r'(?s)Some\("apply" \| "reset" \| "probe_uv_lock" \| "boot"\).*?refuse_during_calibration')
 
     def test_cen01_guard_uses_non_bypass_queue(self):
         s = source(NET)
@@ -61,13 +61,14 @@ class Audit20261119(unittest.TestCase):
     def test_cen04_hold_requires_successful_apply_and_reset(self):
         s = source(UVHELP)
         self.assertEqual(s.count('if hold && out["ok"] == true'), 2)
-        self.assertIn('apply_atomic(&intel_uv::reset_profile())', s)
+        self.assertIn('apply(&intel_uv::reset_profile())', s)
 
     def test_cen05_failed_intel_profile_does_not_commit_applied(self):
         s = source(UV)
         self.assertIn('fn fully_applied(', s)
-        self.assertIn('hold_live = fully_applied(&result)', s)
-        self.assertEqual(s.count('if fully_applied(&result) { applied = Some(ac); }'), 2)
+        self.assertIn('if fully_applied(&result) { hold_live = true; hold_retry.reset(); }', s)
+        self.assertEqual(s.count('if fully_applied(&result) { applied = Some(ac); retry.reset(); }'), 2)
+        self.assertIn('self.exhausted = self.n >= Self::TRIES || result["state"] == "unknown";', s)
 
     def test_cen06_restore_tar_nonzero_is_error(self):
         s = source(BACKUP)

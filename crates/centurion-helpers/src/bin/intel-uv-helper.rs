@@ -92,7 +92,7 @@ fn run() -> Value {
     if matches!(op, Some("apply" | "probe_uv_lock" | "set_boot" | "clear_boot")) {
         if let Some(r) = centurion_helpers::unlock::refuse(&req) { return r; }
     }
-    if matches!(op, Some("apply" | "reset" | "probe_uv_lock")) {
+    if matches!(op, Some("apply" | "reset" | "probe_uv_lock" | "boot")) {
         if let Some(r) = centurion_helpers::refuse_during_calibration() { return r; }
     }
     let mut out = match op {
@@ -118,7 +118,7 @@ fn run() -> Value {
             Err(e) => e,
         },
         Some("reset") => {
-            let mut out = intel_uv::apply_atomic(&intel_uv::reset_profile());
+            let mut out = intel_uv::apply(&intel_uv::reset_profile());
             if out["ok"] == true { centurion_helpers::ocjournal::record("cpu_uv", "reset"); }
             if hold && out["ok"] == true {
                 if let Err(e) = write_hold(None) { out["hold_error"] = json!(e); out["ok"] = json!(false); }
