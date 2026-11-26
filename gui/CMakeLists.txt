@@ -255,7 +255,11 @@ elseif(CENTURION_PGO STREQUAL "use")
             # moc output lives under each build dir, so its functions' source
             # locations differ between the two builds; GCC then drops the
             # profile for that glue code (harmless) instead of failing.
-            -Wno-coverage-mismatch)
+            -Wno-coverage-mismatch
+            # The training run is multithreaded, so racing counter updates can
+            # leave the profile flow-inconsistent ("corrupted profile info");
+            # let GCC smooth it instead of failing the build.
+            -fprofile-correction)
     endif()
 elseif(NOT CENTURION_PGO STREQUAL "")
     message(FATAL_ERROR "CENTURION_PGO must be '', 'generate' or 'use'")
