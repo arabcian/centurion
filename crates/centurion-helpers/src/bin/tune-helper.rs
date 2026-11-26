@@ -751,6 +751,16 @@ fn apply_values_checked(st: &mut State, values: &Map<String, Value>, game: bool,
     // A successful write() is not proof the value is in effect: the kernel may clamp it, and firmware or
     // another tool may change it right after (the EC re-programs limits on a power-profile write). Read every
     // file back once, after a short settle; a mismatch is reported, `ok` stays as it was.
+    // A later row may deliberately overwrite a file an earlier one wrote (per-CCD rows follow the global
+    // row): only the last row to write a file is judged by what it reads back.
+    let last: std::collections::HashMap<PathBuf, usize> = verify.iter().enumerate().map(|(n, v)| (v.2.clone(), n)).collect();
+    let mut n = 0;
+    verify.retain(|(i, _, f, _, _)| {
+        let keep = last[f] == n;
+        n += 1;
+        if !keep { results[*i]["readback_expected"] = json!(results[*i]["readback_expected"].as_u64().unwrap_or(1).saturating_sub(1)); }
+        keep
+    });
     if !verify.is_empty() {
         std::thread::sleep(VERIFY_SETTLE);
         let mut bad: std::collections::BTreeMap<usize, Vec<String>> = std::collections::BTreeMap::new();
