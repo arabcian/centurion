@@ -3,6 +3,7 @@
 #include "systools.h"
 #include "theme.h"
 #include "userhelper.h"
+#include "privileged.h"
 
 #include <QComboBox>
 #include <QDateTime>
@@ -144,10 +145,15 @@ void MemTestBox::start() {
     run_->setEnabled(false);
     status_->setText(tr("Reading the BIOS memory timings…"));
     // The snapshot is read before the test: what the result is about.
-    userhelper::run(QJsonObject{{QStringLiteral("op"), QStringLiteral("mem_snapshot")}}, this, [this, p](const QJsonObject &r) {
-        QJsonObject bios = r;
-        if (r.contains(QStringLiteral("error")) && !r.contains(QStringLiteral("available"))) bios[QStringLiteral("available")] = false;
-        launch(p, bios);
+    privileged::run(privileged::helperPath(QStringLiteral("legion-profile-helper")), QJsonObject{{"memory", "all"}},
+                    this, [this, p](const privileged::Result &result) {
+        const auto umc = result.json.value("umc").toObject();
+        if (result.ok() && !umc.value("timings").toObject().isEmpty()) {
+            launch(p, QJsonObject{{"available", true}, {"umc", umc}});
+            return;
+        }
+        userhelper::run(QJsonObject{{QStringLiteral("op"), QStringLiteral("mem_snapshot")}}, this,
+                        [this, p](const QJsonObject &bios) { launch(p, bios); });
     });
 }
 
@@ -245,7 +251,16 @@ void MemTestBox::conclude(int exitCode, bool crashed, qint64 seconds) {
 }
 
 QString MemTestBox::biosText(const QJsonObject &bios) {
-    if (!bios.value(QStringLiteral("available")).toBool()) return tr("not readable on this machine");
+    const auto umc = bios.value("umc").toObject();
+    if (!umc.isEmpty()) {
+        QStringList summary{tr("%1 MT/s").arg(umc.value("speed_mts").toInt())};
+        const auto timings = umc.value("timings").toObject();
+        for (const char *key : {"tCL", "tRCDRD", "tRCDWR", "tRP", "tRAS"}) {
+            if (timings.contains(key)) summary << QStringLiteral("%1 %2").arg(QString::fromLatin1(key)).arg(timings.value(key).toInt());
+        }
+        return summary.join(QStringLiteral(" · "));
+    }
+    if (!bios.value(QStringLiteral("available")).toBool()) return tr("No timings recorded for this run");
     QStringList parts;
     const QJsonObject manual = bios.value(QStringLiteral("manual")).toObject();
     for (auto it = manual.begin(); it != manual.end(); ++it) parts << it.key() + QLatin1Char(' ') + QString::number(it.value().toInt());

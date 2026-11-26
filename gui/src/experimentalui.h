@@ -31,18 +31,18 @@ namespace experimentalui {
 // the same accent as primary actions; icons have no semantic side effects.
 inline QIcon navigationIcon(const QString &page) {
     const auto draw = [&page](const char *color) {
-        QPixmap px(48, 48);
+        QPixmap px(64, 64);
         px.setDevicePixelRatio(2.0);
         px.fill(Qt::transparent);
         QPainter p(&px);
-        p.scale(24.0 / 18, 24.0 / 18);
+        p.scale(32.0 / 18, 32.0 / 18);
         p.setRenderHint(QPainter::Antialiasing);
         p.setPen(QPen(QColor(QString::fromLatin1(color)), 1.55,
                       Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
         p.setBrush(Qt::NoBrush);
         if (page == QLatin1String("Ryzen Curve") || page == QLatin1String("AMD GPU")) {
             p.setPen(Qt::NoPen);
-            p.setBrush(QColor("#ED6934"));
+            p.setBrush(QColor("#ED1C24"));
             p.drawPolygon(QPolygonF{{2,2},{16,2},{16,16},{12,12},{12,6},{6,6}});
             p.drawPolygon(QPolygonF{{2,7},{6,11},{6,12},{10,12},{14,16},{2,16}});
         } else if (page == QLatin1String("NVIDIA Curve")) {
@@ -54,6 +54,14 @@ inline QIcon navigationIcon(const QString &page) {
             eye.cubicTo(6,6,11,5,14,9);
             eye.cubicTo(11,12,8,12,7,9);
             p.drawPath(eye);
+        } else if (page == QLatin1String("Memory")) {
+            p.drawRoundedRect(QRectF(1.5,5,15,8),1,1);
+            for (int x : {4,8,12}) p.drawRect(QRectF(x,7,2,3));
+            for (int x : {4,6,8,12,14}) p.drawLine(QPointF(x,13),QPointF(x,15));
+        } else if (page == QLatin1String("GPU")) {
+            p.drawRoundedRect(QRectF(2,4,14,10),1,1);
+            p.drawEllipse(QPointF(7,9),3,3);
+            p.drawLine(QPointF(12,7),QPointF(14,7));
         } else if (page == QLatin1String("Favorites")) {
             p.drawPolygon(QPolygonF{{9,2},{11,6.5},{16,7},{12.3,10.5},{13.3,15.6},
                                     {9,13.2},{4.7,15.6},{5.7,10.5},{2,7},{7,6.5}});
@@ -113,11 +121,13 @@ inline QIcon navigationIcon(const QString &page) {
         p.end();
         return px;
     };
-    QIcon icon;
-    icon.addPixmap(draw(theme::ACCENT), QIcon::Normal, QIcon::Off);
-    icon.addPixmap(draw(theme::ACCENT), QIcon::Normal, QIcon::On);
-    icon.addPixmap(draw(theme::ACCENT), QIcon::Active, QIcon::Off);
-    icon.addPixmap(draw(theme::ACCENT), QIcon::Active, QIcon::On);
+    const char *color = theme::ACCENT;
+    if (page == "Intel Undervolt") color = "#007DC3";
+    else if (page == "Health" || page == "GPU") color = theme::OK;
+    else if (page == "Memory" || page == "Scenes") color = theme::PURPLE;
+    else if (page == "Firmware" || page == "Optimizations") color = theme::INFO;
+    else if (page == "Lighting") color = theme::WARN;
+    QIcon icon(draw(color));
     return icon;
 }
 

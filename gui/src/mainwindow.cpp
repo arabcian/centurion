@@ -715,7 +715,7 @@ void MainWindow::setExperimentalCollapsed(bool collapsed) {
     for (const auto *button : std::as_const(expNavButtons_))
         expandedWidth = std::max(expandedWidth, button->fontMetrics().horizontalAdvance(button->property("navLabel").toString()) + 54);
     if (collapsed) {
-        expRail_->setFixedWidth(48);
+        expRail_->setFixedWidth(60);
     } else {
         const int maximum = std::max(480, expandedWidth);
         expRail_->setMaximumWidth(maximum);
@@ -730,7 +730,8 @@ void MainWindow::setExperimentalCollapsed(bool collapsed) {
     lockButton_->setProperty("collapsed", collapsed);
     lockButton_->style()->unpolish(lockButton_);
     lockButton_->style()->polish(lockButton_);
-    const QSize iconSize = collapsed ? QSize(24, 24) : QSize(21, 21);
+    const QSize iconSize = collapsed ? QSize(32, 32) : QSize(21, 21);
+    lockButton_->setFixedHeight(collapsed ? 44 : RAIL_BOX_HEIGHT);
     lockButton_->setIconSize(collapsed ? iconSize : QSize(22, 22));
     expToggle_->setText(collapsed ? QString() : tr("Hide labels"));
     expToggle_->setAccessibleName(collapsed ? tr("Expand navigation") : tr("Hide labels"));
@@ -740,12 +741,14 @@ void MainWindow::setExperimentalCollapsed(bool collapsed) {
     expOperations_->setIcon(experimentalui::navigationIcon(QStringLiteral("Operations")));
     expFavorites_->setIcon(experimentalui::navigationIcon(QStringLiteral("Favorites")));
     for (QPushButton *box : {expToggle_, expOperations_, expFavorites_}) {
+        box->setFixedHeight(collapsed ? 44 : RAIL_BOX_HEIGHT);
         box->setIconSize(iconSize);
         box->setProperty("collapsed", collapsed);
         box->style()->unpolish(box);
         box->style()->polish(box);
     }
     for (auto *button : std::as_const(expNavButtons_)) {
+        button->setMinimumHeight(std::max(collapsed ? 44 : 32, button->fontMetrics().height() + 12));
         button->setIconSize(iconSize);
         button->setText(collapsed ? QString() : button->property("navLabel").toString());
         button->setProperty("collapsed", collapsed);
@@ -760,8 +763,8 @@ void MainWindow::setExperimentalCollapsed(bool collapsed) {
     expRail_->layout()->setSizeConstraint(collapsed ? QLayout::SetNoConstraint : QLayout::SetDefaultConstraint);
     expRail_->layout()->invalidate();
     if (collapsed) {
-        expRail_->setFixedWidth(48);
-        expSplitter_->setSizes({48, std::max(1, expSplitter_->width() - 49)});
+        expRail_->setFixedWidth(60);
+        expSplitter_->setSizes({60, std::max(1, expSplitter_->width() - 61)});
     }
     if (expUserToggled_) {
         QSettings st(QSettings::IniFormat, QSettings::UserScope, QStringLiteral("centurion"), QStringLiteral("gui"));

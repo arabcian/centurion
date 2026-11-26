@@ -7,7 +7,7 @@ main, health, intel, scenes = [read(f) for f in ('mainwindow.cpp', 'healthtab.cp
 fw, ryzen, nvidia, home, optimize, amd, lighting, ui = [read(f) for f in ('fwattrtab.cpp', 'ryzentab.cpp', 'nvidiatab.cpp', 'hometab.cpp', 'optimizetab.cpp', 'amdgputab.cpp', 'lightingtab.cpp', 'experimentalui.h')]
 checks = {
     'Main menu uses canonical hardware-gated tabs, not duplicated panels': 'tabs_->indexOf(page)' in main and 'rebuildExperimentalNavigation()' in main,
-    'Compact rail is actually implemented': 'expRail_->setFixedWidth(48)' in main and 'expSplitter_->setSizes' in main and 'ui/rail_width' in main and 'button->setMinimumHeight(std::max(32' in main,
+    'Compact rail is actually implemented': 'expRail_->setFixedWidth(60)' in main and 'expSplitter_->setSizes' in main and 'ui/rail_width' in main and 'button->setMinimumHeight(std::max(32' in main,
     'Health keeps one searchable section list in both modes': 'split->addWidget(rail);' in health and 'healthPagePicker' not in health,
     'Health deep links select through the navigation tree': 'navigation_->setCurrentItem(item)' in health,
     'System tools keep original toolPages, without a second tree': 'toolNavigation_' not in health and 'toolPages_->addWidget(page)' in health,

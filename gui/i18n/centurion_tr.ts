@@ -9694,8 +9694,8 @@ Hedef: %2</translation>
             </translation>
         </message>
         <message>
-            <source>not readable on this machine</source>
-            <translation>bu makinede okunamıyor</translation>
+            <source>No timings recorded for this run</source>
+            <translation>Bu test için zamanlama kaydedilmemiş</translation>
         </message>
         <message>
             <source>%1 MT/s</source>
