@@ -1410,7 +1410,12 @@ void SceneEngine::start(const Scene &s) {
                         stepDisposition_ = QStringLiteral("partial");
                         msg += QStringLiteral("\n") + exceptions.join(QLatin1Char('\n'));
                     }
-                    if (!r.ok()) { done(false, r.message() + QStringLiteral("\n") + msg); return; }
+                    // The helper attempted the preset (per-key results) but some knobs did not stick: that is a partial
+                    // scene, already listed above — not a failed one (not every optimization knob matters).
+                    if (!r.ok() && !(r.reached && r.json.value("results").isArray() && !exceptions.isEmpty())) {
+                        done(false, r.message() + QStringLiteral("\n") + msg);
+                        return;
+                    }
                     done(true, msg);
                 }, 120000);
             };
