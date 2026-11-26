@@ -79,7 +79,6 @@ preset from the GUI — enabling the service early is harmless.
         nvcurve-root-helper                                     (root:root 0700)
     /usr/share/polkit-1/actions/com.centurion.policy
     /etc/polkit-1/rules.d/49-centurion.rules
-    /usr/lib/udev/rules.d/70-centurion-lighting.rules   keyboard lighting (uaccess)
     /etc/xdg/autostart/centurion.desktop  starts in the tray on login
     /etc/init.d/nvcurve-autoload                     OpenRC (GPU profile)
     /etc/init.d/centurion-tune                             OpenRC (tuning boot preset, runlevel boot)
@@ -373,12 +372,11 @@ backlight is a level selector on Home (the kernel's `platform::kbd_backlight`).
   processing that exists only in Windows; profiles containing them are shown
   and kept, not edited. Host-driven per-frame colour (LLT's Aurora protocol)
   is ignored by the Gen10 firmware.
-- **Access.** `lighting-helper` runs as the user: the udev rule
-  `70-centurion-lighting.rules` tags the controller's hidraw node
-  `uaccess` (systemd-logind or elogind). It applies to nodes created after the
-  rule is installed — re-login or replug once; until then the tab offers
-  *Use administrator rights* (pkexec, polkit action
-  `com.centurion.lighting.write`). Nothing at login ever prompts.
+- **Access.** There is no udev `uaccess` rule: a process of the session must not be able to send
+  arbitrary HID reports to the controller. `lighting-helper` is tried as the user first (it only
+  succeeds if the node happens to be readable) and otherwise runs through pkexec (polkit action
+  `com.centurion.lighting.write`: silent for a wheel/sudo admin at the machine, password for anyone
+  else). An older install's `70-centurion-lighting.rules` is removed by the installer.
 - Protocol: `crates/centurion-spectrum` (feature reports, report id 7, from
   LenovoLegionToolkit; key legends after legion-spectrum-control, MIT).
 

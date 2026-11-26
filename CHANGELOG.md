@@ -21,6 +21,17 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions follo
   shortcut, D-Bus, drift watch) and anything while the window is closed reuse approved values only: an edited scene
   is refused until it is applied once from the unlocked window. After this update, apply each automatic scene once
   by hand.
+- Scene `command` line: it now needs the same approval as the values root writes (new gated `tune-helper` op
+  `scene_command`). Applying a scene from the unlocked window approves its command; automatic applies run it only if
+  that exact line was approved before. Apply each scene that has a command once by hand.
+- Keyboard lighting: the udev `uaccess` rule on the ITE controller's hidraw node is gone (a session process could
+  send it any HID report); lighting goes through `lighting-helper` and pkexec (silent for a wheel/sudo admin at the
+  machine). The installer removes the old rule.
+- `health-reader` (kernel-log scan, ksnap, boot history…): the polkit default for `com.centurion.health.read` is now
+  `auth_admin_keep` instead of `yes`; only a wheel/sudo admin at the machine gets it silently.
+- Scene files are opened with the owning user's file-system identity (`setfsuid`), so a symlinked `~/.config` or
+  `scenes` directory cannot make root read a file the user cannot.
+- CI: every `uses:` in the workflow is pinned to a commit SHA (tag or branch noted in a comment).
 - New `tune-admin-helper` (polkit `com.centurion.tune.admin`, the administrator password every time): only the
   unlock PIN. Boot preset, preset store, boot calibration, wake sources and the wireless power lock stay in
   `tune-helper`: no password, but refused unless the window is unlocked with the PIN, like every other new value.
@@ -35,13 +46,32 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions follo
 - Intel undervolt: no offset below -200 mV on any path (pkexec, boot file, daemon, scenes, search), -50 mV on Core
   Ultra CPUs. The Intel tab's spin boxes follow the CPU's floor.
 
+- Keyboard lighting administrator rights: the Lighting page drops them when the Centurion window closes (reading
+  the keyboard again needs *Use administrator rights*), and the tray's Keyboard Lighting menu can enable them; those
+  end one minute after the tray menu closes. Reload keeps using rights that were granted.
+
 ### Changed
 - 61 rows that neither calibration nor Autotune touch and no built-in preset sets (network latency and buffering, the
   Wi-Fi/Bluetooth rows, elevator and discard fine tuning, NUMA/KSM/khugepaged internals, unmeasured scheduler feature
   bits) moved off the Optimizations tab to three System tools pages: Network tuning, Storage tuning and Kernel tuning.
   Same keys, presets, Restore originals and boot defaults; only the page and its own Apply checked button differ.
 
+### Fixed
+- Health → Backups → Restore of an increment: the whole chain is checked before the first image is unpacked — each
+  image's decompressor (a chain may mix gzip/xz/zstd), that the key or passphrase opens every encrypted image, and
+  that no image is empty. Before, a decompressor missing at step 3 or a foreign key at step 2 stopped the restore
+  after steps 1–2 had already been written to the target (which can be the running system).
+
 ### Added
+- What's new window after an update, starting with *Important*: the PIN, approving scenes and presets once, the
+  lighting administrator rights and re-installing everything together. *Don't show again* hides it for good.
+- Optimize: *Apply preset* in the experimental layout sits in the preset row (it was lost from the layout and floated
+  over it); the greyed *Apply checked* explains why while locked.
+- Health → Backups: every backup (system image and configuration backup) now also writes `<archive>.RESTORE.txt`
+  beside it — a Turkish/English, step-by-step guide to restoring that exact archive by hand with Centurion not
+  running (live USB): plain, encrypted (age key or passphrase), incremental (every file of the chain in order, without
+  tar's own `--listed-incremental`), or both; the exact `tar`/`age`/decompressor commands and flags, mount points,
+  fstab/bootloader steps. Retention and the automatic-backup pruning remove the guide with its archive.
 - System tools → Kernel: *Info…* next to Load / Unload runs `modinfo` for the module names typed in the field
   (several allowed), or for every loaded module when it is empty, and adds each module's current parameter values from
   `/sys/module/<name>/parameters`. Read-only, runs as the user.

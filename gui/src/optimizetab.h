@@ -201,11 +201,13 @@ private:
     void importFieldData();
 
     void applySelected(const QString &home = {});  // home: only that page's checked rows
-    void applyValues(const QJsonObject &values, const QString &preset, bool requireVerified = false);
+    void applyValues(const QJsonObject &values, const QString &preset, bool requireVerified = false, bool approvedPreset = false);
     void revertRow(const QString &key);
     void runOp(const QJsonObject &req, const QString &what, std::function<void(const QJsonObject &)> then = {});
     // Stores the preset's values root-owned (tune-helper preset_save) so it can be applied by name; then() runs on success.
     void approvePreset(const QString &name, const QJsonObject &values, std::function<void()> then);
+    QMap<QString, QPushButton *> homeApply_;
+    void refreshEditorLock();
     void setBusy(bool b);
     void showStatus(const QString &msg, const char *color = nullptr, int ms = 6000);
 

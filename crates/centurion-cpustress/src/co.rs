@@ -198,7 +198,7 @@ impl Clock {
 struct Ctx { ks: Arc<Vec<Kernel>>, refs: Arc<Vec<u64>>, sh: Arc<Shared>, t0: Instant }
 
 /// Runs one cycle on `cpus` (one worker each) and prints its phases; true when it ended with an error.
-fn cycle(cpus: &[usize], per_core: bool, kernel: usize, cyc: u32, cx: &Ctx, p: &mut Printer, span: Timing) -> bool {
+fn cycle(cpus: &[usize], per_core: bool, kernel: usize, cyc: u32, cx: &Ctx, p: &mut Printer, span: Timing) -> Result<bool, String> {
     let (ks, sh, t0) = (&cx.ks, &cx.sh, cx.t0);
     let start = Instant::now();
     let abort = Arc::new(AtomicBool::new(false));
@@ -232,15 +232,18 @@ fn cycle(cpus: &[usize], per_core: bool, kernel: usize, cyc: u32, cx: &Ctx, p: &
         p.progress(sh, t0, per_core.then(|| cpus[0]));
     }
     end_phase(phase, &clock);
+    let mut incomplete = None;
     for (cpu, h) in hs {
-        match h.join() {
-            Ok(Err(e)) => eprintln!("centurion-cpustress: CPU {cpu}: {e}"),
-            Err(_) => eprintln!("centurion-cpustress: CPU {cpu}: worker panicked"),
-            _ => {}
+        if let Some(issue) = crate::worker_issue(cpu, h.join()) {
+            eprintln!("centurion-cpustress: {issue}");
+            incomplete.get_or_insert(issue);
         }
     }
     p.drain(sh);
-    sh.errors.load(Ordering::Relaxed) > errs_before
+    match incomplete {
+        Some(issue) => Err(issue),
+        None => Ok(sh.errors.load(Ordering::Relaxed) > errs_before),
+    }
 }
 
 pub fn run(a: &Args) -> i32 {
@@ -279,6 +282,7 @@ pub fn run(a: &Args) -> i32 {
     let cx = Ctx { ks: Arc::new(ks), refs: Arc::new(refs), sh: sh.clone(), t0 };
     let ks = &cx.ks;
     let kernel_of = |c: u32| (a.kernel + c as usize) % ks.len();
+    let mut incomplete = None;
     'outer: for c in 0..a.cycles {
         if a.per_core {
             for &cpu in &tested {
@@ -286,12 +290,19 @@ pub fn run(a: &Args) -> i32 {
                 if p.failed.contains(&cpu) { continue; }
                 emit(&json!({"ev": "core", "t": secs(t0), "cpu": cpu, "cycle": c, "kernel": ks[kernel_of(c)].name()}));
                 let (errs, chunks) = (sh.errors.load(Ordering::Relaxed), sh.chunks.load(Ordering::Relaxed));
-                cycle(&[cpu], true, kernel_of(c), c, &cx, &mut p, span);
+                if let Err(issue) = cycle(&[cpu], true, kernel_of(c), c, &cx, &mut p, span) {
+                    incomplete.get_or_insert(issue);
+                }
                 emit(&json!({"ev": "core_end", "t": secs(t0), "cpu": cpu, "chunks": sh.chunks.load(Ordering::Relaxed) - chunks,
                              "errors": sh.errors.load(Ordering::Relaxed) - errs}));
             }
-        } else if STOP.load(Ordering::SeqCst) || cycle(&tested, false, kernel_of(c), c, &cx, &mut p, span) {
-            break;
+        } else {
+            if STOP.load(Ordering::SeqCst) { break; }
+            match cycle(&tested, false, kernel_of(c), c, &cx, &mut p, span) {
+                Ok(false) => {}
+                Ok(true) => break,
+                Err(issue) => { incomplete = Some(issue); break; }
+            }
         }
     }
     let (errors, chunks, t) = (sh.errors.load(Ordering::Relaxed), sh.chunks.load(Ordering::Relaxed), secs(t0));
@@ -299,6 +310,7 @@ pub fn run(a: &Args) -> i32 {
     failed.sort_unstable();
     if errors > 0 { end("fail", t, chunks, errors, &failed, "wrong results") }
     else if STOP.load(Ordering::SeqCst) { end("stopped", t, chunks, 0, &[], "stopped") }
+    else if let Some(issue) = incomplete { end("init_failed", t, chunks, 0, &[], &issue) }
     else { end("pass", t, chunks, 0, &[], "") }
 }
 

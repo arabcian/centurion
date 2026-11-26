@@ -104,7 +104,6 @@ src_install() {
 	newexe packaging/sleep/centurion-sleep-log 40-centurion-sleep-log
 	exeinto "$(systemd_get_utildir)"/system-sleep
 	newexe packaging/sleep/centurion-sleep-log centurion-sleep-log
-	udev_dorules packaging/udev/70-centurion-lighting.rules
 	sed -e "s|@LIBEXEC@|${EPREFIX}/usr/libexec/centurion|g" \
 		packaging/udev/90-centurion-dgpu.rules > "${T}"/90-centurion-dgpu.rules || die
 	udev_dorules "${T}"/90-centurion-dgpu.rules
@@ -123,9 +122,8 @@ pkg_postinst() {
 		ewarn "  com.centurion.* namespace. Run etc-update / dispatch-conf and take the new file"
 		ewarn "  (explicit action allowlist); the old one stays active until then."
 	fi
-	elog "Keyboard lighting (Spectrum / 4-zone RGB): re-login or re-plug once so the"
-	elog "  uaccess udev rule applies to the keyboard's hidraw node; until then the"
-	elog "  Lighting tab goes through pkexec."
+	elog "Keyboard lighting (Spectrum / 4-zone RGB) goes through pkexec (no udev uaccess rule);"
+	elog "  a wheel/sudo admin at the machine is not asked for a password."
 	elog "Boot-time GPU profile (set with ★ Default in the NVIDIA tab):"
 	elog "  OpenRC:  rc-update add nvcurve-autoload default"
 	elog "  systemd: systemctl enable nvcurve-autoload.service"
@@ -144,7 +142,7 @@ pkg_postinst() {
 	elog "Calibration at the next boot (Autotune: Calibrate at next boot): centurion-calibrate-boot is"
 	elog "  one-shot - scheduling adds it to the boot and it removes itself after that boot (no rc-update)."
 	elog "Lutris hooks: /usr/bin/centurion-gamemode PRE / POST / RUN (see the Game launch sub-tab)."
-	elog "The Ryzen tab talks to the SMU natively (no ryzenadj): it needs the ryzen_smu module (>= 0.1.7)"
+	elog "The Ryzen tab talks to the SMU natively (no ryzenadj): it needs the ryzen_smu module (>= 0.1.9)"
 	elog "or, with kernel lockdown off, root write access to the PCI config space."
 }
 

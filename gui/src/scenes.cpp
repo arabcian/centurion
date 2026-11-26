@@ -1420,7 +1420,7 @@ void SceneEngine::start(const Scene &s, const QString &expectedGeneration) {
                     QStringList exceptions;
                     for (const QJsonValue &v : r.json.value("results").toArray()) {
                         const auto row=v.toObject(); const QString key=row.value("key").toString(); QStringList reasons;
-                        if (!row.value("skipped").toString().isEmpty()) reasons << row.value("skipped").toString();
+                        if (row.value("controlled_by").toString().isEmpty() && !row.value("skipped").toString().isEmpty()) reasons << row.value("skipped").toString();
                         if (!row.value("error").toString().isEmpty()) reasons << row.value("error").toString();
                         if (row.value("refused").toInt()>0) reasons << QStringLiteral("%1 refused writes").arg(row.value("refused").toInt());
                         if (row.value("mismatch_count").toInt()>0) reasons << QStringLiteral("%1 value(s) did not stick").arg(row.value("mismatch_count").toInt());
@@ -1484,7 +1484,7 @@ void SceneEngine::start(const Scene &s, const QString &expectedGeneration) {
         });
     }
 
-    // 6. Keyboard lighting — as the user when the udev rule allows it, pkexec otherwise.
+    // 6. Keyboard lighting — as the user if the node is readable, pkexec otherwise.
     if (has(PlanStep::Spectrum)) {
         addStep("Lighting", [this, p = s.lightProfile, b = s.lightBrightness](Done done) {
             if (!lighting::present()) { stepDisposition_ = QStringLiteral("skipped"); done(true, "no Spectrum keyboard here; skipped"); return; }
@@ -1542,11 +1542,16 @@ void SceneEngine::start(const Scene &s, const QString &expectedGeneration) {
 
     // 7. User command (display mode, audio profile…) — as the user, no shell.
     if (has(PlanStep::Command)) {
-        addStep("Command", [cmd = s.command](Done done) {
+        // Same approval as the values root writes: the command line is approved when the user applies the scene
+        // from the unlocked window; automatic applies run it only if that exact line was approved before.
+        addStep("Command", [this, cmd = s.command](Done done) {
             QStringList argv = QProcess::splitCommand(cmd);
             if (argv.isEmpty()) { done(false, "empty command"); return; }
-            const QString prog = argv.takeFirst();
-            done(QProcess::startDetached(prog, argv), QStringLiteral("user command launch"));
+            helper("tune-helper", {{"op", "scene_command"}, {"command", cmd}}, [argv, done](bool ok, const QString &m) mutable {
+                if (!ok) { done(false, "command not approved: " + m); return; }
+                const QString prog = argv.takeFirst();
+                done(QProcess::startDetached(prog, argv), QStringLiteral("user command launch"));
+            });
         });
     }
 

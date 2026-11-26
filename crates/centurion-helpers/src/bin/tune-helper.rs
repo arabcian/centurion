@@ -518,7 +518,7 @@ fn apply_values_checked(st: &mut State, values: &Map<String, Value>, game: bool,
     let kept: Map<String, Value>;
     let values = if shadowed.is_empty() { values } else {
         for (k, g) in &shadowed {
-            results.push(json!({"key": k, "ok": true, "skipped": format!("controlled by {g} in the same preset")}));
+            results.push(json!({"key": k, "ok": true, "controlled_by": g, "skipped": format!("controlled by {g} in the same preset")}));
         }
         kept = values.iter().filter(|(k, _)| !shadowed.iter().any(|(s, _)| s == k)).map(|(k, v)| (k.clone(), v.clone())).collect();
         &kept
@@ -1817,6 +1817,9 @@ fn run() -> Value {
     } else { None };
     let out = match op {
         "snapshot" => json!({"ok": true}),
+        // A scene's own command line: nothing is written by root; the gate above (unlock.rs) is the point. The GUI
+        // runs the command (as the user) only after this accepts it, so an edited scene file cannot launch a new one.
+        "scene_command" => json!({"ok": true}),
         "apply" => op_apply(&req),
         "apply_preset" => op_apply_preset(&req, false),
         "apply_scene_preset" => op_apply_preset(&req, true),

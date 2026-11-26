@@ -66,6 +66,15 @@ Tray::Tray(MainWindow *win) : QSystemTrayIcon(appIcon(), win), win_(win), menu_(
     setToolTip("Centurion");
     // Rebuilt on every open: profiles can change behind our back.
     connect(menu_, &QMenu::aboutToShow, this, &Tray::rebuild);
+    // Keyboard administrator rights enabled from this menu end one minute after the menu closes.
+    adminRelease_.setSingleShot(true);
+    adminRelease_.setInterval(60 * 1000);
+    connect(&adminRelease_, &QTimer::timeout, this, [this] {
+        adminFromTray_ = false;
+        if (LightingTab *lt = win_->lighting()) lt->releaseAdmin();
+    });
+    connect(menu_, &QMenu::aboutToShow, &adminRelease_, &QTimer::stop);
+    connect(menu_, &QMenu::aboutToHide, this, [this] { if (adminFromTray_) adminRelease_.start(); });
     setContextMenu(menu_);
     connect(this, &QSystemTrayIcon::activated, this, [this](ActivationReason r) {
         if (r == Trigger || r == DoubleClick) toggleWindow();
@@ -216,16 +225,16 @@ void Tray::flushDeferred() {
 
 static void disabledEntry(QMenu *m, const QString &t) { m->addAction(t)->setEnabled(false); }
 
-/// Small menu glyph: `body` is SVG content on a 24x24 grid, drawn with `color` as stroke ("@") and, where a
+/// Small interface glyph: `body` is SVG content on a 24x24 grid, drawn with `color` as stroke ("@") and, where a
 /// shape asks for it, fill ("@" too). Plasma renders the tray menu itself (DBusMenu): icons are the one
 /// styling it carries, so colours sit in the glyphs, not in the menu text.
-static QIcon menuIcon(const char *body, const char *color) {
+static QIcon glyphIcon(const char *body, const char *color) {
     QByteArray svg = QByteArrayLiteral("<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='@' "
                                        "stroke-width='2' stroke-linecap='round' stroke-linejoin='round'>") + body + "</svg>";
-    svg.replace('@', color);
+    svg.replace('@', color).replace("%surface", theme::BG1);
     QSvgRenderer r(svg);
     QIcon icon;
-    for (int px : {16, 22, 32}) {
+    for (int px : {16, 22, 32, 44}) {
         QPixmap pm(px, px);
         pm.fill(Qt::transparent);
         QPainter p(&pm);
@@ -239,11 +248,11 @@ static QIcon menuIcon(const char *body, const char *color) {
 
 namespace glyph {
 // Drawn for Centurion: plain geometric shapes on the 24 grid.
-static const char *SCENE = "<path d='M12 3 3 8l9 5 9-5z'/><path d='m3 13 9 5 9-5'/>";
-static const char *POWER = "<path d='M13 2 5 14h6l-1 8 8-12h-6z'/>";
-static const char *CPU = "<rect x='6' y='6' width='12' height='12' rx='2'/><rect x='10' y='10' width='4' height='4'/>"
+static const char *SCENE = "<path d='m12 2 10 5-10 5L2 7z' fill='@' fill-opacity='.25'/><path d='m2 12 10 5 10-5M2 17l10 5 10-5'/>";
+static const char *POWER = "<path d='M13 2 5 14h6l-1 8 8-12h-6z' fill='@' fill-opacity='.35'/>";
+static const char *CPU = "<rect x='6' y='6' width='12' height='12' rx='2'/><rect x='10' y='10' width='4' height='4' fill='@'/>"
                          "<path d='M9 2v3M15 2v3M9 19v3M15 19v3M2 9h3M2 15h3M19 9h3M19 15h3'/>";
-static const char *GPU = "<rect x='2' y='6' width='20' height='12' rx='2'/><circle cx='9' cy='12' r='3'/><path d='M15 10h4M15 14h4'/>";
+static const char *GPU = "<rect x='2' y='6' width='20' height='12' rx='2' fill='@' fill-opacity='.2'/><circle cx='9' cy='12' r='3'/><path d='M15 10h4M15 14h4'/>";
 static const char *TUNE = "<path d='M4 6h10M18 6h2M4 12h4M12 12h8M4 18h12'/><circle cx='16' cy='6' r='2'/>"
                           "<circle cx='10' cy='12' r='2'/><circle cx='18' cy='18' r='2'/>";
 static const char *SAFE = "<path d='M12 2 4 5v6c0 5 3.5 9 8 11 4.5-2 8-6 8-11V5z' fill='@'/>"
@@ -251,8 +260,21 @@ static const char *SAFE = "<path d='M12 2 4 5v6c0 5 3.5 9 8 11 4.5-2 8-6 8-11V5z
 static const char *KEYBOARD = "<rect x='2' y='6' width='20' height='12' rx='2'/><path d='M6 10h0M10 10h0M14 10h0M18 10h0M7 14h10'/>";
 static const char *FAN = "<circle cx='12' cy='12' r='2'/><path d='M12 10c-1-4 0-7 3-7s3 4-1 7M14 12c4-1 7 0 7 3s-4 3-7-1"
                          "M12 14c1 4 0 7-3 7s-3-4 1-7M10 12c-4 1-7 0-7-3s4-3 7 1'/>";
-static const char *WINDOW = "<rect x='3' y='4' width='18' height='16' rx='2'/><path d='M3 9h18'/>";
+static const char *WINDOW = "<rect x='3' y='4' width='18' height='16' rx='3' fill='@' fill-opacity='.2'/><path d='M3 9h18M7 6.5h.1'/>";
 static const char *QUIT = "<path d='M12 3v8'/><path d='M7 6a8 8 0 1 0 10 0'/>";
+static const char *HEALTH = "<path d='M5 4h14a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2z'"
+                            " fill='@' fill-opacity='.2'/><path d='M5 12h3l2-4 3 8 2-4h4'/>";
+static const char *RESET = "<path d='M4 10a8 8 0 1 1 2 8M4 4v6h6'/>";
+static const char *SUN = "<circle cx='12' cy='12' r='4' fill='@' fill-opacity='.35'/>"
+                         "<path d='M12 2v2m0 16v2M2 12h2m16 0h2M5 5l1.5 1.5m11 11L19 19M5 19l1.5-1.5m11-11L19 5'/>";
+}
+
+QIcon sessionLockIcon(bool unlocked) {
+    QByteArray body = unlocked ? "<path d='M8 10V7a4 4 0 0 1 8 0'/>" : "<path d='M8 10V7a4 4 0 0 1 8 0v3'/>";
+    body += "<rect x='4' y='10' width='16' height='12' rx='3' fill='@'/>"
+            "<circle cx='12' cy='14.5' r='1.35' fill='%surface' stroke='none'/>"
+            "<path d='M12 15.5V18' stroke='%surface' stroke-width='1.7'/>";
+    return glyphIcon(body.constData(), unlocked ? theme::OK : theme::ACCENT);
 }
 
 /// Only when the user asks: one GET of the latest GitHub release, nothing sent but the request itself.
@@ -294,7 +316,7 @@ void Tray::rebuild() {
     SceneEngine *eng = win_->scenes();
     const QStringList sceneNames = scenes::names();
     if (!sceneNames.isEmpty()) {
-        QMenu *sm = menu_->addMenu(menuIcon(glyph::SCENE, theme::PURPLE), tr("Scene"));
+        QMenu *sm = menu_->addMenu(glyphIcon(glyph::SCENE, theme::PURPLE), tr("Scene"));
         for (const QString &n : sceneNames) {
             QAction *a = sm->addAction(n);
             a->setCheckable(true);
@@ -327,7 +349,7 @@ void Tray::rebuild() {
     }
 
     // Power profile
-    QMenu *pm = menu_->addMenu(menuIcon(glyph::POWER, theme::ACCENT), tr("Power Profile"));
+    QMenu *pm = menu_->addMenu(glyphIcon(glyph::POWER, theme::ACCENT), tr("Power Profile"));
     HomeTab *home = win_->home();
     const QStringList profiles = home->offeredProfiles();
     if (profiles.isEmpty()) disabledEntry(pm, tr("(no platform-profile driver)"));
@@ -344,7 +366,7 @@ void Tray::rebuild() {
 
     // Ryzen (AMD only — the window has no Ryzen tab on Intel)
     if (RyzenTab *ryzen = win_->ryzen()) {
-    QMenu *rm = menu_->addMenu(menuIcon(glyph::CPU, theme::INFO), tr("CPU Curve (Ryzen)"));
+    QMenu *rm = menu_->addMenu(glyphIcon(glyph::CPU, theme::INFO), tr("CPU Curve (Ryzen)"));
     const QStringList rnames = ryzen->savedProfileNames();
     if (rnames.isEmpty()) disabledEntry(rm, tr("(no saved profiles)"));
     for (const QString &n : rnames)
@@ -357,7 +379,7 @@ void Tray::rebuild() {
             });
         });
     rm->addSeparator();
-    connect(rm->addAction(tr("Reset curve")), &QAction::triggered, this, [this, ryzen] {
+    connect(rm->addAction(glyphIcon(glyph::RESET, theme::WARN), tr("Reset curve")), &QAction::triggered, this, [this, ryzen] {
         if (!claimCooldown()) return;
         ryzen->applyReset();
         notify(tr("CPU Curve"), tr("Resetting Curve Optimizer (coall=0)…"));
@@ -366,7 +388,7 @@ void Tray::rebuild() {
 
     // Intel undervolt (Intel only)
     if (IntelTab *intel = win_->intel()) {
-        QMenu *im = menu_->addMenu(menuIcon(glyph::CPU, theme::INFO), tr("CPU Undervolt (Intel)"));
+        QMenu *im = menu_->addMenu(glyphIcon(glyph::CPU, theme::INFO), tr("CPU Undervolt (Intel)"));
         const QStringList inames = intel->savedProfileNames();
         if (inames.isEmpty()) disabledEntry(im, tr("(no saved profiles)"));
         for (const QString &n : inames)
@@ -377,7 +399,7 @@ void Tray::rebuild() {
                 });
             });
         im->addSeparator();
-        connect(im->addAction(tr("Reset voltages")), &QAction::triggered, this, [this, intel] {
+        connect(im->addAction(glyphIcon(glyph::RESET, theme::WARN), tr("Reset voltages")), &QAction::triggered, this, [this, intel] {
             if (!claimCooldown()) return;
             intel->applyReset();
             notify(tr("CPU undervolt"), tr("Resetting voltage offsets to 0 mV…"));
@@ -386,7 +408,7 @@ void Tray::rebuild() {
 
     // NVIDIA
     if (NvidiaTab *nv = win_->nvidia()) {  // no NVIDIA GPU → no menu
-    QMenu *nm = menu_->addMenu(menuIcon(glyph::GPU, theme::OK), tr("GPU Curve (NVIDIA)"));
+    QMenu *nm = menu_->addMenu(glyphIcon(glyph::GPU, theme::OK), tr("GPU Curve (NVIDIA)"));
     const QStringList nnames = nv->profileNames();
     const QString def = nv->defaultProfileName();
     if (nnames.isEmpty()) disabledEntry(nm, tr("(no saved profiles)"));
@@ -397,14 +419,14 @@ void Tray::rebuild() {
             notify(tr("GPU Curve"), tr("Applying profile '%1'…").arg(n));
         });
     nm->addSeparator();
-    connect(nm->addAction(tr("Reset curve")), &QAction::triggered, this, [this, nv] {
+    connect(nm->addAction(glyphIcon(glyph::RESET, theme::WARN), tr("Reset curve")), &QAction::triggered, this, [this, nv] {
         if (claimCooldown()) nv->resetCurve();
     });
     nm->setEnabled(!nv->busy());  // greyed while an NVIDIA helper call is in flight
     }
 
     // Optimizations
-    QMenu *om = menu_->addMenu(menuIcon(glyph::TUNE, theme::WARN), tr("Optimizations"));
+    QMenu *om = menu_->addMenu(glyphIcon(glyph::TUNE, theme::WARN), tr("Optimizations"));
     OptimizeTab *opt = win_->optimize();
     const QString game = opt->gamePreset();
     for (const QString &n : opt->presetNames())
@@ -414,7 +436,7 @@ void Tray::rebuild() {
             else notify(tr("Optimizations"), tr("Preset '%1' has nothing applicable here.").arg(n));
         });
     om->addSeparator();
-    QAction *restore = om->addAction(tr("Restore originals"));
+    QAction *restore = om->addAction(glyphIcon(glyph::RESET, theme::WARN), tr("Restore originals"));
     restore->setEnabled(opt->tuningActive());
     connect(restore, &QAction::triggered, this, [this, opt] {
         if (!claimCooldown()) return;
@@ -425,7 +447,24 @@ void Tray::rebuild() {
 
     // Keyboard lighting (Spectrum controller) — immediate, no cooldown needed.
     if (LightingTab *lt = win_->lighting()) {
-        QMenu *lm = menu_->addMenu(menuIcon(glyph::KEYBOARD, theme::PURPLE), tr("Keyboard Lighting"));
+        QMenu *lm = menu_->addMenu(glyphIcon(glyph::KEYBOARD, theme::PURPLE), tr("Keyboard Lighting"));
+        // Lighting goes through administrator rights; give them here when the keyboard is not readable without.
+        if (lt->adminGranted()) {
+            connect(lm->addAction(tr("Release administrator rights")), &QAction::triggered, this, [this, lt] {
+                adminRelease_.stop();
+                adminFromTray_ = false;
+                lt->releaseAdmin();
+            });
+            lm->addSeparator();
+        } else if (!lt->ready()) {
+            connect(lm->addAction(tr("Enable administrator rights")), &QAction::triggered, this, [this, lt] {
+                adminFromTray_ = true;
+                adminRelease_.start();  // the menu is closing; aboutToHide restarts it from the moment it is closed
+                lt->grantAdmin();
+                notify(tr("Keyboard lighting"), tr("Administrator rights are released one minute after this menu closes."));
+            });
+            lm->addSeparator();
+        }
         if (!lt->ready()) {
             disabledEntry(lm, tr("(keyboard not read — see the Lighting tab)"));
         } else {
@@ -443,7 +482,7 @@ void Tray::rebuild() {
             off->setCheckable(true);
             off->setChecked(lt->brightness() == 0);
             connect(off, &QAction::triggered, this, [lt](bool checked) { lt->setLightsOn(!checked); });
-            QMenu *bm = lm->addMenu(tr("Brightness"));
+            QMenu *bm = lm->addMenu(glyphIcon(glyph::SUN, theme::ACCENT), tr("Brightness"));
             for (int b = 1; b <= lighting::MAX_BRIGHTNESS; ++b) {
                 QAction *a = bm->addAction(QString::number(b));
                 a->setCheckable(true);
@@ -457,7 +496,7 @@ void Tray::rebuild() {
     // Fans: all to max / Auto, or one fan at a fixed RPM (multiples of 100).
     const QList<HomeTab::FanInfo> fans = home->fanInfo();
     if (!fans.isEmpty()) {
-        QMenu *fm = menu_->addMenu(menuIcon(glyph::FAN, theme::INFO), tr("Fans"));
+        QMenu *fm = menu_->addMenu(glyphIcon(glyph::FAN, theme::INFO), tr("Fans"));
         const bool maxMode = home->fansMaxMode();
         QAction *mx = fm->addAction(tr("Max all fans"));
         mx->setCheckable(true);
@@ -467,7 +506,7 @@ void Tray::rebuild() {
             if (maxMode) { home->setAllFansAuto(); notify(tr("Fans"), tr("All fans back to Auto…")); }
             else { home->setAllFansMax(); notify(tr("Fans"), tr("All fans to maximum…")); }
         });
-        connect(fm->addAction(tr("All fans to Auto")), &QAction::triggered, this, [this, home] {
+        connect(fm->addAction(glyphIcon(glyph::RESET, theme::INFO), tr("All fans to Auto")), &QAction::triggered, this, [this, home] {
             if (!claimCooldown()) return;
             home->setAllFansAuto();
             notify(tr("Fans"), tr("All fans back to Auto…"));
@@ -501,15 +540,7 @@ void Tray::rebuild() {
     if (const int worst = win_->health()->worstLevel(); worst >= 0) {
         const char *color = worst >= 2 ? theme::DANGER : worst == 1 ? theme::WARN : theme::OK;
         const QString text = worst >= 2 ? tr("Health: problem found") : worst == 1 ? tr("Health: needs a look") : tr("Health: all clear");
-        QPixmap dot(16, 16);
-        dot.fill(Qt::transparent);
-        QPainter p(&dot);
-        p.setRenderHint(QPainter::Antialiasing);
-        p.setPen(Qt::NoPen);
-        p.setBrush(QColor(QLatin1String(color)));
-        p.drawEllipse(QRectF(3, 3, 10, 10));
-        p.end();
-        connect(menu_->addAction(QIcon(dot), text), &QAction::triggered, this, [this] {
+        connect(menu_->addAction(glyphIcon(glyph::HEALTH, color), text), &QAction::triggered, this, [this] {
             win_->showNormal();
             win_->raise();
             win_->activateWindow();
@@ -519,16 +550,16 @@ void Tray::rebuild() {
 
     menu_->addSeparator();
     // "Check for updates…" (checkForUpdates) is hidden for now; safe mode takes its place, in red.
-    connect(menu_->addAction(menuIcon(glyph::SAFE, theme::DANGER), tr("Emergency safe mode…")), &QAction::triggered, this, [this] {
+    connect(menu_->addAction(glyphIcon(glyph::SAFE, theme::DANGER), tr("Emergency safe mode…")), &QAction::triggered, this, [this] {
         if (QMessageBox::question(nullptr, tr("Emergency safe mode"),
                                   tr("Reset the CPU and NVIDIA curves, restore the optimizations, set the fans to Auto and "
                                      "the power profile to Balanced?")) != QMessageBox::Yes) return;
         notify(tr("Safe mode"), tr("Resetting to safe defaults…"));
         win_->runSafeMode();
     });
-    connect(menu_->addAction(menuIcon(glyph::WINDOW, theme::MUTED), win_->isVisible() ? tr("Hide window") : tr("Show window")),
+    connect(menu_->addAction(glyphIcon(glyph::WINDOW, theme::INFO), win_->isVisible() ? tr("Hide window") : tr("Show window")),
             &QAction::triggered, this, &Tray::toggleWindow);
-    connect(menu_->addAction(menuIcon(glyph::QUIT, theme::MUTED), tr("Quit")), &QAction::triggered, this, [this] {
+    connect(menu_->addAction(glyphIcon(glyph::QUIT, theme::WARN), tr("Quit")), &QAction::triggered, this, [this] {
         if (!win_->canQuit()) return;
         win_->setForceQuit(true);
         hide();

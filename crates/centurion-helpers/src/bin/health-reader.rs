@@ -6,7 +6,7 @@
 //! hidden in the tray. This helper can do exactly one thing: return the
 //! *classified* hardware events (NVIDIA Xid, MCE, AER, lockups…) newer than a
 //! sequence number, plus the AER counters. The scan never returns raw log lines
-//! and writes nothing, so its polkit action is silent for the active local
+//! and writes nothing, so its polkit action is silent for a wheel/sudo admin at the machine
 //! session at every level (like the sensor streams).
 //!
 //! stdin:  {"since": N}          (optional; default 0)

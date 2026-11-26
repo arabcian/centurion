@@ -1,3 +1,4 @@
+#include "unlock.h"
 #include "navigationtargets.h"
 #include "hometab.h"
 #include "workspacefields.h"
@@ -1312,6 +1313,9 @@ QGroupBox *HomeTab::buildDeviceBox() {
             if (force) prewrite::backupThen(QStringLiteral("igpu"), this, send);
             else send();
         };
+        auto syncIgpuLock = [ig](bool unlocked) { ig->setEnabled(unlocked); };
+        connect(&unlock::Manager::instance(), &unlock::Manager::changed, ig, syncIgpuLock);
+        syncIgpuLock(unlock::Manager::instance().unlocked());
         connect(ig, &QComboBox::activated, this, [setIgpu](int i) { (*setIgpu)(i, false); });
         connect(nvBack, &QPushButton::clicked, this, [this, nvBack, gh] {
             nvBack->setEnabled(false);
@@ -1519,6 +1523,7 @@ QGroupBox *HomeTab::buildDeviceBox() {
         if (curveBtn) mh->addWidget(curveBtn);
         mh->addWidget(maxAllBtn_);
         mh->addWidget(maxBannerBtn_);
+        connect(&unlock::Manager::instance(), &unlock::Manager::changed, this, [this] { refreshDevice(); });
         if (theme::experimentalEnabled() && fullSpeedRow >= 0) {
             // One "Fans" row: Turbo on the left, curve / max on the right.
             g->removeWidget(fullSpeed_);
@@ -1573,12 +1578,15 @@ QGroupBox *HomeTab::buildDeviceBox() {
                 auto *cb = new QCheckBox(tr(d.text));
                 cb->setToolTip(tr(d.tip));
                 cb->setChecked(t.value(d.key).toBool());
+                auto syncLock = [cb](bool unlocked) { cb->setEnabled(unlocked); };
+                connect(&unlock::Manager::instance(), &unlock::Manager::changed, cb, syncLock);
+                syncLock(unlock::Manager::instance().unlocked());
                 const QString key = d.key;
                 connect(cb, &QCheckBox::clicked, this, [this, cb, key](bool on) {
                     cb->setEnabled(false);
                     privileged::run(helperPath(), QJsonObject{{"wmae_toggle", "set"}, {"key", key}, {"on", on}}, this,
                                     [this, cb, key, on](const privileged::Result &r) {
-                        cb->setEnabled(true);
+                        cb->setEnabled(unlock::Manager::instance().unlocked());
                         if (!r.ok()) { QSignalBlocker b(cb); cb->setChecked(!on); showStatus(tr("%1 failed: %2").arg(key, r.message()), 8000); }
                         else showStatus(tr("%1 → %2").arg(key, on ? tr("on") : tr("off")));
                     });
@@ -1728,7 +1736,7 @@ void HomeTab::applyDevice(const DeviceSnap &snap) {
             } else if (f.autoBox->isChecked() || f.target->text().isEmpty() || f.target->isEnabled() == false) {
                 f.autoBox->setChecked(true);
             }
-            const bool locked = f.autoBox->isChecked() || f.maxBox->isChecked();
+            const bool locked = !unlock::Manager::instance().unlocked() || f.autoBox->isChecked() || f.maxBox->isChecked();
             f.target->setEnabled(!locked);
             f.set->setEnabled(!locked);
         }
@@ -1740,7 +1748,12 @@ void HomeTab::setMaxMode(bool on, bool ecFullSpeed) {
     if (!maxBannerBtn_) return;
     maxBannerText_->setVisible(on);
     maxBannerBtn_->setVisible(on);
-    if (maxAllBtn_) maxAllBtn_->setVisible(!on);
+    const bool unlocked = unlock::Manager::instance().unlocked();
+    maxBannerBtn_->setEnabled(unlocked || ecFullSpeed);
+    if (maxAllBtn_) {
+        maxAllBtn_->setVisible(!on);
+        maxAllBtn_->setEnabled(unlocked);
+    }
     if (on) {
         maxBannerText_->setText(ecFullSpeed
             ? tr("<span style='color:%1'><b>EC Full Speed on</b> — all fans at maximum</span>").arg(theme::WARN)
@@ -1749,9 +1762,9 @@ void HomeTab::setMaxMode(bool on, bool ecFullSpeed) {
     }
     // The banner stands in for every per-fan control (the RPM readout stays live).
     for (const FanRow &f : std::as_const(fans_)) {
-        f.autoBox->setEnabled(!on);
-        f.maxBox->setEnabled(!on);
-        if (on) { f.target->setEnabled(false); f.set->setEnabled(false); }
+        f.autoBox->setEnabled(!on && unlocked);
+        f.maxBox->setEnabled(!on && unlocked);
+        if (on || !unlocked) { f.target->setEnabled(false); f.set->setEnabled(false); }
     }
     if (fullSpeed_) fullSpeed_->setEnabled(!on || ecFullSpeed);
 }

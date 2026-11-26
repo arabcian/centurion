@@ -1,8 +1,12 @@
+#include "unlock.h"
+#include "mainwindow.h"
+#include "scenes.h"
 #include "navigationtargets.h"
 #include <algorithm>
 #include <QFontMetrics>
 #include "cosearchdialog.h"
 #include "ryzentab.h"
+#include "slotmap.h"
 #include "profilediff.h"
 #include "ryzenprofilediff.h"
 #include "cpustress.h"
@@ -189,6 +193,11 @@ ryzen::Layout ryzen::detect() {
             return std::any_of(parked.begin(), parked.end(), [&](int c) { return g.contains(c); }); }))
         groups << parked;
     if (dirty) saveTopoCache(info);
+    // Present CPUs that are offline without belonging to the parked CCD: their cores are missing from
+    // the lists below, which shifts every later core's position (= its assumed SMU slot).
+    if (!online.isEmpty())
+        for (int c : expandCpuList(pp::readText(sys.filePath("present")).value_or(QString())))
+            if (!online.contains(c) && !parked.contains(c)) out.offline << c;
     // Order by L3 id (the die order the SMU's CO slots follow). Offline CPUs take their id from
     // the per-boot record, so a parked CCD keeps its place even in a freshly started GUI.
     auto keyOf = [&](const QList<int> &g) {
@@ -220,7 +229,7 @@ ryzen::Layout ryzen::detect() {
         out.parked.insert(ccd);
         const int n = parked.size(), cores = n > SLOTS_PER_CCD ? n / 2 : n;
         for (int i = 0; i < cores; ++i)
-            out.cores[ccd].append({n > SLOTS_PER_CCD ? QList<int>{parked[i], parked[i + cores]} : QList<int>{parked[i]}, std::nullopt});
+            out.cores[ccd].append({n > SLOTS_PER_CCD ? QList<int>{parked[i], parked[i + cores]} : QList<int>{parked[i]}, std::nullopt, std::nullopt});
     }
     for (int ccd = 0; ccd < groups.size(); ++ccd) {
         if (out.parked.contains(ccd)) continue;
@@ -242,10 +251,23 @@ ryzen::Layout ryzen::detect() {
             bool ok = false;
             int hp = pp::readText(sys.filePath(QStringLiteral("cpu%1/acpi_cppc/highest_perf").arg(cpus.first())))
                          .value_or(QString()).toInt(&ok);
-            out.cores[ccd].append({cpus, ok ? std::optional(hp) : std::nullopt});
+            bool idOk = false;
+            const int coreId = pp::readText(sys.filePath(QStringLiteral("cpu%1/topology/core_id").arg(cpus.first()))).value_or(QString()).toInt(&idOk);
+            out.cores[ccd].append({cpus, ok ? std::optional(hp) : std::nullopt, idOk ? std::optional(coreId) : std::nullopt});
         }
     }
     return out;
+}
+
+QString ryzen::slotMappingProblem(const Layout &layout) {
+    std::vector<slotmap::CoreIds> ccds;
+    for (auto it = layout.cores.cbegin(); it != layout.cores.cend(); ++it) {
+        if (layout.parked.contains(it.key())) continue;
+        slotmap::CoreIds ids;
+        for (const PhysCore &c : it.value()) ids.push_back(c.coreId);
+        ccds.push_back(std::move(ids));
+    }
+    return QString::fromStdString(slotmap::problem(ccds, std::vector<int>(layout.offline.cbegin(), layout.offline.cend())));
 }
 
 QString ryzen::profilesDir() {
@@ -317,6 +339,10 @@ RyzenTab::RyzenTab(QWidget *parent) : QWidget(parent), layout_(ryzen::detect()) 
     verified_->setVisible(false);
     pl->addWidget(verified_);
     connect(profileCombo_, &QComboBox::currentTextChanged, this, &RyzenTab::updateVerified);
+    auto *applySaved = new QPushButton(tr("Apply profile"));
+    applySaved->setToolTip(tr("Apply the saved profile. New or changed offsets need a one-time approval while unlocked."));
+    connect(applySaved, &QPushButton::clicked, this, [this] { applyNamedProfile(profileCombo_->currentText()); });
+    pl->addWidget(applySaved);
     pl->addWidget(bLoad);
     pl->addWidget(bSave);
     pl->addWidget(bDel);
@@ -440,7 +466,17 @@ RyzenTab::RyzenTab(QWidget *parent) : QWidget(parent), layout_(ryzen::detect()) 
     hdr->addWidget(bClear);
     hdr->addWidget(bCores);
     cl->addLayout(hdr);
-    applyButtons_ = {bAll, bReset, bCores, coSearch};
+    applyButtons_ = {bReset, applySaved, bAll, bCores, coSearch};
+    connect(profileCombo_, &QComboBox::currentTextChanged, this, [this] { setBusy(busy_); });
+    applySaved->setProperty("savedProfileAction", true);
+    auto refreshLock = [this, acBox, coreBox, bSave](bool unlocked) {
+        acBox->setEnabled(unlocked);
+        coreBox->setEnabled(unlocked);
+        bSave->setEnabled(unlocked);
+        setBusy(busy_);
+    };
+    connect(&unlock::Manager::instance(), &unlock::Manager::changed, this, refreshLock);
+    refreshLock(unlock::Manager::instance().unlocked());
 
     const char *const accents[] = {theme::OK, theme::ACCENT, theme::PURPLE, theme::INFO};
     auto *cards = new QHBoxLayout;
@@ -686,7 +722,8 @@ void RyzenTab::fillCcd(int ccd) {
 
 void RyzenTab::setBusy(bool b) {
     busy_ = b;
-    for (QPushButton *p : std::as_const(applyButtons_)) p->setEnabled(!b);
+    for (QPushButton *p : std::as_const(applyButtons_))
+        p->setEnabled(!b && (!p->property("savedProfileAction").toBool() || !profileCombo_->currentText().isEmpty()));
 }
 
 bool RyzenTab::applyAllCore(std::function<void()> then) {
@@ -910,15 +947,17 @@ bool RyzenTab::applyNamedProfile(const QString &name) {
     profileCombo_->setCurrentIndex(i);
     if (!loadProfile()) return false;
 
-    bool anyCore = false;
-    for (Slot *s : activeSlots()) anyCore |= parse(*s).first == Parse::Ok;
-    const bool hasCoall = !coall_->text().trimmed().isEmpty();
-    // A per-core batch resets every core to 0 first (ryzen-co-helper), so an all-core value sent
-    // before it would be overwritten at once: the all-core offset goes out only without per-core values.
-    if (anyCore) return applyPerCore();
-    if (hasCoall) return applyAllCore();
-    log("Profile '" + name + "' contains no offsets to apply.", "err");
-    return false;
+    auto *main = qobject_cast<MainWindow *>(window());
+    if (!main || !main->scenes() || trial_->running()) return false;
+    setBusy(true);
+    const QPointer<RyzenTab> self(this);
+    main->scenes()->applyCpuProfile(name, false, [self](bool ok, const QString &message) {
+        if (!self) return;
+        self->setBusy(false);
+        self->log(message, ok ? "ok" : "err");
+        if (!ok) QMessageBox::warning(self, tr("Apply profile"), message);
+    });
+    return true;
 }
 
 // ── parked CCD (Optimizations → Park a CCD) ─────────────────────────────────
