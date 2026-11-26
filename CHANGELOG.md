@@ -31,6 +31,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions follo
   `auth_admin_keep` instead of `yes`; only a wheel/sudo admin at the machine gets it silently.
 - Scene files are opened with the owning user's file-system identity (`setfsuid`), so a symlinked `~/.config` or
   `scenes` directory cannot make root read a file the user cannot.
+- CI: every `uses:` in the workflow is pinned to a commit SHA (tag or branch noted in a comment).
 - New `tune-admin-helper` (polkit `com.centurion.tune.admin`, the administrator password every time): boot preset,
   preset store, boot calibration, wake sources, wireless power lock and the PIN. tune-helper refuses these through
   pkexec.
