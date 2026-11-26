@@ -1,3 +1,4 @@
+#include "unlock.h"
 #include "navigationtargets.h"
 #include "inteltab.h"
 #include "uvtransitions.h"
@@ -768,7 +769,15 @@ IntelTab::IntelTab(QWidget *parent) : QWidget(parent) {
     al->addWidget(bBoot);
     al->addWidget(bApply);
     root->addWidget(aBox);
-    buttons_ = {bRead, bReset, bApply, bBoot, bClear, bTs};
+    buttons_ = {bRead, bReset, bApply, bBoot, bClear, bTs, bProbe, bSave};
+    for (auto *button : {bApply, bBoot, bClear, bTs, bProbe, bSave}) button->setProperty("requiresUnlock", true);
+    auto refreshLock = [this, vBox, xBox, lBox, dBox](bool unlocked) {
+        for (auto *group : {vBox, xBox, lBox, dBox}) group->setEnabled(unlocked);
+        setBusy(busy_);
+    };
+    connect(&unlock::Manager::instance(), &unlock::Manager::changed, this, refreshLock);
+    refreshLock(unlock::Manager::instance().unlocked());
+    setBusy(false);
 
     auto *logBox = box("Output / Log", "box_grey");
     auto *ll = new QVBoxLayout(logBox);
@@ -1290,7 +1299,8 @@ void IntelTab::resetLimits() {
 
 void IntelTab::setBusy(bool b) {
     busy_ = b;
-    for (QPushButton *p : std::as_const(buttons_)) p->setEnabled(!b);
+    for (QPushButton *p : std::as_const(buttons_))
+        p->setEnabled(!b && (!p->property("requiresUnlock").toBool() || unlock::Manager::instance().unlocked()));
 }
 
 void IntelTab::runOp(const QJsonObject &req, std::function<void(const QJsonObject &)> then) {

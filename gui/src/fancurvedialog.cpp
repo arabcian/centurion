@@ -1,3 +1,4 @@
+#include "unlock.h"
 #include "fancurvedialog.h"
 #include "fanassist.h"
 #include "privileged.h"
@@ -143,7 +144,7 @@ FanCurveDialog::FanCurveDialog(const QString &helper, const QString &profile, QW
     v->addWidget(legend);
     connect(curve_, &FanCurveWidget::changed, this, [this] {
         refreshTable();
-        apply_->setEnabled(curve_->levels() != hw_);
+        setBusy(busy_);
     });
 
     table_ = new QTableWidget;
@@ -179,7 +180,7 @@ FanCurveDialog::FanCurveDialog(const QString &helper, const QString &profile, QW
     connect(stock_, &QPushButton::clicked, this, [this] {
         curve_->setLevels(STOCK);
         refreshTable();
-        apply_->setEnabled(STOCK != hw_);
+        setBusy(busy_);
     });
     connect(apply_, &QPushButton::clicked, this, &FanCurveDialog::apply);
     connect(assist_, &QPushButton::clicked, this, [this] {
@@ -189,21 +190,26 @@ FanCurveDialog::FanCurveDialog(const QString &helper, const QString &profile, QW
             if (a->result().size() != 10) return;
             curve_->setLevels(a->result());
             refreshTable();
-            apply_->setEnabled(curve_->levels() != hw_);
+            setBusy(busy_);
             status("Assistant's proposal is in the editor — press Apply to write it.", theme::ACCENT);
         });
         a->open();
     });
     connect(close, &QPushButton::clicked, this, &QDialog::close);
 
+    connect(&unlock::Manager::instance(), &unlock::Manager::changed, this, [this] { setBusy(busy_); });
     refreshTable();
     load();
 }
 
 void FanCurveDialog::setBusy(bool b) {
-    for (QWidget *w : {static_cast<QWidget *>(reload_), static_cast<QWidget *>(stock_), static_cast<QWidget *>(curve_)})
-        w->setEnabled(!b);
-    apply_->setEnabled(!b && !hw_.isEmpty() && curve_->levels() != hw_);
+    busy_ = b;
+    const bool canEdit = !b && !hw_.isEmpty() && unlock::Manager::instance().unlocked();
+    reload_->setEnabled(!b);
+    stock_->setEnabled(canEdit);
+    curve_->setEnabled(canEdit);
+    assist_->setEnabled(canEdit);
+    apply_->setEnabled(canEdit && curve_->levels() != hw_);
 }
 
 void FanCurveDialog::status(const QString &msg, const char *color) {
@@ -254,6 +260,7 @@ void FanCurveDialog::load() {
 }
 
 void FanCurveDialog::apply() {
+    if (!unlock::Manager::instance().unlocked()) return;
     const QVector<int> lv = curve_->levels();
     QJsonArray a;
     for (int x : lv) a << x;

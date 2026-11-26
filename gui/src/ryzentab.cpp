@@ -1,3 +1,6 @@
+#include "unlock.h"
+#include "mainwindow.h"
+#include "scenes.h"
 #include "navigationtargets.h"
 #include <algorithm>
 #include <QFontMetrics>
@@ -336,6 +339,10 @@ RyzenTab::RyzenTab(QWidget *parent) : QWidget(parent), layout_(ryzen::detect()) 
     verified_->setVisible(false);
     pl->addWidget(verified_);
     connect(profileCombo_, &QComboBox::currentTextChanged, this, &RyzenTab::updateVerified);
+    auto *applySaved = new QPushButton(tr("Apply profile"));
+    applySaved->setToolTip(tr("Apply the saved profile. New or changed offsets need a one-time approval while unlocked."));
+    connect(applySaved, &QPushButton::clicked, this, [this] { applyNamedProfile(profileCombo_->currentText()); });
+    pl->addWidget(applySaved);
     pl->addWidget(bLoad);
     pl->addWidget(bSave);
     pl->addWidget(bDel);
@@ -459,7 +466,17 @@ RyzenTab::RyzenTab(QWidget *parent) : QWidget(parent), layout_(ryzen::detect()) 
     hdr->addWidget(bClear);
     hdr->addWidget(bCores);
     cl->addLayout(hdr);
-    applyButtons_ = {bAll, bReset, bCores, coSearch};
+    applyButtons_ = {bReset, applySaved, bAll, bCores, coSearch};
+    connect(profileCombo_, &QComboBox::currentTextChanged, this, [this] { setBusy(busy_); });
+    applySaved->setProperty("savedProfileAction", true);
+    auto refreshLock = [this, acBox, coreBox, bSave](bool unlocked) {
+        acBox->setEnabled(unlocked);
+        coreBox->setEnabled(unlocked);
+        bSave->setEnabled(unlocked);
+        setBusy(busy_);
+    };
+    connect(&unlock::Manager::instance(), &unlock::Manager::changed, this, refreshLock);
+    refreshLock(unlock::Manager::instance().unlocked());
 
     const char *const accents[] = {theme::OK, theme::ACCENT, theme::PURPLE, theme::INFO};
     auto *cards = new QHBoxLayout;
@@ -705,7 +722,8 @@ void RyzenTab::fillCcd(int ccd) {
 
 void RyzenTab::setBusy(bool b) {
     busy_ = b;
-    for (QPushButton *p : std::as_const(applyButtons_)) p->setEnabled(!b);
+    for (QPushButton *p : std::as_const(applyButtons_))
+        p->setEnabled(!b && (!p->property("savedProfileAction").toBool() || !profileCombo_->currentText().isEmpty()));
 }
 
 bool RyzenTab::applyAllCore(std::function<void()> then) {
@@ -929,15 +947,17 @@ bool RyzenTab::applyNamedProfile(const QString &name) {
     profileCombo_->setCurrentIndex(i);
     if (!loadProfile()) return false;
 
-    bool anyCore = false;
-    for (Slot *s : activeSlots()) anyCore |= parse(*s).first == Parse::Ok;
-    const bool hasCoall = !coall_->text().trimmed().isEmpty();
-    // A per-core batch resets every core to 0 first (ryzen-co-helper), so an all-core value sent
-    // before it would be overwritten at once: the all-core offset goes out only without per-core values.
-    if (anyCore) return applyPerCore();
-    if (hasCoall) return applyAllCore();
-    log("Profile '" + name + "' contains no offsets to apply.", "err");
-    return false;
+    auto *main = qobject_cast<MainWindow *>(window());
+    if (!main || !main->scenes() || trial_->running()) return false;
+    setBusy(true);
+    const QPointer<RyzenTab> self(this);
+    main->scenes()->applyCpuProfile(name, false, [self](bool ok, const QString &message) {
+        if (!self) return;
+        self->setBusy(false);
+        self->log(message, ok ? "ok" : "err");
+        if (!ok) QMessageBox::warning(self, tr("Apply profile"), message);
+    });
+    return true;
 }
 
 // ── parked CCD (Optimizations → Park a CCD) ─────────────────────────────────

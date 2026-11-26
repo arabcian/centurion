@@ -1,3 +1,4 @@
+#include "unlock.h"
 #include "navigationtargets.h"
 #include "nvidiatab.h"
 #include "vfcoverage.h"
@@ -324,6 +325,7 @@ NvidiaTab::NvidiaTab(QWidget *parent) : QWidget(parent) {
     connect(bDef, &QPushButton::clicked, this, &NvidiaTab::toggleDefault);
     auto *bApplyProf = new QPushButton("Apply Profile");
     bApplyProf->setToolTip(tr("Apply the selected saved profile to the GPU as-is"));
+    bApplyProf->setToolTip(tr("Apply the saved profile. Available while the GUI is locked."));
     connect(bApplyProf, &QPushButton::clicked, this, [this] {
         const QString n = profiles_->currentText().remove(STAR);
         if (!n.isEmpty()) applyNamedProfile(n);
@@ -725,6 +727,9 @@ NvidiaTab::NvidiaTab(QWidget *parent) : QWidget(parent) {
         root->addWidget(ctl);
     }
     actionButtons_ = {bSave, bDef, bApplyProf, bDel, bLock, bUnlock, bCap, bUncap, readBtn_, bValidate, bApply, resetBtn_, bResetAll};
+    for (auto *button : {bSave, bDef, bLock, bCap, bApply}) button->setProperty("requiresUnlock", true);
+    connect(&unlock::Manager::instance(), &unlock::Manager::changed, this, [this] { setBusy(busy_); });
+    setBusy(false);
 
     log_ = new QPlainTextEdit;
     log_->setObjectName("terminal");
@@ -908,7 +913,7 @@ void NvidiaTab::syncPowerMizer() {
         if (pm->supported & (1u << id)) powerMizer_->addItem(QString::fromLatin1(LABELS[id]), QString::fromLatin1(key));
     for (const auto &[id, key] : MODES)
         if (id == pm->current) powerMizer_->setCurrentIndex(powerMizer_->findData(QString::fromLatin1(key)));
-    powerMizer_->setEnabled(powerMizer_->count() > 1);
+    powerMizer_->setEnabled(!busy_ && unlock::Manager::instance().unlocked() && powerMizer_->count() > 1);
 }
 
 void NvidiaTab::log(const QString &s) {
@@ -919,13 +924,16 @@ void NvidiaTab::log(const QString &s) {
 
 void NvidiaTab::setBusy(bool b) {
     busy_ = b;
-    for (QPushButton *p : std::as_const(actionButtons_)) p->setEnabled(!b);
-    vf_->setEnabled(!b);
-    flattenSpin_->setEnabled(!b);
-    coreSpin_->setEnabled(!b && !curveModified_);
-    pointSpin_->setEnabled(!b && !vf_->selection().isEmpty());
+    const bool canEdit = !b && unlock::Manager::instance().unlocked();
+    for (QPushButton *p : std::as_const(actionButtons_))
+        p->setEnabled(p->property("requiresUnlock").toBool() ? canEdit : !b);
+    powerMizer_->setEnabled(canEdit && powerMizer_->count() > 1);
+    vf_->setEnabled(canEdit);
+    flattenSpin_->setEnabled(canEdit);
+    coreSpin_->setEnabled(canEdit && !curveModified_);
+    pointSpin_->setEnabled(canEdit && !vf_->selection().isEmpty());
     profiles_->setEnabled(!b);
-    for (auto *spin : {coreCapSpin_, capCompSpin_, memSpin_, lockMinSpin_, lockMaxSpin_}) spin->setEnabled(!b);
+    for (auto *spin : {coreCapSpin_, capCompSpin_, memSpin_, lockMinSpin_, lockMaxSpin_}) spin->setEnabled(canEdit);
     updateCurveHistory();
 }
 
@@ -1096,8 +1104,8 @@ NvidiaTab::CurveDraft NvidiaTab::curveDraft() const {
     return {pointOffsets_, coreOffset_, flatFrom_, flatMhz_, coreCapSpin_->value(), curveModified_};
 }
 void NvidiaTab::updateCurveHistory() {
-    if (undoCurveBtn_) undoCurveBtn_->setEnabled(!busy_ && !undoCurve_.isEmpty());
-    if (redoCurveBtn_) redoCurveBtn_->setEnabled(!busy_ && !redoCurve_.isEmpty());
+    if (undoCurveBtn_) undoCurveBtn_->setEnabled(!busy_ && unlock::Manager::instance().unlocked() && !undoCurve_.isEmpty());
+    if (redoCurveBtn_) redoCurveBtn_->setEnabled(!busy_ && unlock::Manager::instance().unlocked() && !redoCurve_.isEmpty());
 }
 void NvidiaTab::clearCurveHistory() {
     undoCurve_.clear(); redoCurve_.clear(); updateCurveHistory();
@@ -1151,7 +1159,7 @@ void NvidiaTab::updateCoreOffsetUi() {
         coreSpin_->setValue(CORE_MIN - 1);
         theme::setLiveSheet(coreSpin_, [] { return QStringLiteral("QSpinBox { color:%1; font-weight:600; }").arg(theme::DANGER); });
     } else {
-        coreSpin_->setEnabled(!busy_);
+        coreSpin_->setEnabled(!busy_ && unlock::Manager::instance().unlocked());
         coreSpin_->setSpecialValueText(QString());
         coreSpin_->setRange(CORE_MIN, CORE_MAX);
         coreSpin_->setValue(coreOffset_);
@@ -1199,7 +1207,7 @@ void NvidiaTab::onSelectionChanged() {
         voltLabel_->setText(QStringLiteral("Voltage: %1 mV").arg(p.x()));
         freqLabel_->setText(QStringLiteral("Freq: %1 MHz").arg(p.y()));
         offLabel_->setText(QStringLiteral("Offset: %1 MHz").arg(offsetOf(idx)));
-        pointSpin_->setEnabled(!busy_);
+        pointSpin_->setEnabled(!busy_ && unlock::Manager::instance().unlocked());
         pointSpin_->setValue(offsetOf(idx));
         // setPoints() announces the selection after every edit; only a real change of
         // the selection may overwrite the index typed into the Flatten box.

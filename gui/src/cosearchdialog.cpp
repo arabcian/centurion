@@ -1,3 +1,4 @@
+#include "unlock.h"
 #include "cosearchdialog.h"
 #include "cofirstfailure.h"
 #include "coarchive.h"
@@ -390,6 +391,12 @@ static void refreshCoreColors(QTableWidget *table) {
 CoSearchDialog::CoSearchDialog(QWidget *parent) : QDialog(parent), notifier_(new Notifier(this)) {
     setWindowTitle(tr("Ryzen CO Search Assistant (Experimental)"));
     resize(1000, 680);
+    const auto syncLock = [this](bool unlocked) {
+        if (!unlocked && operationActive()) cancel();
+        setEnabled(unlocked);
+    };
+    connect(&unlock::Manager::instance(), &unlock::Manager::changed, this, syncLock);
+    syncLock(unlock::Manager::instance().unlocked());
     auto *v = new QVBoxLayout(this);
     auto *explainer = new QLabel(tr(
         "Finds negative Curve Optimizer offsets with FFT / integer workload and boost/idle transitions. "
@@ -1255,7 +1262,7 @@ void CoSearchDialog::refreshTable() {
 }
 
 std::optional<ryzen::Layout> CoSearchDialog::preflight(Mode mode) {
-    if (running_ || perfTest_ || preparing_ || recoveryBusy_) return std::nullopt;
+    if (!unlock::Manager::instance().unlocked() || running_ || perfTest_ || preparing_ || recoveryBusy_) return std::nullopt;
     if (QFileInfo::exists(journalPath())) {
         // Never overwrite an unresolved crash history with a fresh, unguarded search.
         offerResume();
@@ -1291,7 +1298,7 @@ std::optional<ryzen::Layout> CoSearchDialog::preflight(Mode mode) {
 }
 
 void CoSearchDialog::start() {
-    if (operationActive()) return;
+    if (!unlock::Manager::instance().unlocked() || operationActive()) return;
     if (QFileInfo::exists(journalPath())) { offerResume(); return; }
     probeTools([this](bool ok) { if (ok) startPrepared(); });
 }
@@ -1365,7 +1372,7 @@ void CoSearchDialog::startPrepared() {
 }
 
 void CoSearchDialog::verifyProfile() {
-    if (operationActive()) return;
+    if (!unlock::Manager::instance().unlocked() || operationActive()) return;
     if (QFileInfo::exists(journalPath())) { offerResume(); return; }
     probeTools([this](bool ok) { if (ok) verifyPrepared(); });
 }
