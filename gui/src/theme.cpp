@@ -716,11 +716,11 @@ QPushButton#expNavButton:checked { color: @FG;
 QPushButton#expNavButton:disabled { color: @BG4; }
 QPushButton#expNavButton[collapsed="true"] { text-align: center; padding: 3px 1px; font-size: 8pt; }
 /* The boxes at the foot of the rail (the lock button is styled with them): one height, one look. */
-QPushButton#expRailAction, QPushButton#expRailToggle { text-align: center; color: @FG_DIM;
+QPushButton#expRailAction, QPushButton#expRailToggle { text-align: left; color: @FG_DIM;
     background: @BG2; border: 1px solid @BORDER; border-radius: 7px; padding: 0 8px; min-height: 0; }
 QPushButton#expRailAction:hover, QPushButton#expRailToggle:hover { color: @FG; border-color: @ACCENT; }
 QPushButton#expRailAction:pressed, QPushButton#expRailToggle:pressed { background: @HILITE2; }
-QPushButton#expRailAction[collapsed="true"], QPushButton#expRailToggle[collapsed="true"] { padding: 0; }
+QPushButton#expRailAction[collapsed="true"], QPushButton#expRailToggle[collapsed="true"] { text-align: center; padding: 0; }
 QFrame#expTopbar { background: @BG0; border-bottom: 1px solid @BORDER_SOFT; }
 QLabel#expTopPath { color: @MUTED; font-size: 7pt; font-weight: 700; letter-spacing: 1.4px; }
 QLabel#expTopTitle { color: @FG; font-size: 14pt; font-weight: 700; }

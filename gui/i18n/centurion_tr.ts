@@ -4370,6 +4370,18 @@ Centurion bunda test edilmedi; bazı donanım yazılımı özellikleri eksik ola
     <context>
         <name>MainWindow</name>
         <message>
+            <source>CPU Curve</source>
+            <translation>İşlemci Eğrisi</translation>
+        </message>
+        <message>
+            <source>GPU Curve</source>
+            <translation>GPU Eğrisi</translation>
+        </message>
+        <message>
+            <source>Expand navigation</source>
+            <translation>Gezinme panelini genişlet</translation>
+        </message>
+        <message>
             <source>Operations</source>
             <translation>İşlemler</translation>
         </message>
@@ -4489,8 +4501,8 @@ Centurion bunda test edilmedi; bazı donanım yazılımı özellikleri eksik ola
         </message>
         <message>
             <location filename="../src/mainwindow.cpp" line="460"/>
-            <source>«  Hide labels</source>
-            <translation>«  Etiketleri gizle</translation>
+            <source>Hide labels</source>
+            <translation>Etiketleri gizle</translation>
         </message>
         <message>
             <location filename="../src/mainwindow.cpp" line="484"/>
@@ -7598,8 +7610,8 @@ Bunu değiştirmek için Sağlık → Bildirimler…</translation>
         </message>
         <message>
             <location filename="work/gui/src/tray.cpp" line="265"/>
-            <source>CPU Curve (Ryzen)</source>
-            <translation>İşlemci Eğrisi (Ryzen)</translation>
+            <source>CPU Curve</source>
+            <translation>İşlemci Eğrisi</translation>
         </message>
         <message>
             <location filename="work/gui/src/tray.cpp" line="267"/>
@@ -7654,8 +7666,8 @@ Bunu değiştirmek için Sağlık → Bildirimler…</translation>
         </message>
         <message>
             <location filename="work/gui/src/tray.cpp" line="307"/>
-            <source>GPU Curve (NVIDIA)</source>
-            <translation>GPU Eğrisi (NVIDIA)</translation>
+            <source>GPU Curve</source>
+            <translation>GPU Eğrisi</translation>
         </message>
         <message>
             <location filename="work/gui/src/tray.cpp" line="315"/>

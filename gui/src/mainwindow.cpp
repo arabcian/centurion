@@ -416,9 +416,11 @@ void MainWindow::arrangeTabs() {
         // tooltip and the canonical ID used by HealthTab::openTab.
         const QString display = id == QLatin1String("Health") ? tr("Health Center")
                               : id == QLatin1String("Optimizations") ? tr("Optimize")
+                              : id == QLatin1String("Ryzen Curve") ? tr("CPU Curve")
+                              : id == QLatin1String("NVIDIA Curve") ? tr("GPU Curve")
                               : tr(id.toUtf8().constData());
         tabs_->setTabText(target, display);
-        tabs_->setTabToolTip(target, tr(id.toUtf8().constData()));
+        tabs_->setTabToolTip(target, display);
         ++target;
     }
     tabW_ = -1;
@@ -685,7 +687,6 @@ void MainWindow::rebuildExperimentalNavigation() {
         button->setProperty("navCode", code);
         button->setProperty("pageId", id);
         theme::bindPresentation(button, [button,id] { button->setIcon(experimentalui::navigationIcon(id)); });
-        button->setIconSize(QSize(18, 18));
         button->setText(expCollapsed_ ? QString() : label);
         const int position = expNavButtons_.size() + 1;
         button->setToolTip(position <= 9 ? QStringLiteral("%1  ·  Ctrl+%2").arg(label).arg(position) : label);
@@ -729,15 +730,23 @@ void MainWindow::setExperimentalCollapsed(bool collapsed) {
     lockButton_->setProperty("collapsed", collapsed);
     lockButton_->style()->unpolish(lockButton_);
     lockButton_->style()->polish(lockButton_);
-    expToggle_->setText(collapsed ? QStringLiteral("»") : tr("«  Hide labels"));
-    expOperations_->setText(collapsed ? QStringLiteral("⋯") : QStringLiteral("⋯  ") + tr("Operations"));
-    expFavorites_->setText(collapsed ? QStringLiteral("☆") : QStringLiteral("☆  ") + tr("Favorites"));
+    const QSize iconSize = collapsed ? QSize(24, 24) : QSize(21, 21);
+    lockButton_->setIconSize(collapsed ? iconSize : QSize(22, 22));
+    expToggle_->setText(collapsed ? QString() : tr("Hide labels"));
+    expToggle_->setAccessibleName(collapsed ? tr("Expand navigation") : tr("Hide labels"));
+    expOperations_->setText(collapsed ? QString() : tr("Operations"));
+    expFavorites_->setText(collapsed ? QString() : tr("Favorites"));
+    expToggle_->setIcon(experimentalui::navigationIcon(collapsed ? QStringLiteral("Expand") : QStringLiteral("Collapse")));
+    expOperations_->setIcon(experimentalui::navigationIcon(QStringLiteral("Operations")));
+    expFavorites_->setIcon(experimentalui::navigationIcon(QStringLiteral("Favorites")));
     for (QPushButton *box : {expToggle_, expOperations_, expFavorites_}) {
+        box->setIconSize(iconSize);
         box->setProperty("collapsed", collapsed);
         box->style()->unpolish(box);
         box->style()->polish(box);
     }
     for (auto *button : std::as_const(expNavButtons_)) {
+        button->setIconSize(iconSize);
         button->setText(collapsed ? QString() : button->property("navLabel").toString());
         button->setProperty("collapsed", collapsed);
         button->style()->unpolish(button);
