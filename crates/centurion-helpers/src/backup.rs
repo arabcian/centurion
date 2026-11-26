@@ -1310,6 +1310,32 @@ fn restore_sequence(archive: &Path) -> Result<Vec<(PathBuf, bool)>, String> {
         .collect()
 }
 
+/// What every image of `seq` needs, checked before the first one is unpacked. Each image is a stream of its own and
+/// a chain may mix them (an increment can be made with another compressor or level than the image it continues, and
+/// an encrypted chain names each image's compression only in its file name), so a missing decompressor, a key that
+/// does not open a later image or a file that is not what its name says would otherwise surface at step 3, after
+/// steps 1–2 had overwritten the target — which may be the running system.
+fn restore_preflight(seq: &[(PathBuf, bool)], key: Option<&Key>) -> Result<(), String> {
+    tool("tar").ok_or("tar is not installed")?;
+    for (i, (file, _)) in seq.iter().enumerate() {
+        let at = |e: String| if seq.len() > 1 { format!("{} (step {} of {}): {e}", file.display(), i + 1, seq.len()) } else { format!("{}: {e}", file.display()) };
+        let f = File::open(file).map_err(|e| at(e.to_string()))?;
+        let comp = Comp::from_magic(&f);
+        let inner = if comp == Comp::Age {
+            tool("age").ok_or_else(|| at("age is not installed (needed to read an encrypted image)".into()))?;
+            let inner = inner_comp(file).map_err(&at)?;
+            if !key.is_some_and(|k| key_opens(file, k)) { return Err(at("this key or passphrase does not open the archive".into())); }
+            inner
+        } else {
+            let named = file.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+            if comp == Comp::None && is_image_name(&named) { return Err(at("the archive is empty or not compressed the way its name says".into())); }
+            comp
+        };
+        if inner != Comp::None { inner.decompressor().map_err(&at)?; }
+    }
+    Ok(())
+}
+
 /// {"op":"system_restore","archive":"/…","target":"/mnt/gentoo","confirm":"/mnt/gentoo","identity":"AGE-SECRET-KEY-1…"}
 /// `confirm` must repeat the target: a request cannot restore somewhere by accident.
 pub fn system_restore(req: &Value) -> Value {
@@ -1325,6 +1351,7 @@ pub fn system_restore(req: &Value) -> Value {
     if key.is_none() && seq.iter().any(|(f, _)| sniff(f) == Comp::Age) {
         return json!({"ok": false, "needs_key": true, "archive": archive, "error": "the archive is encrypted: its passphrase or age key is needed"});
     }
+    if let Err(e) = restore_preflight(&seq, key.as_ref()) { return fail(format!("{e} — nothing was written to {}", target.display())); }
     crate::wlog::log("backup", &format!("system_restore {} -> {}{}", archive.display(), target.display(),
                                         if seq.len() > 1 { format!(" ({} steps)", seq.len()) } else { String::new() }));
     crate::emit(&json!({"event": "start", "phase": "restore", "archive": archive, "target": target, "steps": seq.len(),
@@ -2610,6 +2637,119 @@ mod tests {
         }
         assert!(r["deleted"].as_u64().unwrap() >= 3, "{r}");
         assert_eq!(r["renamed"], 1, "{r}");
+        let _ = fs::remove_dir_all(&base);
+    }
+
+    /// A full image and one increment, each through its own `filter` (compressor, optionally `| age …`): etc/a is "1"
+    /// in the full image and "2" in the increment, etc/b only exists in the increment. Returns the increment.
+    fn two_image_chain(base: &Path, full: (&str, &str), inc: (&str, &str)) -> PathBuf {
+        let (src, arch) = (base.join("src"), base.join("arch"));
+        fs::create_dir_all(src.join("etc")).unwrap();
+        fs::create_dir_all(&arch).unwrap();
+        fs::write(src.join("etc/a"), "1").unwrap();
+        let snar = arch.join("chain.snar");
+        let dump = |name: &str, filter: &str| {
+            std::thread::sleep(Duration::from_millis(1100));  // tar's change detection works in whole seconds
+            sh(&format!("tar -C {} --xattrs --listed-incremental={} -cf - . | {} > {}", src.display(), snar.display(), filter, arch.join(name).display()));
+        };
+        dump(full.0, full.1);
+        fs::write(src.join("etc/a"), "2").unwrap();
+        fs::write(src.join("etc/b"), "new").unwrap();
+        dump(inc.0, inc.1);
+        fs::write(sidecar(&arch.join(full.0)), json!({"level": 0, "chain": full.0}).to_string()).unwrap();
+        fs::write(sidecar(&arch.join(inc.0)), json!({"level": 1, "chain": full.0, "parent": full.0}).to_string()).unwrap();
+        arch.join(inc.0)
+    }
+
+    const FULL_GZ: &str = "backup-2026-10-01.tar.gz";
+    const INC_XZ: &str = "backup-2026-10-02_100000-i1.tar.xz";
+
+    /// An increment may be made with another compressor or level than the image it continues: each image is
+    /// its own stream, so the restore picks the decompressor per file.
+    #[test]
+    fn chain_with_mixed_compression_restores() {
+        if !(have("tar") && have("gzip") && have("xz")) { return; }
+        let base = tmp("mixed-comp");
+        let inc = two_image_chain(&base, (FULL_GZ, "gzip -1 -c"), (INC_XZ, "xz -9 -c"));
+        let dst = base.join("dst");
+        fs::create_dir_all(&dst).unwrap();
+        let t = fs::canonicalize(&dst).unwrap();
+        let r = system_restore(&json!({"archive": inc, "target": t, "confirm": t}));
+        assert_eq!(r["ok"], true, "{r}");
+        assert_eq!(r["steps"], 2);
+        assert_eq!(fs::read_to_string(dst.join("etc/a")).unwrap(), "2");
+        assert_eq!(fs::read_to_string(dst.join("etc/b")).unwrap(), "new");
+        let _ = fs::remove_dir_all(&base);
+    }
+
+    /// The same chain, encrypted: the compressor inside age is read from each file's name.
+    #[test]
+    fn encrypted_chain_with_mixed_compression_restores_and_refuses_a_foreign_key_before_writing() {
+        if !(have("tar") && have("gzip") && have("xz") && have("age")) { return; }
+        let base = tmp("mixed-age");
+        let keygen = |n: &str| -> Option<(String, String)> {
+            let p = base.join(n);
+            Command::new("age-keygen").arg("-o").arg(&p).output().ok().filter(|o| o.status.success())?;
+            let text = fs::read_to_string(&p).ok()?;
+            let rec = text.lines().find_map(|l| l.strip_prefix("# public key: "))?.trim().to_owned();
+            Some((rec, text))
+        };
+        let (Some((r1, k1)), Some((r2, _))) = (keygen("k1.txt"), keygen("k2.txt")) else { let _ = fs::remove_dir_all(&base); return };
+        let full = "backup-2026-10-01.tar.gz.age";
+        let inc_name = "backup-2026-10-02_100000-i1.tar.xz.age";
+        // Same key throughout, two compressors.
+        let inc = two_image_chain(&base, (full, &format!("gzip -c | age -r {r1}")), (inc_name, &format!("xz -c | age -r {r1}")));
+        let (ok_dst, bad_dst) = (base.join("ok"), base.join("bad"));
+        for d in [&ok_dst, &bad_dst] { fs::create_dir_all(d).unwrap(); }
+        let t = fs::canonicalize(&ok_dst).unwrap();
+        let r = system_restore(&json!({"archive": inc, "target": t, "confirm": t, "identity": k1}));
+        assert_eq!(r["ok"], true, "{r}");
+        assert_eq!(fs::read_to_string(ok_dst.join("etc/a")).unwrap(), "2");
+        // The increment encrypted to another key: nothing may be unpacked from the full image first.
+        fs::remove_file(&inc).unwrap();
+        sh(&format!("tar -C {}/src -cf - etc | xz -c | age -r {r2} > {}", base.display(), inc.display()));
+        let t = fs::canonicalize(&bad_dst).unwrap();
+        let r = system_restore(&json!({"archive": inc, "target": t, "confirm": t, "identity": k1}));
+        assert_eq!(r["ok"], false, "{r}");
+        assert!(r["error"].as_str().unwrap().contains("step 2 of 2"), "{r}");
+        assert!(!bad_dst.join("etc").exists(), "the full image was unpacked before the increment was found unreadable: {r}");
+        let _ = fs::remove_dir_all(&base);
+    }
+
+    /// A decompressor missing for a later image (zstd here, absent on a minimal live system) must stop the restore
+    /// before the first image is unpacked, not after it.
+    #[test]
+    fn missing_decompressor_of_a_later_image_stops_before_anything_is_written() {
+        if !(have("tar") && have("gzip") && have("xz")) || have("zstd") { return; }
+        let base = tmp("no-zstd");
+        let inc = two_image_chain(&base, (FULL_GZ, "gzip -c"), (INC_XZ, "xz -c"));
+        fs::write(&inc, [0x28u8, 0xb5, 0x2f, 0xfd, 0, 0, 0, 0]).unwrap();  // a zstd frame header
+        let dst = base.join("dst");
+        fs::create_dir_all(&dst).unwrap();
+        let t = fs::canonicalize(&dst).unwrap();
+        let r = system_restore(&json!({"archive": inc, "target": t, "confirm": t}));
+        assert_eq!(r["ok"], false, "{r}");
+        let e = r["error"].as_str().unwrap();
+        assert!(e.contains("zstd") && e.contains("step 2 of 2") && e.contains("nothing was written"), "{e}");
+        assert!(!dst.join("etc").exists(), "the full image was unpacked before the missing decompressor was found: {r}");
+        let _ = fs::remove_dir_all(&base);
+    }
+
+    /// An image whose name says it is compressed but whose bytes are not (cut to nothing, wrong file): refused up
+    /// front, instead of being read as an empty tar that unpacks nothing and reports success.
+    #[test]
+    fn an_empty_or_uncompressed_image_is_refused_before_anything_is_written() {
+        if !(have("tar") && have("gzip") && have("xz")) { return; }
+        let base = tmp("empty-img");
+        let inc = two_image_chain(&base, (FULL_GZ, "gzip -c"), (INC_XZ, "xz -c"));
+        fs::write(&inc, b"").unwrap();
+        let dst = base.join("dst");
+        fs::create_dir_all(&dst).unwrap();
+        let t = fs::canonicalize(&dst).unwrap();
+        let r = system_restore(&json!({"archive": inc, "target": t, "confirm": t}));
+        assert_eq!(r["ok"], false, "{r}");
+        assert!(r["error"].as_str().unwrap().contains("step 2 of 2"), "{r}");
+        assert!(!dst.join("etc").exists(), "{r}");
         let _ = fs::remove_dir_all(&base);
     }
 

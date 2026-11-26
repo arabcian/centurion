@@ -11,6 +11,12 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions follo
   bits) moved off the Optimizations tab to three System tools pages: Network tuning, Storage tuning and Kernel tuning.
   Same keys, presets, Restore originals and boot defaults; only the page and its own Apply checked button differ.
 
+### Fixed
+- Health → Backups → Restore of an increment: the whole chain is checked before the first image is unpacked — each
+  image's decompressor (a chain may mix gzip/xz/zstd), that the key or passphrase opens every encrypted image, and
+  that no image is empty. Before, a decompressor missing at step 3 or a foreign key at step 2 stopped the restore
+  after steps 1–2 had already been written to the target (which can be the running system).
+
 ### Added
 - Health → Backups: every backup (system image and configuration backup) now also writes `<archive>.RESTORE.txt`
   beside it — a Turkish/English, step-by-step guide to restoring that exact archive by hand with Centurion not
