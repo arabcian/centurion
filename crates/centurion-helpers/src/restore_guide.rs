@@ -96,9 +96,17 @@ pub fn image_guide(g: &Image) -> String {
         line(&mut s, &format!("      1. {this}"));
     }
     s.push('\n');
+    // One compressor per file, from its name: an increment may use another one than the image it continues.
+    let mut tools: Vec<&str> = Vec::new();
+    for f in g.steps {
+        let t = unpack_stage(f, Crypt::None).split(' ').next().unwrap_or("gzip").to_owned();
+        let t = if t == "zstd" { "zstd" } else if t == "xz" { "xz" } else { "gzip" };
+        if !tools.contains(&t) { tools.push(t); }
+    }
+    let list = tools.join(", ");
     bi(&mut s,
-       "Araçlar: tar (GNU tar), ve imajın sıkıştırmasına göre gzip / zstd / xz",
-       "Tools: tar (GNU tar), and gzip / zstd / xz depending on the image's compression");
+       &format!("Araçlar: tar (GNU tar) ve {list}{}", if tools.len() > 1 { " — bu zincirde dosyalar farklı sıkıştırıcılarla yazılmış, HEPSİ kurulu olmalı" } else { "" }),
+       &format!("Tools: tar (GNU tar) and {list}{}", if tools.len() > 1 { " — the files of this chain were made with different compressors: ALL must be installed" } else { "" }));
     if g.crypt != Crypt::None {
         bi(&mut s, "Ayrıca: age (https://age-encryption.org). Canlı sistemde yoksa kurun veya static ikilisini indirin.",
            "Also: age (https://age-encryption.org). Install it in the live system, or download its static binary.");
@@ -300,6 +308,7 @@ mod tests {
         let c = r.find("age -d -i \"$AGEKEY\" 'backup-2026-11-22_010203-i2.tar.zst.age' | zstd -dc | tar").unwrap();
         assert!(a < b && b < c);
         assert!(t.contains("AGEKEY=") && t.contains("NOT use tar's own --listed-incremental"));
+        assert!(t.contains("Tools: tar (GNU tar) and gzip, xz, zstd") && t.contains("ALL must be installed"));
     }
 
     #[test]
