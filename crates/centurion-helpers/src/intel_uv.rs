@@ -463,16 +463,6 @@ pub enum Rmw {
 
 fn modprobe_msr() -> bool { crate::modprobe("msr") }
 
-/// throttled's set_msr_allow_writes(): writes stay allowed with "default"
-/// but every 0x150 write then logs a kernel warning.
-pub fn ensure_allow_writes() -> Option<String> {
-    let p = Path::new("/sys/module/msr/parameters/allow_writes");
-    let cur = std::fs::read_to_string(p).ok()?.trim().to_owned();
-    if cur == "on" { return Some(cur); }
-    let _ = crate::sysfs_write(p, b"on");
-    Some(std::fs::read_to_string(p).ok()?.trim().to_owned())
-}
-
 pub fn lockdown() -> Option<String> {
     let s = std::fs::read_to_string("/sys/kernel/security/lockdown").ok()?;
     s.split_whitespace().find(|w| w.starts_with('[')).map(|w| w.trim_matches(|c| c == '[' || c == ']').to_owned())
@@ -904,12 +894,13 @@ pub fn read_status() -> Value {
         out["error"] = json!("not an Intel CPU");
         return out;
     }
-    out["allow_writes"] = json!(ensure_allow_writes());
     let msr = match Msr::open(true) {
         Ok(m) => m,
         Err(e) => { out["ok"] = json!(false); out["error"] = json!(format!("/dev/cpu/0/msr: {}", err_str(&e))); return out; }
     };
 
+    // Opening the device may have loaded msr. Report the active kernel policy after that.
+    out["allow_writes"] = json!(read_trim(Path::new("/sys/module/msr/parameters/allow_writes")).ok());
     out["oc_lock"] = match msr.read(MSR_FLEX_RATIO) {
         Ok(v) => json!({"locked": (v >> 20) & 1 == 1, "raw": format!("{v:#018x}")}),
         Err(e) => json!({"error": err_str(&e)}),
@@ -1221,7 +1212,6 @@ fn apply_ex(p: &Profile, rollback: bool) -> Value {
     if cpu_id().map(|c| c.vendor) != Some("GenuineIntel".into()) {
         return json!({"ok": false, "error": "not an Intel CPU"});
     }
-    ensure_allow_writes();
     let msr = match Msr::open(true) {
         Ok(m) => m,
         Err(e) => return json!({"ok": false, "error": format!("/dev/cpu/0/msr: {}", err_str(&e))}),
@@ -1755,7 +1745,6 @@ pub fn probe_uv_lock() -> Value {
     if cpu_id().map(|c| c.vendor) != Some("GenuineIntel".into()) {
         return json!({"ok": false, "error": "not an Intel CPU"});
     }
-    ensure_allow_writes();
     let msr = match Msr::open(true) {
         Ok(m) => m,
         Err(e) => return json!({"ok": false, "error": format!("/dev/cpu/0/msr: {}", err_str(&e))}),

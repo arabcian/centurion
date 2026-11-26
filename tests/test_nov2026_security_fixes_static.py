@@ -23,6 +23,19 @@ NV = 'crates/nvcurve/src/hal/vfcurve.rs'
 
 
 class Audit20261119(unittest.TestCase):
+    def test_intel_msr_policy_is_observed_without_changing_it(self):
+        s = source('crates/centurion-helpers/src/intel_uv.rs')
+        policy_path = '"/sys/module/msr/parameters/allow_writes"'
+        self.assertEqual(s.count(policy_path), 1)
+        self.assertIn(f'read_trim(Path::new({policy_path})).ok()', s)
+
+    def test_intel_boot_and_probe_authorization_precedes_dispatch(self):
+        s = source(UVHELP)
+        guards = s[s.index('let op = obj.get("op")'):s.index('let mut out = match op')]
+        self.assertIn('op == Some("boot") && std::env::var_os("PKEXEC_UID").is_some()', guards)
+        self.assertRegex(guards, r'(?s)Some\("apply" \| "probe_uv_lock" \| "set_boot" \| "clear_boot"\).*?unlock::refuse')
+        self.assertRegex(guards, r'(?s)Some\("apply" \| "reset" \| "probe_uv_lock"\).*?refuse_during_calibration')
+
     def test_cen01_guard_uses_non_bypass_queue(self):
         s = source(NET)
         self.assertIn('let guard_queue = format!', s)
