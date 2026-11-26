@@ -1420,7 +1420,7 @@ void SceneEngine::start(const Scene &s, const QString &expectedGeneration) {
                     QStringList exceptions;
                     for (const QJsonValue &v : r.json.value("results").toArray()) {
                         const auto row=v.toObject(); const QString key=row.value("key").toString(); QStringList reasons;
-                        if (!row.value("skipped").toString().isEmpty()) reasons << row.value("skipped").toString();
+                        if (row.value("controlled_by").toString().isEmpty() && !row.value("skipped").toString().isEmpty()) reasons << row.value("skipped").toString();
                         if (!row.value("error").toString().isEmpty()) reasons << row.value("error").toString();
                         if (row.value("refused").toInt()>0) reasons << QStringLiteral("%1 refused writes").arg(row.value("refused").toInt());
                         if (row.value("mismatch_count").toInt()>0) reasons << QStringLiteral("%1 value(s) did not stick").arg(row.value("mismatch_count").toInt());

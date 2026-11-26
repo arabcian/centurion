@@ -517,7 +517,7 @@ fn apply_values_checked(st: &mut State, values: &Map<String, Value>, game: bool,
     let kept: Map<String, Value>;
     let values = if shadowed.is_empty() { values } else {
         for (k, g) in &shadowed {
-            results.push(json!({"key": k, "ok": true, "skipped": format!("controlled by {g} in the same preset")}));
+            results.push(json!({"key": k, "ok": true, "controlled_by": g, "skipped": format!("controlled by {g} in the same preset")}));
         }
         kept = values.iter().filter(|(k, _)| !shadowed.iter().any(|(s, _)| s == k)).map(|(k, v)| (k.clone(), v.clone())).collect();
         &kept
