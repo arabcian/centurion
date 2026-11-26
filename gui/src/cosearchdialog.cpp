@@ -1280,6 +1280,10 @@ std::optional<ryzen::Layout> CoSearchDialog::preflight(Mode mode) {
               "the last helper-written state must explicitly be reset/0 before this search.")); return std::nullopt;
     }
     const ryzen::Layout layout = ryzen::detect();
+    // Only a per-core search writes by slot; the all-core one does not depend on the mapping.
+    if (const QString why = mode == Mode::PerCore ? ryzen::slotMappingProblem(layout) : QString(); !why.isEmpty()) {
+        QMessageBox::warning(this, tr("Core slots cannot be matched"), why); return std::nullopt;
+    }
     if (mode == Mode::PerCore && !layout.parked.isEmpty()) {
         QMessageBox::warning(this, tr("CCD parked"), tr("A CCD is parked by Optimizations: its cores cannot be tested alone. Unpark it first.")); return std::nullopt;
     }

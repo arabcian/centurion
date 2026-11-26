@@ -3,6 +3,7 @@
 #include <QFontMetrics>
 #include "cosearchdialog.h"
 #include "ryzentab.h"
+#include "slotmap.h"
 #include "profilediff.h"
 #include "ryzenprofilediff.h"
 #include "cpustress.h"
@@ -189,6 +190,11 @@ ryzen::Layout ryzen::detect() {
             return std::any_of(parked.begin(), parked.end(), [&](int c) { return g.contains(c); }); }))
         groups << parked;
     if (dirty) saveTopoCache(info);
+    // Present CPUs that are offline without belonging to the parked CCD: their cores are missing from
+    // the lists below, which shifts every later core's position (= its assumed SMU slot).
+    if (!online.isEmpty())
+        for (int c : expandCpuList(pp::readText(sys.filePath("present")).value_or(QString())))
+            if (!online.contains(c) && !parked.contains(c)) out.offline << c;
     // Order by L3 id (the die order the SMU's CO slots follow). Offline CPUs take their id from
     // the per-boot record, so a parked CCD keeps its place even in a freshly started GUI.
     auto keyOf = [&](const QList<int> &g) {
@@ -242,10 +248,23 @@ ryzen::Layout ryzen::detect() {
             bool ok = false;
             int hp = pp::readText(sys.filePath(QStringLiteral("cpu%1/acpi_cppc/highest_perf").arg(cpus.first())))
                          .value_or(QString()).toInt(&ok);
-            out.cores[ccd].append({cpus, ok ? std::optional(hp) : std::nullopt});
+            bool idOk = false;
+            const int coreId = pp::readText(sys.filePath(QStringLiteral("cpu%1/topology/core_id").arg(cpus.first()))).value_or(QString()).toInt(&idOk);
+            out.cores[ccd].append({cpus, ok ? std::optional(hp) : std::nullopt, idOk ? std::optional(coreId) : std::nullopt});
         }
     }
     return out;
+}
+
+QString ryzen::slotMappingProblem(const Layout &layout) {
+    std::vector<slotmap::CoreIds> ccds;
+    for (auto it = layout.cores.cbegin(); it != layout.cores.cend(); ++it) {
+        if (layout.parked.contains(it.key())) continue;
+        slotmap::CoreIds ids;
+        for (const PhysCore &c : it.value()) ids.push_back(c.coreId);
+        ccds.push_back(std::move(ids));
+    }
+    return QString::fromStdString(slotmap::problem(ccds, std::vector<int>(layout.offline.cbegin(), layout.offline.cend())));
 }
 
 QString ryzen::profilesDir() {

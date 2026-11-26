@@ -230,7 +230,7 @@ pkg_postinst() {
 
 	optfeature "GPU power limits, Custom fan curve, GPU mode and EC sensors" sys-power/acpi_call
 	optfeature "the NVIDIA tab (NvAPI / NVML)" x11-drivers/nvidia-drivers
-	optfeature "the Ryzen tab under Secure Boot / lockdown (needs ryzen_smu >= 0.1.7)" app-admin/ryzen_smu
+	optfeature "the Ryzen tab under Secure Boot / lockdown (needs ryzen_smu >= 0.1.9)" app-admin/ryzen_smu
 	optfeature "extra AMD CPU sensors (overlays, e.g. ::guru)" sys-kernel/zenpower3 sys-kernel/zenergy
 	optfeature "faster Health → Backup compression" app-arch/pigz
 	optfeature "zstd Backup compression" app-arch/zstd

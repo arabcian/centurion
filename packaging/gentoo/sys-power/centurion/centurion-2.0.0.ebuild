@@ -142,7 +142,7 @@ pkg_postinst() {
 	elog "Calibration at the next boot (Autotune: Calibrate at next boot): centurion-calibrate-boot is"
 	elog "  one-shot - scheduling adds it to the boot and it removes itself after that boot (no rc-update)."
 	elog "Lutris hooks: /usr/bin/centurion-gamemode PRE / POST / RUN (see the Game launch sub-tab)."
-	elog "The Ryzen tab talks to the SMU natively (no ryzenadj): it needs the ryzen_smu module (>= 0.1.7)"
+	elog "The Ryzen tab talks to the SMU natively (no ryzenadj): it needs the ryzen_smu module (>= 0.1.9)"
 	elog "or, with kernel lockdown off, root write access to the PCI config space."
 }
 
