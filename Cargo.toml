@@ -13,3 +13,7 @@ lto = "fat"
 codegen-units = 1
 panic = "abort"
 strip = true
+
+# The stress kernels' self-tests run millions of SIMD steps; unoptimized they take far over half an hour.
+[profile.dev.package.centurion-cpustress]
+opt-level = 3
