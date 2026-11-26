@@ -174,7 +174,7 @@ pub fn decode_mv(resp: u64) -> f64 {
 
 pub fn amps_to_icc_field(a: f64) -> Result<u64, String> {
     let max = ICC_MAX_FIELD as f64 / 4.0;
-    if !a.is_finite() || !(a > 0.0 && a <= max) {
+    if !(a.is_finite() && a > 0.0 && a <= max) {
         return Err(format!("IccMax must be in (0, {max}] A, got {a}"));
     }
     let f = (a * 4.0).floor() as u64; // floor: never above the requested ceiling (throttled)

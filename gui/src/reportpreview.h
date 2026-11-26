@@ -22,6 +22,9 @@ public:
 
 private:
     static QString statusText(const QString &status);
+    bool loadFilePreview(QListWidgetItem *item, const QJsonObject &file, bool eligible) const;
+    QJsonObject fileSelection(const QListWidgetItem *item) const;
+    void editFields();
     void selectFile(QListWidgetItem *item);
     void showPage(qint64 page);
     void updatePageControls();

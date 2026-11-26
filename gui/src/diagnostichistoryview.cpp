@@ -1,5 +1,5 @@
 #include "diagnostichistoryview.h"
-#include "diagnostichistorystore.h"
+#include "diagnosticlogarchive.h"
 #include "diagreport.h"
 #include "diagsources.h"
 #include "theme.h"
@@ -75,8 +75,11 @@ QString captureTimeLabel(const Entry &e) {
 }
 QString eventTimeLabel(const RecordedEvent &e) {
     if (e.time.isEmpty()) return tr("Unknown time");
-    // The legacy log format records local time without an offset.
-    return tr("%1 (UTC offset unknown)").arg(e.time);
+    // Validate date and time separately because the log has no UTC offset.
+    const bool valid = e.time.size() == 19 && e.time.at(10) == QLatin1Char(' ')
+        && QDate::fromString(e.time.left(10), Qt::ISODate).isValid()
+        && QTime::fromString(e.time.mid(11), QStringLiteral("HH:mm:ss")).isValid();
+    return (valid ? tr("%1 (UTC offset unknown)") : tr("%1 (time unverified)")).arg(e.time);
 }
 QString describe(const Entry &e) {
     QString out=tr("Report: %1\nCapture time: %2\nCapture boot: %3\nLocale: %4\nNote: %5\n\n").arg(e.code,captureTimeLabel(e),e.boot.isEmpty()?tr("Unknown / legacy"):e.boot,e.locale,e.note);
@@ -118,12 +121,14 @@ static bool openHistory(QWidget *owner) {
     const auto archive = load(dir);
     const auto health = diagsrc::savedLog(diagsrc::SavedLog::Health, 1000);
     const auto kernel = diagsrc::savedLog(diagsrc::SavedLog::Kernel, 1000);
-    const auto events = recordedEvents(health, kernel);
+    const auto importedLogs = readImportedLogs(dir);
+    const auto events = recordedEvents(health, kernel, importedLogs.value_or(QList<RecordedEvent>{}));
     QDialog dlg(owner); dlg.setWindowTitle(tr("Cross-Boot Diagnostic History"));dlg.resize(1050,700);
     auto *layout=new QVBoxLayout(&dlg);
     auto *note=new QLabel(tr("Local and imported report snapshots, and bounded saved kernel and health logs. Capture boot and event boot are different types of provenance. Sharing a boot does not prove a common device or cause. Wall-clock ordering is descriptive only."));note->setWordWrap(true);layout->addWidget(note);
-    const QString statusText = tr("%1 snapshots · %2 rejected records or files · %3 saved log entries (up to 1000 per source)")
+    const QString statusText = tr("%1 snapshots · %2 rejected records or files · %3 log entries in view")
         .arg(archive.entries.size()).arg(archive.rejected).arg(events.size());
+    if (!importedLogs) layout->addWidget(new QLabel(tr("The imported log archive could not be read.")));
     auto *status = new QLabel(statusText);
     status->setWordWrap(true);
     auto *summary = new QHBoxLayout;
@@ -207,7 +212,8 @@ static bool openHistory(QWidget *owner) {
             g->setData(0,Qt::UserRole,-1);g->setData(0,groupIdentityRole,groupKey);groups.insert(groupKey,g);
         }
         const auto label=eventTimeLabel(e)+QStringLiteral(" · ")+logName(e.source)+QStringLiteral(" · ")+(e.title.isEmpty()?e.detail.left(160):e.title);
-        auto *item=new QTreeWidgetItem(groups.value(groupKey),{label,e.boot.isEmpty()?tr("Unlinked saved event"):tr("Recorded event boot")});
+        auto *item = new QTreeWidgetItem(groups.value(groupKey), {label,
+            e.imported ? tr("Imported log event") : e.boot.isEmpty() ? tr("Unlinked saved event") : tr("Recorded event boot")});
         item->setData(0,Qt::UserRole,-2-int(i));
         item->setData(0, recordIdentityRole, QStringLiteral("event/") + e.id);
     }
@@ -241,6 +247,7 @@ static bool openHistory(QWidget *owner) {
             QStringList files;
             if (e.rotated) files << logName(e.source) + QStringLiteral(".1");
             if (e.current) files << logName(e.source);
+            if (e.imported) files << tr("Imported %1").arg(logName(e.source));
             detail->setPlainText(tr("Source: %1\nRecorded time: %2\nEvent boot: %3\nSequence: %4\nLevel: %5\nRecord ID: %6\n\n%7\n%8").arg(files.join(QStringLiteral(", ")),eventTimeLabel(e),e.boot.isEmpty()?tr("Unknown / legacy"):e.boot,QString::number(e.sequence),e.level,e.id,e.title,e.detail)
                 +(e.boot.isEmpty()?QStringLiteral("\n")+tr("Recorded boot label (not an identity): %1").arg(e.reportedBoot):QString()));
         } else detail->setPlainText(tr("Select an archived report or saved event."));
@@ -342,23 +349,50 @@ static bool openHistory(QWidget *owner) {
         QMessageBox::information(&dlg, dlg.windowTitle(), message);
     });
 
-    auto *remove = buttons->addButton(tr("Delete imported snapshot…"), QDialogButtonBox::ActionRole);
-    const auto selectedImport = [&]() -> const Entry * {
+    auto *importLog = buttons->addButton(tr("Import saved log…"), QDialogButtonBox::ActionRole);
+    importLog->setToolTip(tr("Centurion health.log and kernel.log files up to 4 MiB. The import archive holds up to 1000 entries per source and 1 MiB total."));
+    QObject::connect(importLog, &QPushButton::clicked, &dlg, [&] {
+        const auto path = QFileDialog::getOpenFileName(&dlg, tr("Import saved log"));
+        if (path.isEmpty()) return;
+        const auto result = importSavedLog(dir, path);
+        QString message;
+        switch (result.status) {
+        case ImportArchive::Imported:
+        case ImportArchive::AlreadyPresent:
+            message = tr("%1 imported · %2 duplicates · %3 unreadable or incomplete lines")
+                .arg(result.added).arg(result.duplicates).arg(result.omitted);
+            break;
+        case ImportArchive::Invalid: message = tr("Choose a Centurion saved log up to 4 MiB with at least one complete entry."); break;
+        case ImportArchive::Conflict: message = tr("The imported log archive could not be read."); break;
+        case ImportArchive::Full: message = tr("Imported log archive full. Delete imported entries or choose a smaller file."); break;
+        case ImportArchive::Busy: message = tr("The archive is currently in use."); break;
+        case ImportArchive::WriteError: message = tr("Could not save the imported archive."); break;
+        }
+        QMessageBox::information(&dlg, dlg.windowTitle(), message);
+        if (result.status == ImportArchive::Imported) { changed = true; dlg.accept(); }
+    });
+
+    auto *remove = buttons->addButton(tr("Delete imported record…"), QDialogButtonBox::ActionRole);
+    const auto selectedImport = [&]() -> std::optional<int> {
         const auto *item = tree->currentItem();
         const int i = item ? item->data(0, Qt::UserRole).toInt() : -1;
-        if (i < 0 || i >= archive.entries.size() || !archive.entries.at(i).imported) return nullptr;
-        return &archive.entries.at(i);
+        if (i >= 0 && i < archive.entries.size() && archive.entries.at(i).imported) return i;
+        if (i <= -2 && -2 - i < events.size() && events.at(-2 - i).imported) return i;
+        return std::nullopt;
     };
-    remove->setEnabled(selectedImport() != nullptr);
+    remove->setEnabled(selectedImport().has_value());
     QObject::connect(tree, &QTreeWidget::currentItemChanged, &dlg, [&] {
-        remove->setEnabled(selectedImport() != nullptr);
+        remove->setEnabled(selectedImport().has_value());
     });
     QObject::connect(remove, &QPushButton::clicked, &dlg, [&] {
-        const auto *entry = selectedImport();
-        if (!entry || QMessageBox::question(&dlg, dlg.windowTitle(), tr("Delete this imported snapshot from the local archive?"))
+        const auto i = selectedImport();
+        if (!i || QMessageBox::question(&dlg, dlg.windowTitle(), tr("Delete this imported record from the local archive?"))
                           != QMessageBox::Yes) return;
-        if (!removeImported(dir, entry->code, entry->id)) {
-            QMessageBox::warning(&dlg, dlg.windowTitle(), tr("Could not delete the imported snapshot."));
+        const bool deleted = *i >= 0
+            ? removeImported(dir, archive.entries.at(*i).code, archive.entries.at(*i).id)
+            : removeImportedLog(dir, events.at(-2 - *i).id);
+        if (!deleted) {
+            QMessageBox::warning(&dlg, dlg.windowTitle(), tr("Could not delete the imported record."));
             return;
         }
         changed = true;

@@ -334,21 +334,25 @@ knob the runs also join the design log.
 
 ## Field evidence: real games (A/B)
 
-centurion-gamemode records every game session (start, end, the game, the preset and its values)
-in `~/.local/state/centurion/game-sessions.jsonl`. With *A/B field comparison*
-(Optimizations → Game launch; tune.json `"field_ab": true` or a list of game names) every
-other launch of a game runs at the boot defaults (A: no game preset, no launch boost; the
-game scene - the power context - stays the same), the others with the preset (B).
+Centurion records game launches in `~/.local/state/centurion/game-sessions.jsonl`. Enable
+*A/B field comparison* under Optimizations → Game launch to alternate between skipping
+the game preset (A) and applying it (B). Set `CENTURION_GAME_WORKLOAD` in the launcher to
+the same label when repeating the same game build, test route, resolution and graphics
+settings. Use a new label when any of those change.
 
-`sudo centurion-calibrate --field LOG... [--game NAME]` imports frame-time logs - FLM's CSV
-(`interval_ns`), MangoHud's CSV (`frametime`) or one number per line in ms - matched to the
-recorded session by the log's time. Per session: median frame time, tail (worst 1 %) and
-pacing (mean frame-to-frame change), the first 10 % dropped (loading). A game whose log
-holds two A sessions and one B session gives rows of the load model: throughput =
--ln(median / A median), latency = -(ln(tail / A tail) + ln(pacing / A pacing)) / 2. A game is
-its own session in the model (its own offset), a field row counts half a benchmark run, and
-only knobs the calibration designed are kept - a row loses weight for every changed setting
-the model does not know.
+Import the original frame-time files after the launches end using *Import game telemetry*
+or `sudo centurion-calibrate --field LOG...`. The importer supports FLM CSV (`interval_ns`),
+MangoHud CSV (`frametime`) and one frame time in milliseconds per line. It uses the file's
+modification time to identify the launch. Keep that timestamp if you copy the file.
+
+Open the machine signature's *Measured Game Sessions* tab. Two distinct A launches
+and one B launch with the same recorded boot, workload, scene, platform and reference
+settings are needed for a comparison. A busy or unconfirmed launch, an ambiguous timestamp
+or a legacy record appears under *Unmatched*. The matched results give the median, tail
+and pacing reductions relative to the median of the reference launches. A prior Gaming
+load verification with the same preset and recorded conditions can supply the synthetic
+model prediction. The prediction uses model units and game measurements use frame times
+or percentage reductions. Imported frames are retained as observations.
 
 ## Field stability
 

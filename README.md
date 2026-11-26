@@ -57,7 +57,7 @@ tab (which does wake it).
 | `nvcurve read\|write\|profile\|memlock\|sensors\|powermizer\|reset-all` | NVIDIA V/F curve CLI (generic; not Legion-gated) |
 | `centurion-gamemode PRE\|POST\|RUN\|WRAP\|APPLY\|UNDERVOLT\|SCENE\|RESTORE\|STATUS\|OVERLAY\|APPROVE` | Game hook for Lutris / Steam, scripted scene switching, MangoHud line (`OVERLAY`) |
 | `centurion-autotune <powersave\|gaming\|throughput\|desktop>`, `probe`, `audit [--fix]`, `report [SEC]` | Autotune presets, disk probe, safety audit, memory report |
-| `centurion-calibrate [--budget MIN] [--all] [--depth lean\|deep\|max] [--scene NAME] [--list] [--show] [--restore]`, `--verify NAME`, `--field LOG...`, `--gpu-coupling`, `--schedule-boot` | Measure this machine's knobs (the "machine signature"), check presets, learn from real games |
+| `centurion-calibrate [--budget MIN] [--all] [--depth lean\|deep\|max] [--scene NAME] [--list] [--show] [--restore]`, `--verify NAME`, `--field LOG...`, `--gpu-coupling`, `--schedule-boot` | Measure this machine's knobs (the "machine signature"), check presets, compare real game sessions |
 | `centurion-boot-guard status\|reset\|…` | Boot-crash protection state |
 | `centurion-netguard daemon\|status\|list\|whois IP\|CIDR\|ASn\|DOMAIN` | Network guard daemon and queries |
 | `centurion-intel-uv read\|apply\|reset\|monitor\|measure\|throttlestop FILE\|turbo\|daemon` | Standalone Intel undervolt (root) |
@@ -278,7 +278,7 @@ press *Apply checked*.
   boot…* runs sessions unattended once the machine is idle on AC.
 - **Checked against reality.** `centurion-calibrate --verify` measures a whole preset
   against the boot state; with *A/B field comparison* centurion-gamemode alternates real
-  game sessions and `centurion-calibrate --field` learns from their frame-time logs (FLM,
+  game sessions and `centurion-calibrate --field` compares matching frame-time logs (FLM,
   MangoHud); crashes, Xid and D3cold failures while a knob was changed add to its
   stability cost.
 

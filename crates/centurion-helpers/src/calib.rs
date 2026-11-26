@@ -1384,22 +1384,18 @@ impl Calibration {
         self.contexts.insert(id.clone(), desc);
         id
     }
-    /// Adds imported game sessions (same game and start replace the old record) and rebuilds the
-    /// field rows from all of them. Returns how many rows the games now give.
-    pub fn add_field_sessions(&mut self, recs: Vec<Value>) -> usize {
-        for r in recs {
-            self.field_sessions.retain(|o| !(o["game"] == r["game"] && o["start"] == r["start"]));
-            self.field_sessions.push(r);
+    /// Reimports replace the same launch rather than adding another reference.
+    pub fn add_field_sessions(&mut self, records: Vec<Value>) {
+        for record in records {
+            self.field_sessions.retain(|old| match (old["id"].as_str(), record["id"].as_str()) {
+                (Some(left), Some(right)) => left != right,
+                (None, _) => old["game"] != record["game"] || old["start"] != record["start"],
+                _ => true,
+            });
+            self.field_sessions.push(record);
         }
         let drop = self.field_sessions.len().saturating_sub(400);
         self.field_sessions.drain(..drop);
-        let rows = crate::field::rows(&self.field_sessions, &self.kernel);
-        let n = rows.len();
-        self.rows.retain(|r| !r.field);
-        self.rows.extend(rows);
-        self.pin_ctx_refs();
-        self.invalidate();
-        n
     }
     /// Contexts no row refers to any more are dropped (`keep`: the running session's).
     pub fn prune_contexts(&mut self, keep: &str) {
@@ -1634,7 +1630,7 @@ impl Calibration {
         }).collect();
         json!({"version": 10, "fingerprint": self.fingerprint.to_json(), "on_battery": self.on_battery, "keys": keys, "rows": rows,
                "refs": self.refs, "refs_cx": self.refs_cx, "hyp": self.hyp, "strategies": self.strategies, "contexts": self.contexts, "ctx_ref": self.ctx_ref, "coupling": self.coupling,
-               "ref_w": self.ref_w, "verify": self.verify, "fs": self.field_sessions, "quality": self.quality, "baselines": self.baselines, "envs": self.envs, "sess_env": self.sess_env, "io_days": self.io_days, "predcheck": self.predcheck,
+               "ref_w": self.ref_w, "verify": self.verify, "fs": self.field_sessions, "field_comparisons": crate::field::comparisons(&self.field_sessions), "quality": self.quality, "baselines": self.baselines, "envs": self.envs, "sess_env": self.sess_env, "io_days": self.io_days, "predcheck": self.predcheck,
                "unsafe_sets": self.unsafe_sets.iter().map(|u| u.iter().map(|(k, v)| json!([k, v])).collect::<Vec<_>>()).collect::<Vec<_>>(),
                "brakes": cfgs_json(&self.brakes), "soft_unsafe": cfgs_json(&self.soft_unsafe),
                "unsafe_pinned": self.unsafe_pinned.iter().map(|u| u.iter().map(|(k, v)| json!([k, v])).collect::<Vec<_>>()).collect::<Vec<_>>()})
@@ -1668,6 +1664,8 @@ impl Calibration {
         // guess (calibrations used to be either all on AC or all on battery).
         let legacy_src = if c.on_battery { PowerSrc::Battery } else { PowerSrc::Rapl };
         for r in v["rows"].as_array().into_iter().flatten() {
+            // Older versions inferred load-model evidence from a game name alone.
+            if r["fd"] == true { continue; }
             let mut y = [f64::NAN; 4];
             for (i, e) in r["y"].as_array().into_iter().flatten().take(4).enumerate() { y[i] = e.as_f64().unwrap_or(f64::NAN); }
             c.rows.push(Row { phase: Phase::from_idx(r["ph"].as_u64().unwrap_or(1)), sess: r["s"].as_u64().unwrap_or(0),
@@ -2212,6 +2210,18 @@ mod tests {
         c.put_session(Phase::Load, 9, rows);
         c.refs.insert("vm.a".into(), "8".into());
         c.refs.insert("vm.b".into(), "0".into());
+    }
+
+    #[test]
+    fn imported_launches_roundtrip_by_stable_id() {
+        let mut cal = Calibration::default();
+        let record = |id: &str, med: f64| json!({"id": id, "game": "game", "start": 100, "med": med});
+        cal.add_field_sessions(vec![record("a", 10.0), record("b", 11.0), record("a", 12.0)]);
+        let mut saved = cal.to_json();
+        saved["rows"] = json!([{"fd": true, "y": [1, 2]}]);
+        let loaded = Calibration::from_json(&saved);
+        assert_eq!(loaded.field_sessions, vec![record("b", 11.0), record("a", 12.0)]);
+        assert!(loaded.rows.is_empty());
     }
 
     #[test]

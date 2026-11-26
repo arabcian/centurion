@@ -164,6 +164,46 @@ int main(int argc, char **argv) {
     CHECK(foundBinary && foundTimings && foundKernelModes);
     QByteArray shortCta=e; shortCta[130]=7; checksum(shortCta,1);
     CHECK(diagnostictools::decodeEdid(shortCta).vrrMin<=0);
+    // A Type IX nominal mode is listed even when a same-resolution
+    // interlaced declaration and the kernel's progressive name differ.
+    QByteArray displayId(256, '\0');
+    const auto didConnector = QStringLiteral("/sys/class/drm/card2-DP-1/");
+    put(didConnector + "status", "connected\n");
+    put(didConnector + "modes", "1920x1080\n");
+    const auto setDisplayId = [&](const QByteArray &section) {
+        displayId.fill('\0', 256);
+        displayId.replace(0, 8, header);
+        displayId[126] = 1;
+        checksum(displayId, 0);
+        displayId.replace(128, section.size(), section);
+        unsigned sum = 0;
+        for (qsizetype i = 129; i < 128 + section.size(); ++i) sum += quint8(displayId.at(i));
+        displayId[128 + section.size()] = char(-sum);
+        checksum(displayId, 1);
+        put(didConnector + "edid", displayId);
+    };
+    const auto didRows = [&] {
+        QList<QStringList> rows;
+        for (const auto &table : diagnostictools::displays(root).tables)
+            if (table.title == QStringLiteral("Advertised Timings"))
+                for (const auto &row : table.rows)
+                    if (row.value(0) == QStringLiteral("card2-DP-1")) rows.append(row);
+        return rows;
+    };
+    setDisplayId(QByteArray::fromHex("7020090300240006027f0737048f"));
+    auto rows = didRows();
+    CHECK(rows.size() == 1 && rows.value(0).value(1) == QStringLiteral("1920×1080 @ 144 Hz (nominal)"));
+    CHECK(rows.value(0).value(2) == QStringLiteral("DisplayID Type IX") && rows.value(0).value(3) == QStringLiteral("Listed"));
+    setDisplayId(QByteArray::fromHex("70130e030004000b007d0010ef44a437042c34"));
+    rows = didRows();
+    CHECK(rows.size() == 1 && rows.value(0).value(1).contains(QStringLiteral("1920×1080 interlaced")));
+    CHECK(rows.value(0).value(2) == QStringLiteral("DisplayID Type II") && rows.value(0).value(3) == QStringLiteral("Not listed"));
+    put(didConnector + "modes", "1920x1080i\n");
+    CHECK(didRows().value(0).value(3) == QStringLiteral("Listed"));
+    displayId[147] = char(quint8(displayId.at(147)) ^ 1); // Break the section checksum, then fix the outer one.
+    checksum(displayId, 1);
+    put(didConnector + "edid", displayId);
+    CHECK(didRows().isEmpty());
     const auto redacted=diag::redactPrivateText(QStringLiteral("192.168.1.42 aa:bb:cc:dd:ee:ff 0000:01:00.0 Xid 154\nSerial: secret-123\n/home/private/file"));
     CHECK(!redacted.contains(QStringLiteral("192.168.1.42")) && !redacted.contains(QStringLiteral("aa:bb:cc:dd:ee:ff")) && !redacted.contains(QStringLiteral("secret-123")) && !redacted.contains(QStringLiteral("/home/private")));
     CHECK(redacted.contains(QStringLiteral("0000:01:00.0")) && redacted.contains(QStringLiteral("Xid 154")));

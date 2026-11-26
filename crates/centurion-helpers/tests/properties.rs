@@ -297,12 +297,12 @@ use centurion_helpers::calib::{Calibration, Phase, Row};
 /// A signature as the calibration writes it: a few contexts and design rows (NaN objectives included).
 fn any_signature() -> impl Strategy<Value = Calibration> {
     let row = (0usize..4, 0u64..20, vec(("[a-z]{1,3}\\.[a-z]{1,4}", "[0-9]{1,2}"), 0..4),
-               vec(prop_oneof![Just(f64::NAN), -1.0f64..1.0], 4), 0.0f64..2.0, any::<bool>());
+               vec(prop_oneof![Just(f64::NAN), -1.0f64..1.0], 4), 0.0f64..2.0);
     (vec(row, 0..40), vec("[a-z]{1,8}", 0..3)).prop_map(|(rows, profiles)| {
         let mut c = Calibration::default();
         let cxs: Vec<String> = profiles.iter().map(|p| c.add_context(json!({"profile": p, "power": "ac"}))).collect();
-        for (i, (ph, sess, cfg, y, w, field)) in rows.into_iter().enumerate() {
-            c.rows.push(Row { phase: Phase::ALL[ph], sess, t: 1_700_000_000 + i as u64, cfg, y: [y[0], y[1], y[2], y[3]], w, field,
+        for (i, (ph, sess, cfg, y, w)) in rows.into_iter().enumerate() {
+            c.rows.push(Row { phase: Phase::ALL[ph], sess, t: 1_700_000_000 + i as u64, cfg, y: [y[0], y[1], y[2], y[3]], w,
                               cx: cxs.get(i % cxs.len().max(1)).cloned().unwrap_or_default(), ..Default::default() });
         }
         c.note_predcheck("confirm", "idle", "gaming", 0.05, 0.01, 0.04);

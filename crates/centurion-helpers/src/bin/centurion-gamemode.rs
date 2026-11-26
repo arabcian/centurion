@@ -31,13 +31,14 @@
 //!   "ntsync"        true: WRAP / RUN set PROTON_USE_NTSYNC=1 for the game when /dev/ntsync is
 //!                   usable (and the launch options did not set it).
 //!   "field_ab"      true (every game) or a list of game names: A/B comparison -
-//!                   launches of a game alternate B (game preset) and A (boot
-//!                   defaults: no preset, no launch boost; same game scene).
+//!                   launches of a game alternate B (game preset) and A
+//!                   (reference: no preset, no launch boost; same game scene).
 //!
 //! Every first game of a session is recorded for centurion-calibrate --field in
 //! ~/.local/state/centurion/game-sessions.jsonl (start, end, game,
 //! preset and its values, A/B turn). The game's name comes from CENTURION_GAME,
-//! GAME_NAME (Lutris), SteamAppId, else the wrapped program's file name.
+//! GAME_NAME (Lutris), SteamAppId, else the wrapped program's file name. For comparisons,
+//! set CENTURION_GAME_WORKLOAD to the same label for a fixed benchmark route and graphics setup.
 #![allow(clippy::type_complexity)]
 
 /// stderr logging that never panics: eprintln! aborts the process on EPIPE
@@ -227,9 +228,17 @@ fn post() -> Result<bool, String> {
     let _start_lock = user_lock("gamemode-start.lock");
     let st = read_scene_state();
     // The field record's session ends with the last game (the one that leaves game mode).
+    let comparison = st["game_comparison"].as_object().and_then(|comparison| {
+        let observed = comparison.get("observed")?;
+        let identity = comparison.get("context")?;
+        (st["scene_generation"] == comparison["generation"]
+            && centurion_helpers::calctx::capture(None) == identity["platform"]
+            && centurion_helpers::field::readback(&identity["preset"]).as_ref() == Some(observed))
+            .then(|| identity.clone())
+    });
     let end_session = || {
-        let id = update_scene_state(|st| { let id = st["game_session"].as_str().map(str::to_owned); st["game_session"] = Value::Null; id });
-        if let Some(id) = id { log_session(&json!({"id": id, "end": now_s()})); }
+        let id = update_scene_state(|st| { let id = st["game_session"].as_str().map(str::to_owned); st["game_session"] = Value::Null; st["game_comparison"] = Value::Null; id });
+        if let Some(id) = id { log_session(&json!({"id": id, "end": now_s(), "comparison": comparison})); }
     };
     // Only the A launch's own POST takes this path: the POST of a game started next to it (another
     // launcher) used to clear ab_a and skip its release, leaving its session to the stale-owner prune.
@@ -275,16 +284,21 @@ fn game_start(name: Option<&str>, game: &str) -> (bool, i32) {
     // Field record (centurion-calibrate --field): which game ran with which values; with A/B on, every
     // other launch of a game runs at the boot defaults (A) under the same game scene.
     let ab = if first { ab_turn(&cfg, game) } else { None };
-    if first {
-        // The preset this launch really applies: without a name, apply() takes the GUI's game preset. Recording
-        // null there made every such B launch look like an A (boot defaults) session to --field.
-        let eff = name.map(str::to_owned).or_else(default_preset);
-        let values = eff.as_deref().and_then(store_values).unwrap_or(Value::Null);
-        let id = format!("{}-{}", now_s(), std::process::id());
+    // Use the approved preset on both turns: A reads back the same keys B intends to change.
+    let eff = name.map(str::to_owned).or_else(default_preset);
+    let values = eff.as_deref().filter(|n| valid_name(n)).and_then(store_values).unwrap_or(Value::Null);
+    let boot = if first { centurion_helpers::bootguard::boot_id() } else { String::new() };
+    let session = first.then(|| {
+        let id = format!("{boot}-{}-{}", now_s(), std::process::id());
         log_session(&json!({"id": id, "start": now_s(), "game": game, "preset": if ab == Some("A") { Value::Null } else { json!(eff) },
-                            "values": if ab == Some("A") { json!({}) } else { values }, "ab": ab}));
-        update_scene_state(|st| st["game_session"] = json!(id));
-    }
+                            "values": if ab == Some("A") { json!({}) } else { values.clone() }, "ab": ab}));
+        id
+    });
+    update_scene_state(|st| {
+        if let Some(id) = &session { st["game_session"] = json!(id); }
+        // A second game changes the workload being measured.
+        st["game_comparison"] = Value::Null;
+    });
     let paused = scenes_paused();
     if paused && cfg["game_scene"].as_str().is_some() { log!("centurion-gamemode: scenes are paused — game scene skipped"); }
     match cfg["game_scene"].as_str().filter(|n| valid_name(n) && !paused) {
@@ -294,17 +308,59 @@ fn game_start(name: Option<&str>, game: &str) -> (bool, i32) {
         None if first && !(paused && cfg["game_scene"].as_str().is_some()) => { undervolt(false); }
         None => {}
     }
+    let field_context = || -> Option<(Value, Value)> {
+        if ab.is_none() || boot.is_empty() || game == "unknown" { return None; }
+        let workload = std::env::var("CENTURION_GAME_WORKLOAD").ok()?;
+        let workload = workload.trim();
+        if workload.is_empty() || workload.len() > 128 || workload.chars().any(char::is_control) { return None; }
+        let state = read_scene_state();
+        if state["partial"] == true || state["gpu_pending"].is_string() || state["gpu_running"].is_string() { return None; }
+        let platform = centurion_helpers::calctx::capture(None);
+        if platform["power"] == "?" { return None; }
+        let (_, preset) = load_preset(eff.as_deref()).ok()?;
+        let run = &preset["run"];
+        if run.as_object().is_some_and(|r| r.iter().any(|(key, value)|
+            match key.as_str() {
+                "affinity" => value != "none",
+                "nice" => value.as_i64() != Some(0),
+                "autogroup" => false, // Only used with a nice boost.
+                _ => true,
+            })) { return None; }
+        if preset["values"] != values || values.as_object()?.is_empty() { return None; }
+        let baseline = centurion_helpers::field::readback(&values)?;
+        Some((json!({"boot": boot, "game": game, "workload": workload, "scene": state["active"],
+            "platform": platform, "baseline": baseline, "preset": values}), state["scene_generation"].clone()))
+    }();
+    let record_context = |side: &str| {
+        let Some((context, generation)) = &field_context else { return };
+        let Some(observed) = centurion_helpers::field::readback(&values) else { return };
+        let baseline = &context["baseline"];
+        if side == "B" {
+            if !centurion_helpers::field::applied_targets(baseline, &observed) { return; }
+        } else if observed != *baseline {
+            return;
+        }
+        update_scene_state(|st| {
+            if st["scene_generation"] == *generation && st["game_session"].as_str() == session.as_deref() {
+                st["game_comparison"] = json!({"context": context, "generation": generation, "observed": observed});
+            }
+        });
+    };
     if ab == Some("A") {
-        log!("centurion-gamemode: A/B comparison - this launch of {game} runs at the boot defaults (no game preset)");
+        log!("centurion-gamemode: A/B comparison - this launch of {game} skips the game preset");
         // No game session is opened, so the launcher is recorded here: the GUI counts a live A launch as a
         // running game (it used to take the game scene for an orphan and leave it ~15 s into the game).
         let owner = OWNER.load(Ordering::SeqCst);
         let rec = centurion_helpers::proc_start_time(owner).map_or(Value::Null, |t| json!({"pid": owner, "start": t}));
         update_scene_state(|st| { st["ab_a"] = json!(true); st["ab_owner"] = rec; });
+        record_context("A");
         return (true, 0);
     }
     match apply(name, "game") {
-        Ok(ok) => (true, (!ok) as i32),
+        Ok(ok) => {
+            if ok { record_context("B"); }
+            (true, (!ok) as i32)
+        },
         Err(e) if e.contains(STILL_RUNNING) => {
             // The helper may still open the session: the scene stays, POST (or the GUI's orphan
             // clean-up, if no session ever appears) leaves it. `true` so WRAP still runs POST.
@@ -359,7 +415,7 @@ fn game_name(cmd: Option<&[String]>) -> String {
 }
 
 /// A/B turn of a game when the comparison is on (tune.json "field_ab": true for every game, or a
-/// list of game names): launches alternate B (game preset), A (boot defaults), B, A, ...
+/// list of game names): launches alternate B (game preset), A (reference without the preset), B, A, ...
 fn ab_turn(cfg: &Value, game: &str) -> Option<&'static str> {
     let on = match &cfg["field_ab"] { Value::Bool(b) => *b, Value::Array(a) => a.iter().any(|g| g.as_str() == Some(game)), _ => false };
     if !on { return None; }

@@ -11,6 +11,7 @@
 #include <QJsonArray>
 #include <QLabel>
 #include <QLineEdit>
+#include <QMessageBox>
 #include <QShortcut>
 #include <QTextCursor>
 #include <QTextDocument>
@@ -35,6 +36,8 @@ constexpr int TruncatedRole = Qt::UserRole + 4;
 constexpr int PageDigestsRole = Qt::UserRole + 5;
 constexpr int PageCountRole = Qt::UserRole + 6;
 constexpr int ShownPageCountRole = Qt::UserRole + 7;
+constexpr int AvailableFieldsRole = Qt::UserRole + 8;
+constexpr int SelectedFieldsRole = Qt::UserRole + 9;
 }
 
 ReportPreview::ReportPreview(const QJsonObject &preview, const QString &snapshotPath, QWidget *parent)
@@ -62,57 +65,17 @@ ReportPreview::ReportPreview(const QJsonObject &preview, const QString &snapshot
     const auto files = preview.value(QStringLiteral("files")).toArray();
     QHash<QString, int> nameCounts;
     for (const auto &file : files) ++nameCounts[file.toObject().value(QStringLiteral("name")).toString()];
-    const QRegularExpression digestPattern(QStringLiteral("\\A[0-9a-f]{64}\\z"));
-    for (const QJsonValue &f : files) {
-        const QJsonObject o = f.toObject();
-        const QString name = o.value(QStringLiteral("name")).toString();
-        const QString status = o.value(QStringLiteral("status")).toString();
-        auto *it = new QListWidgetItem(name + QStringLiteral("   ") + statusText(status));
-        const auto truncatedValue = o.value(QStringLiteral("truncated"));
-        const bool truncated = truncatedValue.toBool(true);
-        const QString digest = o.value(QStringLiteral("sha256")).toString();
-        const auto shown = o.value(QStringLiteral("text"));
-        const QByteArray shownBytes = shown.toString().toUtf8();
-        const auto bytes = o.value(QStringLiteral("bytes")).toInteger(-1);
-        const auto digestList = o.value(QStringLiteral("page_sha256"));
-        const qint64 pageCount = canPage && bytes > 0 ? 1 + (bytes - 1) / pageBytes_ : 1;
-        QStringList pageDigests;
-        bool validDigests = true;
-        if (canPage && truncated && !digestList.isUndefined()) {
-            const auto values = digestList.toArray();
-            validDigests = values.size() == pageCount && !values.isEmpty();
-            for (const auto &value : values) {
-                const auto hash = value.toString();
-                if (!digestPattern.match(hash).hasMatch()) validDigests = false;
-                pageDigests.append(hash);
-            }
-            validDigests = validDigests && QCryptographicHash::hash(shownBytes, QCryptographicHash::Sha256).toHex()
-                == pageDigests.constFirst().toLatin1();
+    for (const auto &f : files) {
+        const auto o = f.toObject();
+        const auto name = o.value(QStringLiteral("name")).toString();
+        auto *item = new QListWidgetItem;
+        const bool eligible = preview.value(QStringLiteral("preview_schema")).toInt() == 2 && nameCounts.value(name) == 1;
+        if (loadFilePreview(item, o, eligible) && canPage) {
+            QStringList fields;
+            for (const auto &field : o.value(QStringLiteral("fields")).toArray()) fields << field.toString();
+            if (!fields.contains(QString()) && fields.size() > 1) item->setData(AvailableFieldsRole, fields);
         }
-        const bool matchesPreview = truncated
-            ? !shownBytes.isEmpty() && bytes > shownBytes.size()
-                && (!canPage || (pageCount > 1 && shownBytes.size() >= pageBytes_ - 3 && shownBytes.size() <= pageBytes_))
-            : bytes == shownBytes.size() && QCryptographicHash::hash(shownBytes, QCryptographicHash::Sha256).toHex() == digest.toLatin1();
-        const bool eligible = preview.value(QStringLiteral("preview_schema")).toInt() == 2 && status == QLatin1String("included")
-            && !name.isEmpty() && nameCounts.value(name) == 1 && shown.isString() && truncatedValue.isBool()
-            && digestPattern.match(digest).hasMatch() && matchesPreview && validDigests;
-        it->setData(TextRole, shown.toString());
-        it->setFlags(it->flags() & ~Qt::ItemIsUserCheckable);
-        if (eligible) {
-            it->setData(NameRole, name);
-            it->setData(DigestRole, digest);
-            it->setData(BytesRole, bytes);
-            it->setData(TruncatedRole, truncated);
-            it->setData(PageDigestsRole, pageDigests);
-            it->setData(PageCountRole, pageCount);
-            it->setFlags(it->flags() | Qt::ItemIsUserCheckable);
-            it->setCheckState(truncated ? Qt::Unchecked : Qt::Checked);
-            if (truncated && !canPage) it->setText(it->text() + tr(" (partial preview; full file if selected)"));
-        }
-        if (status == QLatin1String("included") && !eligible)
-            it->setText(it->text() + tr(" (invalid preview metadata)"));
-        if (status != QLatin1String("included")) it->setForeground(QColor(QLatin1String(theme::MUTED)));
-        list_->addItem(it);
+        list_->addItem(item);
     }
     split->addWidget(list_);
     split->addWidget(text_);
@@ -218,6 +181,17 @@ ReportPreview::ReportPreview(const QJsonObject &preview, const QString &snapshot
     connect(list_, &QListWidget::currentItemChanged, this, [this](QListWidgetItem *item, QListWidgetItem *) {
         selectFile(item);
     });
+    auto *fields = new QPushButton(tr("Choose fields…"));
+    fields->setAutoDefault(false);
+    fields->setToolTip(tr("Available for system details and structured records. Other files can be included or excluded as a whole."));
+    v->addWidget(fields);
+    const auto updateFields = [this, fields] {
+        const auto *item = list_->currentItem();
+        fields->setEnabled(item && !item->data(AvailableFieldsRole).toStringList().isEmpty());
+    };
+    connect(list_, &QListWidget::currentItemChanged, this, updateFields);
+    connect(fields, &QPushButton::clicked, this, &ReportPreview::editFields);
+    updateFields();
     if (list_->count()) list_->setCurrentRow(0);
     else selectFile(nullptr);
 
@@ -277,6 +251,135 @@ ReportPreview::ReportPreview(const QJsonObject &preview, const QString &snapshot
     v->addWidget(buttons);
 }
 
+bool ReportPreview::loadFilePreview(QListWidgetItem *it, const QJsonObject &o, bool candidate) const {
+    static const QRegularExpression digestPattern(QStringLiteral("\\A[0-9a-f]{64}\\z"));
+    const bool canPage = !snapshotPath_.isEmpty() && pageBytes_ > 0;
+    const auto name = o.value(QStringLiteral("name")).toString();
+    const auto status = o.value(QStringLiteral("status")).toString();
+    it->setText(name + QStringLiteral("   ") + statusText(status));
+    const auto truncatedValue = o.value(QStringLiteral("truncated"));
+    const bool truncated = truncatedValue.toBool(true);
+    const QString digest = o.value(QStringLiteral("sha256")).toString();
+    const auto shown = o.value(QStringLiteral("text"));
+    const QByteArray shownBytes = shown.toString().toUtf8();
+    const auto bytes = o.value(QStringLiteral("bytes")).toInteger(-1);
+    const auto digestList = o.value(QStringLiteral("page_sha256"));
+    const qint64 pageCount = canPage && bytes > 0 ? 1 + (bytes - 1) / pageBytes_ : 1;
+    QStringList pageDigests;
+    bool validDigests = true;
+    if (canPage && truncated && !digestList.isUndefined()) {
+        const auto values = digestList.toArray();
+        validDigests = values.size() == pageCount && !values.isEmpty();
+        for (const auto &value : values) {
+            const auto hash = value.toString();
+            if (!digestPattern.match(hash).hasMatch()) validDigests = false;
+            pageDigests.append(hash);
+        }
+        validDigests = validDigests && QCryptographicHash::hash(shownBytes, QCryptographicHash::Sha256).toHex()
+            == pageDigests.constFirst().toLatin1();
+    }
+    const bool matchesPreview = truncated
+        ? !shownBytes.isEmpty() && bytes > shownBytes.size()
+            && (!canPage || (pageCount > 1 && shownBytes.size() >= pageBytes_ - 3 && shownBytes.size() <= pageBytes_))
+        : bytes == shownBytes.size() && QCryptographicHash::hash(shownBytes, QCryptographicHash::Sha256).toHex() == digest.toLatin1();
+    const bool eligible = candidate && status == QLatin1String("included")
+        && !name.isEmpty() && shown.isString() && truncatedValue.isBool()
+        && digestPattern.match(digest).hasMatch() && matchesPreview && validDigests;
+    it->setData(TextRole, shown.toString());
+    it->setFlags(it->flags() & ~Qt::ItemIsUserCheckable);
+    if (eligible) {
+        it->setData(NameRole, name);
+        it->setData(DigestRole, digest);
+        it->setData(BytesRole, bytes);
+        it->setData(TruncatedRole, truncated);
+        it->setData(PageDigestsRole, pageDigests);
+        it->setData(PageCountRole, pageCount);
+        it->setFlags(it->flags() | Qt::ItemIsUserCheckable);
+        it->setCheckState(truncated ? Qt::Unchecked : Qt::Checked);
+        if (truncated && !canPage) it->setText(it->text() + tr(" (partial preview; full file if selected)"));
+    }
+    if (status == QLatin1String("included") && !eligible)
+        it->setText(it->text() + tr(" (invalid preview metadata)"));
+    if (status != QLatin1String("included")) it->setForeground(QColor(QLatin1String(theme::MUTED)));
+    return eligible;
+}
+
+QJsonObject ReportPreview::fileSelection(const QListWidgetItem *item) const {
+    QJsonObject selected{{QStringLiteral("name"), item->data(NameRole).toString()},
+                         {QStringLiteral("sha256"), item->data(DigestRole).toString()}};
+    const auto fields = item->data(SelectedFieldsRole).toStringList();
+    if (!fields.isEmpty()) selected.insert(QStringLiteral("fields"), QJsonArray::fromStringList(fields));
+    return selected;
+}
+
+void ReportPreview::editFields() {
+    auto *item = list_->currentItem();
+    if (!item) return;
+    const auto available = item->data(AvailableFieldsRole).toStringList();
+    if (available.isEmpty()) return;
+    const auto current = item->data(SelectedFieldsRole).toStringList();
+    QDialog dialog(this);
+    dialog.setWindowTitle(tr("Choose fields"));
+    dialog.resize(560, 440);
+    auto *layout = new QVBoxLayout(&dialog);
+    auto *help = new QLabel(tr("Choose which fields to include. A field path applies to every matching record."));
+    help->setWordWrap(true);
+    layout->addWidget(help);
+    auto *list = new QListWidget(&dialog);
+    for (const auto &field : available) {
+        auto *row = new QListWidgetItem(field, list);
+        row->setCheckState(current.isEmpty() || current.contains(field) ? Qt::Checked : Qt::Unchecked);
+    }
+    layout->addWidget(list);
+    auto *buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
+    auto *apply = buttons->button(QDialogButtonBox::Ok);
+    apply->setText(tr("Update preview"));
+    connect(list, &QListWidget::itemChanged, &dialog, [list, apply] {
+        for (int i = 0; i < list->count(); ++i) {
+            if (list->item(i)->checkState() == Qt::Checked) { apply->setEnabled(true); return; }
+        }
+        apply->setEnabled(false);
+    });
+    connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
+    connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+    layout->addWidget(buttons);
+    if (dialog.exec() != QDialog::Accepted) return;
+    QStringList chosen;
+    for (int i = 0; i < list->count(); ++i)
+        if (list->item(i)->checkState() == Qt::Checked) chosen.append(available.at(i));
+    if (chosen.isEmpty()) return;
+    if (chosen == available) chosen.clear();
+    if (chosen == current) return;
+
+    const auto name = item->data(NameRole).toString();
+    QJsonObject selection{{QStringLiteral("name"), name}};
+    if (!chosen.isEmpty()) selection.insert(QStringLiteral("fields"), QJsonArray::fromStringList(chosen));
+    setEnabled(false);
+    userhelper::run({{QStringLiteral("op"), QStringLiteral("diag_report")},
+                     {QStringLiteral("snapshot"), snapshotPath_},
+                     {QStringLiteral("edit_fields"), selection}}, this,
+                    [this, item, name, chosen](const QJsonObject &reply) {
+        setEnabled(true);
+        const auto file = reply.value(QStringLiteral("file")).toObject();
+        QListWidgetItem updated;
+        if (!reply.value(QStringLiteral("ok")).toBool() || file.value(QStringLiteral("name")).toString() != name
+            || !loadFilePreview(&updated, file, true)) {
+            QMessageBox::warning(this, tr("Diagnostic Report"), tr("The field preview could not be updated."));
+            return;
+        }
+        const auto checked = item->checkState();
+        const auto fields = item->data(AvailableFieldsRole);
+        *item = updated;
+        item->setData(AvailableFieldsRole, fields);
+        item->setData(SelectedFieldsRole, chosen);
+        item->setData(ShownPageCountRole, 0);
+        if (!chosen.isEmpty()) item->setText(item->text() + tr(" (selected fields)"));
+        if (!item->data(TruncatedRole).toBool()) item->setCheckState(checked);
+        reviews_.remove(item);
+        selectFile(item);
+    });
+}
+
 void ReportPreview::selectFile(QListWidgetItem *item) {
     ++generation_;
     loadingPage_ = false;
@@ -329,8 +432,7 @@ void ReportPreview::showPage(qint64 page) {
         updatePageControls();
         return;
     }
-    const QJsonObject file{{QStringLiteral("name"), item->data(NameRole).toString()},
-                           {QStringLiteral("sha256"), item->data(DigestRole).toString()}};
+    const auto file = fileSelection(item);
     loadingPage_ = true;
     const auto generation = ++generation_;
     updatePageControls();
@@ -371,8 +473,7 @@ QJsonArray ReportPreview::selection() const {
     for (int i = 0; i < list_->count(); ++i) {
         const auto *item = list_->item(i);
         if (item->checkState() != Qt::Checked || !(item->flags() & Qt::ItemIsUserCheckable)) continue;
-        result.append(QJsonObject{{QStringLiteral("name"), item->data(NameRole).toString()},
-                                  {QStringLiteral("sha256"), item->data(DigestRole).toString()}});
+        result.append(fileSelection(item));
     }
     return result;
 }

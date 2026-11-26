@@ -8,9 +8,11 @@
 #include "../src/incidentfocus.h"
 #include "../src/stresscoverage.h"
 #include "../src/uvtransitions.h"
+#include "../src/vfcoveragehistory.h"
 
 #include <QCoreApplication>
 #include <QJsonDocument>
+#include <QTemporaryDir>
 #include <cstdio>
 
 static int failures = 0;
@@ -21,6 +23,48 @@ static QJsonArray arr(const char *json) { return QJsonDocument::fromJson(json).a
 
 int main(int argc, char **argv) {
     QCoreApplication app(argc, argv);
+
+    // V/F coverage survives reopening, with exact GPU, curve and point identity.
+    QTemporaryDir dir;
+    CHECK(dir.isValid());
+    const auto path = dir.filePath(QStringLiteral("coverage.json"));
+    auto gpu = obj(R"({"schema":1,"mapping":"single_visible_physical_gpu","uuid":"GPU-12345678-abcd-1234-abcd-123456789abc","pci":"0000:00:01.0","driver":"590.1","vbios":"V1"})");
+    const auto points = arr(R"([{"domain":"gpu","index":1,"volt_uV":650000,"freq_kHz":800100},{"domain":"gpu","index":2,"volt_uV":750000,"freq_kHz":1200000}])");
+    const auto curve = vfcoverage::fingerprint(gpu, points);
+    CHECK(!curve.isEmpty());
+    auto changedPoints = points;
+    auto point = changedPoints.at(0).toObject();
+    point["freq_kHz"] = 800101;
+    changedPoints.replace(0, point);
+    CHECK(vfcoverage::fingerprint(gpu, changedPoints) != curve);
+    gpu["uuid"] = QStringLiteral("GPU-12345678-abcd-1234-abcd-123456789abd");
+    CHECK(vfcoverage::fingerprint(gpu, points) != curve);
+    const vfcoverage::Session first{curve, QDateTime::fromString(QStringLiteral("2026-01-01T10:00:00.000Z"), Qt::ISODateWithMs),
+        {650000, 750000}, {{1, 3}, 4}};
+    CHECK(vfcoverage::saveSession(path, first));
+    const auto loaded = vfcoverage::loadHistory(path);
+    CHECK(loaded && loaded->size() == 1);
+    if (!loaded || loaded->isEmpty()) return 1;
+    CHECK(vfcoverage::comparable(first, loaded->first()));
+    CHECK(loaded->first().coverage.samples == 4 && loaded->first().coverage.counts == first.coverage.counts);
+    const auto [lo, hi] = vfcoverage::estimatedRange(loaded->first());
+    CHECK(lo == 650000 && hi == 750000);
+    auto different = loaded->first();
+    different.curve = vfcoverage::fingerprint(gpu, points);
+    CHECK(!vfcoverage::comparable(first, different));
+    different.coverage.counts[0] = vfcoverage::MaxSamples;
+    CHECK(!vfcoverage::saveSession(path, different));
+    for (int i = 0; i < vfcoverage::HistoryLimit; ++i) {
+        auto next = first;
+        next.started = first.started.addSecs(i + 1);
+        CHECK(vfcoverage::saveSession(path, next));
+    }
+    const auto retained = vfcoverage::loadHistory(path);
+    CHECK(retained && retained->size() == vfcoverage::HistoryLimit
+        && retained->first().started == first.started.addSecs(1));
+    CHECK(diagsrc::saveJson(path, {{"version", 99}}).isEmpty());
+    CHECK(!vfcoverage::saveSession(path, first));
+    CHECK(diagsrc::loadJson(path).value("version").toInt() == 99);
 
     // ── cooling: two runs compared only under equal conditions ──
     const auto a = obj(R"({"t":1,"key":"k","noisy":false,"secs":300,"start_temp":45,"steady_temp":88,"max_temp":91,"fan_rpm":4200,"mhz":4000,"limit_secs":30})");

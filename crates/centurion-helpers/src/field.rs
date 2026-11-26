@@ -1,27 +1,12 @@
 //! Game sessions as field evidence: frame times a real game delivered under a known configuration.
 //!
-//! The calibration's game loops are synthetic. To see whether a preset helps a real game,
-//! centurion-gamemode records every game session (start, end, the game, the Optimizations values it
-//! ran with) in ~/.local/state/centurion/game-sessions.jsonl, and - opt-in - runs an
-//! A/B comparison: every other launch of a game skips the game preset (A = boot defaults, the
-//! game scene's power context stays the same). `centurion-calibrate --field LOG...` matches frame-time
-//! logs to those sessions and turns each game's A/B sessions into rows of the load model:
-//!
-//!   throughput = -ln(median frame time / the game's A median)
-//!   latency    = -(ln(tail / A tail) + ln(pacing / A pacing)) / 2
-//!
-//! Logs: FLM's CSV (interval_ns), MangoHud's CSV (frametime, ms), or one number per line (ms).
-//! A game is its own session in the model (its own offset), field rows count half a benchmark
-//! run, and only the knobs the calibration designed are kept (a row loses weight for every
-//! changed setting the model does not know).
+//! Logs: FLM CSV (interval_ns), MangoHud CSV (frametime, ms), or one number per line (ms).
+//! Comparisons use completed launches with explicit workload labels and matching launch context.
 
-use crate::calib::{PowerSrc, Phase, Row};
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-/// Weight of one field session against a benchmark run.
-pub const FIELD_WEIGHT: f64 = 0.5;
 /// Frames needed (after the first 10 % - loading, shader compilation - is dropped).
 const MIN_FRAMES: usize = 300;
 
@@ -83,14 +68,38 @@ pub fn sessions(text: &str) -> Vec<Value> {
     by.into_values().filter(|v| v["start"].is_u64()).collect()
 }
 
-/// The session a log belongs to: the log was last written while the game ran or shortly after
-/// it ended (`mtime`). The latest session that fits wins.
+/// A log timestamp identifies a launch only when exactly one window fits.
 pub fn match_session(sessions: &[Value], mtime: u64) -> Option<&Value> {
-    sessions.iter().filter(|s| {
+    let mut candidates = sessions.iter().filter(|s| {
         let st = s["start"].as_u64().unwrap_or(u64::MAX);
-        let end = s["end"].as_u64().unwrap_or(st + 6 * 3600);
-        st <= mtime && mtime <= end + 300
-    }).max_by_key(|s| s["start"].as_u64().unwrap_or(0))
+        let end = s["end"].as_u64().unwrap_or(st.saturating_add(6 * 3600));
+        st <= end && st <= mtime && mtime <= end.saturating_add(300)
+    });
+    let first = candidates.next()?;
+    candidates.next().is_none().then_some(first)
+}
+
+/// Read back the active settings governed by the comparison's preset.
+pub fn readback(values: &Value) -> Option<Value> {
+    let values = values.as_object()?;
+    // A game launch may soft-park cores without changing the tunable's readback.
+    if values.contains_key("cpu.ccd_park") { return None; }
+    crate::abverify::baseline(values).ok()
+}
+
+/// Verify all planned writes reached the same targets captured before the launch.
+pub fn applied_targets(before: &Value, after: &Value) -> bool {
+    let Some(before) = before.as_object() else { return false };
+    let Some(after) = after.as_object() else { return false };
+    if before.is_empty() || before == after || before.len() != after.len() { return false; }
+    before.iter().all(|(key, reference)| {
+        let Some(reference) = reference.as_array() else { return false };
+        let Some(observed) = after.get(key).and_then(Value::as_array) else { return false };
+        reference.len() == observed.len() && !reference.is_empty() && reference.iter().zip(observed).all(|(a, b)| {
+            a[0] == b[0] && a[1] == b[1] && a[3] == b[3]
+                && b[1].as_str().zip(b[2].as_str()).is_some_and(|(planned, active)| planned.trim() == active)
+        })
+    })
 }
 
 /// The configuration a session ran with, as changes against the boot defaults (`boot`): an A
@@ -105,35 +114,52 @@ pub fn session_cfg(s: &Value, boot: &dyn Fn(&str) -> Option<String>) -> Vec<(Str
     cfg
 }
 
-/// Model session id of a game (its own offset in the load model).
-pub fn game_sess(game: &str) -> u64 { (1u64 << 40) | (crate::model::fnv(game.as_bytes()) & 0xFF_FFFF_FFFF) }
+/// Keep only load-model predictions for the exact preset and reference conditions.
+pub fn historical_prediction(history: &[Value], context: &Value, launch: u64) -> Option<Value> {
+    let baseline = context["baseline"].as_object()?;
+    let preset = context["preset"].as_object()?;
+    if !context["boot"].is_string() || baseline.is_empty() || baseline.len() != preset.len() { return None; }
+    history.iter().filter_map(|record| {
+        let time = record["t"].as_u64().filter(|t| *t > 0 && *t <= launch)?;
+        if record["goal"] != "gaming" || record["phase"] != "load" || record["complete"] != true
+            || record["verification_v"].as_u64() != Some(crate::abverify::VERSION)
+            || record["restore_confirmed"] != true || record["boot_id"] != context["boot"]
+            || record["measured_context"] != context["platform"]
+            || record["verified_values"].as_object() != Some(preset) { return None; }
+        if record["baseline"].as_object() != Some(baseline) { return None; }
+        let predicted = record["predicted"].as_array().filter(|v| v.len() == 3)?;
+        let changes = predicted[0].as_u64()?;
+        if changes == 0 || record["changes"].as_u64() != Some(changes) { return None; }
+        let mean = predicted[1].as_f64().filter(|v| v.is_finite())?;
+        let sd = predicted[2].as_f64().filter(|v| v.is_finite() && *v >= 0.0)?;
+        Some((time, json!({"time": time, "mean": mean, "sd": sd})))
+    }).max_by_key(|(time, _)| *time).map(|(_, prediction)| prediction)
+}
 
-/// Rows of every game that has at least two reference (A) sessions and one other: each session
-/// against the median of the game's A sessions. `recs` = stored field sessions
-/// {game, start, cfg: [[k, v]], med, tail, pacing, n}.
-pub fn rows(recs: &[Value], kernel: &str) -> Vec<Row> {
-    let mut by: BTreeMap<String, Vec<&Value>> = BTreeMap::new();
-    for r in recs { if let Some(g) = r["game"].as_str() { by.entry(g.to_owned()).or_default().push(r); } }
-    let cfg_of = |r: &Value| -> Vec<(String, String)> { r["cfg"].as_array().into_iter().flatten()
-        .filter_map(|x| Some((x[0].as_str()?.to_owned(), x[1].as_str()?.to_owned()))).collect() };
+/// Compare each changed launch against the median of at least two reference launches.
+pub fn comparisons(records: &[Value]) -> Vec<Value> {
+    let mut groups: BTreeMap<String, Vec<&Value>> = BTreeMap::new();
+    for record in records {
+        let context = &record["comparison"];
+        if !context.is_object() || !record["id"].is_string() { continue; }
+        if !["med", "tail", "pacing"].into_iter().all(|k| record[k].as_f64().is_some_and(|v| v > 0.0)) { continue; }
+        groups.entry(context.to_string()).or_default().push(record);
+    }
     let mut out = Vec::new();
-    for (game, rs) in by {
-        let refs: Vec<&&Value> = rs.iter().filter(|r| cfg_of(r).is_empty()).collect();
-        if refs.len() < 2 || rs.len() < 3 { continue; }
-        let med = |f: &str| { let mut v: Vec<f64> = refs.iter().filter_map(|r| r[f].as_f64()).filter(|x| *x > 0.0).collect(); crate::calib::median(&mut v) };
-        let (Some(m0), Some(t0), Some(p0)) = (med("med"), med("tail"), med("pacing")) else { continue };
-        let sess = game_sess(&game);
-        let start0 = rs.iter().filter_map(|r| r["start"].as_u64()).min().unwrap_or(0);
-        let span = rs.iter().filter_map(|r| r["start"].as_u64()).max().unwrap_or(0).saturating_sub(start0).max(1) as f64;
-        for r in &rs {
-            let (Some(m), Some(t), Some(p)) = (r["med"].as_f64(), r["tail"].as_f64(), r["pacing"].as_f64()) else { continue };
-            if m <= 0.0 || t <= 0.0 || p <= 0.0 { continue; }
-            let thr = -(m / m0).ln();
-            let lat = -((t / t0).ln() + (p / p0).ln()) / 2.0;
-            let st = r["start"].as_u64().unwrap_or(0);
-            out.push(Row { phase: Phase::Load, sess, pos: st.saturating_sub(start0) as f64 / span, t: st, kernel: kernel.to_owned(), cfg: cfg_of(r),
-                           y: [lat.clamp(-0.5, 0.5), thr.clamp(-0.5, 0.5), f64::NAN, f64::NAN], w: FIELD_WEIGHT,
-                           bv: crate::calib::BENCH_VERSION, src: PowerSrc::Rapl, cx: String::new(), tc: f64::NAN, field: true });
+    for (context, records) in groups {
+        let references: BTreeMap<&str, &Value> = records.iter().filter(|r| r["ab"] == "A")
+            .filter_map(|r| Some((r["id"].as_str()?, *r))).collect();
+        if references.len() < 2 { continue; }
+        let reference = |key: &str| crate::calib::median(&mut references.values()
+            .filter_map(|r| r[key].as_f64()).collect::<Vec<_>>());
+        let (Some(med), Some(tail), Some(pacing)) = (reference("med"), reference("tail"), reference("pacing")) else { continue; };
+        let group = format!("{:016x}", crate::model::fnv(context.as_bytes()));
+        for record in records.into_iter().filter(|r| r["ab"] == "B") {
+            if references.contains_key(record["id"].as_str().unwrap_or_default()) { continue; }
+            out.push(json!({"id": record["id"], "group": group, "references": references.keys().collect::<Vec<_>>(), "prediction": record["prediction"],
+                "med": (1.0 - record["med"].as_f64().unwrap_or(med) / med) * 100.0,
+                "tail": (1.0 - record["tail"].as_f64().unwrap_or(tail) / tail) * 100.0,
+                "pacing": (1.0 - record["pacing"].as_f64().unwrap_or(pacing) / pacing) * 100.0}));
         }
     }
     out
@@ -153,18 +179,52 @@ mod tests {
     }
 
     #[test]
-    fn frames_and_rows_against_the_reference_sessions() {
+    fn comparisons_require_distinct_references_and_identical_context() {
         let ft: Vec<f64> = (0..1000).map(|i| if i % 100 == 99 { 20.0 } else { 8.0 }).collect();
         let f = frames(&ft).unwrap();
         assert!((f.med - 8.0).abs() < 1e-9 && f.tail > 8.0 && f.pacing > 0.0 && f.n == 900);
         assert!(frames(&ft[..200]).is_none());
-        let rec = |start: u64, cfg: Value, med: f64| json!({"game": "g", "start": start, "cfg": cfg, "med": med, "tail": med * 2.0, "pacing": 0.5});
-        let recs = vec![rec(1, json!([]), 10.0), rec(2, json!([]), 10.0), rec(3, json!([["cpu.epp", "performance"]]), 9.0)];
-        let rs = rows(&recs, "7.2");
-        assert_eq!(rs.len(), 3);
-        let b = rs.iter().find(|r| !r.cfg.is_empty()).unwrap();
-        assert!((b.y[1] - (10.0f64 / 9.0).ln()).abs() < 1e-9 && b.y[2].is_nan() && b.field && b.phase == Phase::Load);
-        assert!(rows(&recs[..2], "7.2").is_empty(), "needs a non-reference session");
+        let rec = |id: &str, ab: &str, workload: &str, med: f64| json!({
+            "id": id, "ab": ab, "comparison": {"workload": workload}, "med": med, "tail": med * 2.0, "pacing": 0.5
+        });
+        let a = rec("1", "A", "g", 10.0);
+        let b = rec("3", "B", "g", 9.0);
+        assert!(comparisons(&[a.clone(), a.clone(), b.clone()]).is_empty());
+        assert!(comparisons(&[a.clone(), rec("2", "A", "different", 10.0), b.clone()]).is_empty());
+        let found = comparisons(&[a, rec("2", "A", "g", 10.0), b]);
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0]["references"], json!(["1", "2"]));
+        assert!((found[0]["med"].as_f64().unwrap() - 10.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn write_readback_checks_all_targets_and_their_identity() {
+        let before = json!({"setting":[["path1", "2", "1", null], ["path2", "2", "1", "dev"]]});
+        let mut after = before.clone();
+        after["setting"][0][2] = json!("2");
+        assert!(!applied_targets(&before, &after));
+        after["setting"][1][2] = json!("2");
+        assert!(applied_targets(&before, &after));
+        after["setting"][1][3] = json!("new dev");
+        assert!(!applied_targets(&before, &after));
+    }
+
+    #[test]
+    fn historical_prediction_requires_the_same_recorded_conditions() {
+        let context = json!({"boot":"boot","platform":{"power":"ac"},"preset":{"setting":"on"},"baseline":{"setting":[["path","on","off",null]]}});
+        let record = json!({"t":10,"goal":"gaming","phase":"load","complete":true,"restore_confirmed":true,
+            "verification_v":crate::abverify::VERSION,
+            "boot_id":"boot","measured_context":{"power":"ac"},"verified_values":{"setting":"on"},
+            "baseline":{"setting":[["path","on","off",null]]},"changes":1,"predicted":[1,0.2,0.1]});
+        assert_eq!(historical_prediction(std::slice::from_ref(&record), &context, 10),
+            Some(json!({"time":10,"mean":0.2,"sd":0.1})));
+        assert!(historical_prediction(std::slice::from_ref(&record), &context, 9).is_none());
+        let mut wrong_boot = record.clone();
+        wrong_boot["boot_id"] = json!("other");
+        assert!(historical_prediction(&[wrong_boot], &context, 10).is_none());
+        let mut different = context;
+        different["baseline"]["setting"][0][2] = json!("auto");
+        assert!(historical_prediction(&[record], &different, 10).is_none());
     }
 
     #[test]
@@ -174,6 +234,7 @@ mod tests {
         let s = sessions(log);
         assert_eq!(s.len(), 2);
         assert_eq!(match_session(&s, 950).unwrap()["id"], "a");
+        assert!(match_session(&s, 1050).is_none());
         assert_eq!(match_session(&s, 2000).unwrap()["id"], "b");
         assert!(match_session(&s, 50).is_none());
         let boot = |k: &str| Some(if k == "vm.swappiness" { "60".to_owned() } else { "balance_performance".to_owned() });

@@ -798,30 +798,88 @@ void OptimizeTab::buildUi() {
         connect(abFilter,&QLineEdit::textChanged,&dlg,refillAb); refillAb();
         tabs->addTab(abPage,tr("Measured ABBA History"));
 
-        // Imported game records do not store a stable same-context pair identity. Show the actual
-        // observations separately; do not manufacture matched comparisons from game names.
         auto *gamePage=new QWidget; auto *gameLayout=new QVBoxLayout(gamePage);
-        auto *gameHint=new QLabel(tr("Imported game measurements are individual sessions. This signature does not retain enough context to establish controlled A/B pairs. No comparison or FPS improvement is inferred.")); gameHint->setWordWrap(true); gameLayout->addWidget(gameHint);
+        auto *gameHint=new QLabel(tr("Matched results use two reference launches with the same recorded conditions. The synthetic load prediction is shown in model units. Game results show frame-time change in percent."));
+        gameHint->setWordWrap(true); gameLayout->addWidget(gameHint);
         auto *gameFilter=new QLineEdit; gameFilter->setPlaceholderText(tr("Filter game sessions")); gameLayout->addWidget(gameFilter);
-        auto *gameTable=new QTableWidget(0,7); gameTable->setHorizontalHeaderLabels({tr("Game"),tr("Start"),tr("Configuration"),tr("Median (ms)"),tr("Tail (ms)"),tr("Pacing (ms)"),tr("Frames")});
-        gameTable->setEditTriggers(QAbstractItemView::NoEditTriggers); gameTable->horizontalHeader()->setSectionResizeMode(QHeaderView::Interactive); gameLayout->addWidget(gameTable,1);
+        auto *gameTabs=new QTabWidget; gameLayout->addWidget(gameTabs,1);
+        auto makeGameTable=[&](const QString &title) {
+            auto *table=new QTableWidget(0,8);
+            table->setHorizontalHeaderLabels({tr("Game"),tr("Start"),tr("Session ID"),tr("Median (ms)"),tr("Tail (ms)"),tr("Pacing (ms)"),tr("Frames"),tr("Comparison")});
+            table->setEditTriggers(QAbstractItemView::NoEditTriggers);
+            table->setSelectionBehavior(QAbstractItemView::SelectRows);
+            table->horizontalHeader()->setSectionResizeMode(QHeaderView::Interactive);
+            gameTabs->addTab(table,title);
+            return table;
+        };
+        auto *matchedTable=makeGameTable(tr("Matched"));
+        auto *unmatchedTable=makeGameTable(tr("Unmatched"));
+        auto *gameDetails=new QPlainTextEdit; gameDetails->setReadOnly(true);
+        gameDetails->setMaximumHeight(180); gameLayout->addWidget(gameDetails);
         const auto sessions=sig.value("fs").toArray();
+        QHash<QString,QJsonObject> comparisons;
+        QSet<QString> references;
+        for(const auto &entry:sig.value("field_comparisons").toArray()) {
+            const auto comparison=entry.toObject();
+            const auto id=comparison.value("id").toString();
+            if(id.isEmpty()) continue;
+            comparisons.insert(id,comparison);
+            for(const auto &reference:comparison.value("references").toArray())
+                if(reference.isString()) references.insert(reference.toString());
+        }
         const auto refillGame=[=,this] {
-            gameTable->setRowCount(0);
+            matchedTable->setRowCount(0);
+            unmatchedTable->setRowCount(0);
+            gameDetails->clear();
             const auto filter=gameFilter->text().trimmed();
             const auto begin=std::max(qsizetype(0),sessions.size()-400);
             for(qsizetype i=begin;i<sessions.size();++i) {
-                const auto r=sessions.at(i).toObject(); const QString game=r.value("game").toString();
+                const auto record=sessions.at(i).toObject();
+                const QString game=record.value("game").toString(), id=record.value("id").toString();
                 if(!filter.isEmpty() && !game.contains(filter,Qt::CaseInsensitive)) continue;
-                const auto cfg=r.value("cfg");
-                const QString config=!cfg.isArray()?tr("Unknown"):cfg.toArray().isEmpty()?tr("Recorded reference configuration"):tr("Recorded changed configuration");
-                const auto positive=[&](const QJsonValue &v) {return v.isDouble() && v.toDouble()>0?number(v):tr("Unknown");};
-                const QStringList cells{game.isEmpty()?tr("Unknown"):game,profilediff::display(r.value("start")),config,positive(r.value("med")),positive(r.value("tail")),positive(r.value("pacing")),count(r.value("n"))>0?number(r.value("n")):tr("Unknown")};
-                const int row=gameTable->rowCount(); gameTable->insertRow(row);
-                for(int c=0;c<cells.size();++c) {auto *item=new QTableWidgetItem(cells.at(c)); if(c==2) item->setToolTip(profilediff::display(cfg)); gameTable->setItem(row,c,item);}
+                const auto comparison=comparisons.value(id);
+                const bool reference=references.contains(id);
+                auto *table=comparison.isEmpty() && !reference ? unmatchedTable : matchedTable;
+                const auto format=[&](const QJsonValue &v) {return v.isDouble()?number(v):tr("Unknown");};
+                const auto start=record.value("start");
+                const auto prediction=comparison.value("prediction").toObject();
+                QString result, detail;
+                if(!comparison.isEmpty()) {
+                    result=tr("Median reduction %1%").arg(format(comparison.value("med")));
+                    detail=tr("Median reduction %1%, tail reduction %2%, pacing reduction %3%")
+                        .arg(format(comparison.value("med")),format(comparison.value("tail")),format(comparison.value("pacing")));
+                    const bool hasPrediction=prediction.value("mean").isDouble() && prediction.value("sd").isDouble();
+                    detail+=QLatin1Char('\n')+(hasPrediction
+                        ? tr("Synthetic gaming load prediction %1 ± %2").arg(format(prediction.value("mean")),format(prediction.value("sd")))
+                        : tr("No synthetic load prediction for these recorded conditions."));
+                    detail+=QLatin1Char('\n')+tr("Matching group %1").arg(comparison.value("group").toString());
+                    detail+=QLatin1Char('\n')+tr("Reference sessions %1").arg(profilediff::display(comparison.value("references")));
+                } else if(reference) {
+                    result=tr("Reference launch");
+                }
+                const QStringList cells{game.isEmpty()?tr("Unknown"):game,format(start),id.isEmpty()?tr("Unknown"):id,
+                    format(record.value("med")),format(record.value("tail")),format(record.value("pacing")),format(record.value("n")),result};
+                const int row=table->rowCount(); table->insertRow(row);
+                for(int column=0;column<cells.size();++column) {
+                    auto *item=new QTableWidgetItem(cells.at(column));
+                    if(column==0) item->setData(Qt::UserRole,detail+QLatin1Char('\n')+profilediff::display(record));
+                    table->setItem(row,column,item);
+                }
             }
         };
+        for(auto *table:{matchedTable,unmatchedTable}) {
+            connect(table,&QTableWidget::itemSelectionChanged,&dlg,[table,gameDetails] {
+                const auto *item=table->item(table->currentRow(),0);
+                gameDetails->setPlainText(item?item->data(Qt::UserRole).toString().trimmed():QString());
+            });
+        }
+        connect(gameTabs,&QTabWidget::currentChanged,&dlg,[=](int index) {
+            auto *table=index==0?matchedTable:unmatchedTable;
+            const auto *item=table->item(table->currentRow(),0);
+            gameDetails->setPlainText(item?item->data(Qt::UserRole).toString().trimmed():QString());
+        });
         connect(gameFilter,&QLineEdit::textChanged,&dlg,refillGame); refillGame();
+        if(matchedTable->rowCount()==0) gameTabs->setCurrentIndex(1);
         tabs->addTab(gamePage,tr("Measured Game Sessions"));
         auto *qualityPage=new QWidget; auto *qualityLayout=new QVBoxLayout(qualityPage);
         auto *qualityTable=new QTableWidget(0,8);
@@ -1161,13 +1219,11 @@ QWidget *OptimizeTab::buildLaunchPage() {
                                        "the scene loads without touching the curves. Without a scene: the \"%1\" curve profiles "
                                        "are applied (CPU first, GPU 2 s later). Run by centurion-gamemode PRE / WRAP.").arg(UNDERVOLT_PROFILE)),
                    2, 0, 1, 3);
-    fieldAb_ = new QCheckBox(QCoreApplication::translate("OptimizeTab", "A/B field comparison: every other launch of a game runs at the boot defaults"));
+    fieldAb_ = new QCheckBox(QCoreApplication::translate("OptimizeTab", "A/B field comparison: alternate applying and skipping the game preset"));
     fieldAb_->setChecked(cfg.value("field_ab").toBool());
-    fieldAb_->setToolTip(QCoreApplication::translate("OptimizeTab", "Real games instead of benchmarks: launches alternate B (the game preset) and A (boot defaults, no\n"
-                                        "launch boost; the game scene is the same). centurion-gamemode records every session; feed the frame-time\n"
-                                        "logs (FLM CSV or MangoHud CSV) with\n"
-                                        "    sudo centurion-calibrate --field LOG...\n"
-                                        "and the load model learns from them once a game has two A sessions and one B session."));
+    fieldAb_->setToolTip(tr("Launches alternate between the game preset and skipping the preset. "
+        "Set CENTURION_GAME_WORKLOAD to the same label for a fixed benchmark route and graphics setup. "
+        "Import frame-time logs after both reference launches and a preset launch finish."));
     connect(fieldAb_, &QCheckBox::toggled, this, [this](bool on) {
         QJsonObject cfg = readJsonFile(configFile());
         if (on) cfg["field_ab"] = true; else cfg.remove("field_ab");
@@ -3378,7 +3434,7 @@ void OptimizeTab::importFieldData() {
             const QString error = QString::fromUtf8(proc->readAllStandardError()).right(1000);
             setBusy(false);
             const bool ok = st == QProcess::NormalExit && code == 0;
-            showStatus(ok ? tr("Game telemetry imported. Re-run Autotune to use matched A/B evidence.")
+            showStatus(ok ? tr("Game telemetry imported. Open Measured Game Sessions to see the results.")
                           : tr("Game telemetry import failed."), ok ? theme::OK : theme::WARN, 12000);
             QMessageBox::information(this, tr("Game telemetry import"),
                 (output.isEmpty() ? error : output + (error.isEmpty() ? QString() : QStringLiteral("\n") + error)));

@@ -237,6 +237,14 @@ Report hardwareSnapshot(const QJsonObject &base, const QString &capturedAt, cons
 
 static int u8(const QByteArray &b, int i) { return i < b.size() ? quint8(b.at(i)) : 0; }
 
+static QString advertisedTimingText(const edidfields::Timing &timing) {
+    if (timing.interlaced)
+        return tr("%1×%2 interlaced @ %3 Hz (field rate)").arg(timing.hActive).arg(timing.frameActiveLines()).arg(2 * timing.refreshHz(), 0, 'f', 2);
+    if (!timing.hasGeometry())
+        return tr("%1×%2 @ %3 Hz (nominal)").arg(timing.hActive).arg(timing.vActive).arg(timing.nominalRefreshHz);
+    return QStringLiteral("%1×%2 @ %3 Hz").arg(timing.hActive).arg(timing.vActive).arg(timing.refreshHz(), 0, 'f', 2);
+}
+
 Edid decodeEdid(const QByteArray &d) {
     Edid e;
     if (d.size() < 128) return e;
@@ -276,8 +284,9 @@ Edid decodeEdid(const QByteArray &d) {
         }
     }
     const auto timingData = std::span(reinterpret_cast<const std::uint8_t *>(d.constData()), std::size_t(d.size()));
-    for (const auto &timing : edidfields::progressiveTimings(timingData)) {
-        const QString display = QStringLiteral("%1×%2 @ %3 Hz").arg(timing.hActive).arg(timing.vActive).arg(timing.refreshHz(), 0, 'f', 2);
+    for (const auto &timing : edidfields::advertisedTimings(timingData)) {
+        if (timing.interlaced) continue;
+        const QString display = advertisedTimingText(timing);
         e.timings << display;
         if (e.preferredMode.isEmpty() && timing.preferred) e.preferredMode = display;
     }
@@ -344,7 +353,13 @@ QString edidTimingSource(edidfields::TimingSource source) {
     case S::Base: return tr("EDID base block");
     case S::Cta: return QStringLiteral("CTA-861");
     case S::DisplayIdTypeI: return tr("DisplayID Type I");
+    case S::DisplayIdTypeII: return tr("DisplayID Type II");
+    case S::DisplayIdTypeIII: return tr("DisplayID Type III");
+    case S::DisplayIdTypeV: return tr("DisplayID Type V");
+    case S::DisplayIdTypeVI: return tr("DisplayID Type VI");
     case S::DisplayIdTypeVII: return tr("DisplayID Type VII");
+    case S::DisplayIdTypeIX: return tr("DisplayID Type IX");
+    case S::DisplayIdTypeX: return tr("DisplayID Type X");
     }
     return {};
 }
@@ -385,9 +400,9 @@ Report displays(const QString &root) {
     blocks.headers = {tr("Connector"), tr("Block"), tr("Type"), tr("Checksum byte"), tr("Sum modulo 256"), tr("Status")};
     blocks.note = tr("Only complete blocks read from the kernel are listed. A zero checksum sum is necessary but does not prove all EDID fields are correct.");
     Table modesTable;
-    modesTable.title = tr("Decoded Detailed Timings");
-    modesTable.headers = {tr("Connector"), tr("Timing"), tr("Source"), tr("Listed resolution")};
-    modesTable.note = tr("A resolution match does not verify refresh rate or timing. Linux DRM sysfs lists mode names only.");
+    modesTable.title = tr("Advertised Timings");
+    modesTable.headers = {tr("Connector"), tr("Timing"), tr("Source"), tr("DRM mode name listed")};
+    modesTable.note = tr("Linux DRM sysfs lists mode names. A match covers the resolution and scan type. Refresh rates and timing parameters require another source.");
     Table kernelModes;
     kernelModes.title = tr("Modes Listed by Linux DRM");
     kernelModes.headers = {tr("Connector"), tr("Mode name"), tr("Source")};
@@ -466,13 +481,14 @@ Report displays(const QString &root) {
         const Edid e = decodeEdid(raw);
         const auto inspection = edidfields::inspect({reinterpret_cast<const std::uint8_t *>(raw.constData()), std::size_t(raw.size())});
         for (const auto &f : inspection.fields) fields.add({conn, QStringLiteral("0x%1").arg(qulonglong(f.offset),4,16,QLatin1Char('0')), QString::number(qulonglong(f.length)), edidFieldName(f.kind), f.tag < 0 ? QStringLiteral("—") : QStringLiteral("0x%1").arg(f.tag,2,16,QLatin1Char('0'))});
-        for (const auto &timing : edidfields::progressiveTimings({reinterpret_cast<const std::uint8_t *>(raw.constData()), std::size_t(raw.size())})) {
+        for (const auto &timing : edidfields::advertisedTimings({reinterpret_cast<const std::uint8_t *>(raw.constData()), std::size_t(raw.size())})) {
             auto pair = [](unsigned h,unsigned v) { return QStringLiteral("%1 / %2").arg(h).arg(v); };
-            const auto resolution = QStringLiteral("%1x%2").arg(timing.hActive).arg(timing.vActive);
+            const auto modeName = QStringLiteral("%1x%2%3").arg(timing.hActive).arg(timing.frameActiveLines())
+                .arg(timing.interlaced ? QStringLiteral("i") : QString());
             const auto source = edidTimingSource(timing.source);
-            const auto timingText = QStringLiteral("%1×%2 @ %3 Hz").arg(timing.hActive).arg(timing.vActive).arg(timing.refreshHz(), 0, 'f', 2);
-            modesTable.add({conn, timingText, source, modeNames.isEmpty() ? tr("Unknown") :
-                modeNames.contains(resolution) ? tr("Listed") : tr("Not listed")});
+            modesTable.add({conn, advertisedTimingText(timing), source, modeNames.isEmpty() ? tr("Unknown") :
+                modeNames.contains(modeName) ? tr("Listed") : tr("Not listed")});
+            if (timing.interlaced || !timing.hasGeometry()) continue;
             timingDetails.add({conn, QStringLiteral("0x%1").arg(qulonglong(timing.offset), 4, 16, QLatin1Char('0')),
                 pair(timing.hActive,timing.vActive), pair(timing.hBlank,timing.vBlank), pair(timing.hActive+timing.hBlank,timing.vActive+timing.vBlank),
                 QString::number(timing.pixelClockKHz/1000.0,'f',3), QString::number(timing.refreshHz(),'f',2), source});

@@ -226,7 +226,8 @@ fn uname() -> (String, String) {
 fn free_bytes(dir: &Path) -> Option<u64> {
     let c = std::ffi::CString::new(dir.as_os_str().as_bytes()).ok()?;
     let mut s: libc::statvfs = unsafe { std::mem::zeroed() };
-    (unsafe { libc::statvfs(c.as_ptr(), &mut s) } == 0).then(|| s.f_bavail as u64 * s.f_frsize as u64)
+    if unsafe { libc::statvfs(c.as_ptr(), &mut s) } != 0 { return None; }
+    u64::try_from(u128::from(s.f_bavail) * u128::from(s.f_frsize)).ok()
 }
 
 fn abs_dir(v: &Value, what: &str) -> Result<PathBuf, String> {

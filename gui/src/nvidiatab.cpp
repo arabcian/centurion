@@ -50,6 +50,7 @@
 #include <array>
 #include <vector>
 #include <cmath>
+#include <cstring>
 #include <dlfcn.h>
 
 static const QString PROFILES_DIR = QStringLiteral("/etc/nvcurve/profiles");
@@ -83,6 +84,7 @@ public:
     std::optional<unsigned> temp() { unsigned v; return temp_ && temp_(dev_, 0, &v) == 0 ? std::optional(v) : std::nullopt; }
     std::optional<unsigned> powerMw() { unsigned v; return power_ && power_(dev_, &v) == 0 ? std::optional(v) : std::nullopt; }
     std::optional<unsigned> clock(unsigned type) { unsigned v; return clock_ && clock_(dev_, type, &v) == 0 ? std::optional(v) : std::nullopt; }
+    const QString &uuid() const { return uuid_; }
     std::optional<unsigned> architecture() { unsigned v; return arch_ && arch_(dev_, &v) == 0 ? std::optional(v) : std::nullopt; }
     std::optional<unsigned long long> eventReasons() {
         unsigned long long v; return reasons_ && reasons_(dev_, &v) == 0 ? std::optional(v) : std::nullopt;
@@ -100,12 +102,16 @@ private:
         temp_ = reinterpret_cast<int (*)(void *, unsigned, unsigned *)>(sym("nvmlDeviceGetTemperature"));
         power_ = reinterpret_cast<int (*)(void *, unsigned *)>(sym("nvmlDeviceGetPowerUsage"));
         clock_ = reinterpret_cast<int (*)(void *, unsigned, unsigned *)>(sym("nvmlDeviceGetClockInfo"));
+        const auto getUuid = reinterpret_cast<int (*)(void *, char *, unsigned)>(sym("nvmlDeviceGetUUID"));
         arch_ = reinterpret_cast<int (*)(void *, unsigned *)>(sym("nvmlDeviceGetArchitecture"));
         reasons_ = reinterpret_cast<int (*)(void *, unsigned long long *)>(sym("nvmlDeviceGetCurrentClocksEventReasons"));
         if (!reasons_) reasons_ = reinterpret_cast<int (*)(void *, unsigned long long *)>(sym("nvmlDeviceGetCurrentClocksThrottleReasons"));
         pm_ = reinterpret_cast<int (*)(void *, PowerMizer *)>(sym("nvmlDeviceGetPowerMizerMode_v1"));
         if (!init || !byIdx || init() != 0) { shutdown_ = nullptr; return; }
         ok_ = byIdx(0, &dev_) == 0;
+        char id[96]{};
+        if (ok_ && getUuid && getUuid(dev_, id, sizeof(id)) == 0)
+            uuid_ = QString::fromLatin1(id, strnlen(id, sizeof(id)));
     }
     void *lib_, *dev_ = nullptr;
     bool ok_ = false;
@@ -113,6 +119,7 @@ private:
     int (*temp_)(void *, unsigned, unsigned *) = nullptr;
     int (*power_)(void *, unsigned *) = nullptr;
     int (*clock_)(void *, unsigned, unsigned *) = nullptr;
+    QString uuid_;
     int (*arch_)(void *, unsigned *) = nullptr;
     int (*reasons_)(void *, unsigned long long *) = nullptr;
     int (*pm_)(void *, PowerMizer *) = nullptr;
@@ -492,26 +499,35 @@ NvidiaTab::NvidiaTab(QWidget *parent) : QWidget(parent) {
     auto *bFit = new QPushButton("Fit");
     bFit->setObjectName("btnMini");
     bFit->setToolTip(tr("Show the whole curve (key: 0)"));
-    auto *bObserve = new QPushButton(tr("Record used region"));
-    bObserve->setObjectName("btnMini");
-    bObserve->setCheckable(true);
-    bObserve->setToolTip(tr("While on, the graphics clock is sampled every second (also with the window hidden) and each sample is "
-                            "attributed to the curve point that reaches it. Play a game, then look at the green bands: stability seen "
-                            "in that session covers those points only. Turning it on clears the previous recording."));
-    connect(bObserve, &QPushButton::toggled, this, [this](bool on) {
-        if (!observeTimer_) {
-            observeTimer_ = new QTimer(this);
-            observeTimer_->setInterval(1000);
-            connect(observeTimer_, &QTimer::timeout, this, &NvidiaTab::sampleObserved);
+    observeButton_ = new QPushButton(tr("Record used region"));
+    observeButton_->setObjectName("btnMini");
+    observeButton_->setCheckable(true);
+    observeButton_->setToolTip(tr("Samples the graphics clock while this tab is visible. Voltage is estimated from the last confirmed curve. Stopping or leaving this tab saves the session."));
+    observeTimer_ = new QTimer(this);
+    observeTimer_->setInterval(1000);
+    connect(observeTimer_, &QTimer::timeout, this, &NvidiaTab::sampleObserved);
+    connect(observeButton_, &QPushButton::toggled, this, [this](bool on) {
+        if (!on) { finishObserved(); return; }
+        if (busy_ || !curveReadbackValid_ || coverageCurveKey_.isEmpty() || !matchesCoverageGpu()) {
+            const QSignalBlocker blocker(observeButton_);
+            observeButton_->setChecked(false);
+            log(tr("Read the curve and verify the GPU before recording."));
+            return;
         }
-        if (on) { observed_ = {}; vf_->setObservedCounts({}); observeTimer_->start(); log(tr("Recording the used curve region…")); }
-        else {
-            observeTimer_->stop();
-            log(tr("Used region: %1 sample(s) on %2 curve point(s), points %3–%4.").arg(observed_.samples).arg(observed_.observedPoints())
-                    .arg(observed_.lowest()).arg(observed_.highest()));
-        }
+        observed_ = {coverageCurveKey_, QDateTime::currentDateTimeUtc(), pointVoltages_, {}};
+        updateObservedOverlay();
+        observeTimer_->start();
+        log(tr("Recording the used curve region…"));
     });
-    gb->addWidget(bObserve);
+    auto *historyButton = new QPushButton(tr("V/F coverage history"));
+    historyButton->setObjectName("btnMini");
+    connect(historyButton, &QPushButton::clicked, this, &NvidiaTab::showCoverageHistory);
+    auto *coverageBar = new QHBoxLayout;
+    coverageBar->addWidget(observeButton_);
+    coverageBar->addWidget(historyButton);
+    coverageBar->addWidget(lbl(tr("Voltage is estimated"), theme::MUTED));
+    coverageBar->addStretch();
+    cv->addLayout(coverageBar);
     gb->addSpacing(4);
     gb->addWidget(lbl("Zoom", theme::MUTED));
     gb->addWidget(zoomSl);
@@ -739,7 +755,7 @@ bool NvidiaTab::present() {
     return false;
 }
 
-NvidiaTab::~NvidiaTab() { stopSensorStream(); delete temps_; delete nvml_; }
+NvidiaTab::~NvidiaTab() { finishObserved(); stopSensorStream(); delete temps_; delete nvml_; }
 
 void NvidiaTab::showEvent(QShowEvent *e) {
     QWidget::showEvent(e);
@@ -754,6 +770,7 @@ void NvidiaTab::showEvent(QShowEvent *e) {
                 if (curvereadback::identity(fixture, QStringLiteral("fixture"))) takeGpuPoints(fixture.value("vf_curve").toArray(), true);
             }
             curveReadbackValid_ = false;
+            updateObservedOverlay();
             // CENTURION_NVCURVE_VIEW="zoom,pan" (e.g. "4,0.3") for zoomed screenshots.
             if (const QStringList v = qEnvironmentVariable("CENTURION_NVCURVE_VIEW").split(','); v.size() == 2) {
                 vf_->setZoom(v[0].toDouble());
@@ -765,6 +782,7 @@ void NvidiaTab::showEvent(QShowEvent *e) {
     }
     if (!qEnvironmentVariableIsEmpty("CENTURION_NVCURVE_FAKE")) return;
     if (!nvml_) nvml_ = Nvml::open();
+    updateObservedOverlay();
     syncPowerMizer();
     pollStats();
     statsTimer_->start();
@@ -772,6 +790,7 @@ void NvidiaTab::showEvent(QShowEvent *e) {
 
 void NvidiaTab::hideEvent(QHideEvent *e) {
     QWidget::hideEvent(e);
+    finishObserved();
     statsTimer_->stop();
     stopSensorStream();
     streamFailed_ = false;
@@ -950,6 +969,7 @@ void NvidiaTab::showCurveTransactions() {
 bool NvidiaTab::runHelper(const QJsonObject &payload, const QString &okMsg, const QString &failMsg, Done done) {
     if (!qEnvironmentVariableIsEmpty("CENTURION_NVCURVE_FAKE")) { log(tr("Hardware operations are disabled for the curve fixture.")); return false; }
     if (busy_) { log("⏳ Another operation is still running — please wait."); return false; }
+    finishObserved();
     clearCurveHistory();
     setBusy(true);
     const QString op = payload.value("op").toString();
@@ -1053,6 +1073,10 @@ void NvidiaTab::takeGpuPoints(const QJsonArray &pts, bool keepOffsets) {
     readOffsets_ = keepOffsets ? offs : QHash<int, int>();
     vf_->setPoints({});  // force re-fit for the new base
     resetGraphToLastRead();
+    coverageCurveKey_ = vfcoverage::fingerprint(readGpuDevice_, pts);
+    coverageClocks_.assign(freqs.begin(), freqs.end());
+    coverageGraph_ = vf_->points();
+    restoreObserved();
     vf_->fitAxes();
 }
 
@@ -1109,6 +1133,7 @@ void NvidiaTab::recompute() {
     pts.reserve(base_.size());
     for (int i = 0; i < base_.size(); ++i) pts.append(QPointF(base_[i].x(), std::max(0, int(base_[i].y()) + offsetOf(i))));
     vf_->setPoints(pts);
+    updateObservedOverlay();
 }
 
 int NvidiaTab::capSent() const {
@@ -1208,6 +1233,7 @@ void NvidiaTab::readCurve() {
     runHelper({{"op", "read_gpu_curve"}, {"request_id", t0}}, QString(), "Curve read failed", [this, t0](bool ok, const QJsonObject &) {
         readBtn_->setText("Read Curve");
         curveReadbackValid_ = false;
+        updateObservedOverlay();
         QJsonArray pts;
         if (!ok || !loadCurveFile("nvcurve_read.json", t0, &pts)) return;
         flatFrom_ = -1;
@@ -1332,6 +1358,7 @@ void NvidiaTab::applyOffsets() {
                {"expected_points", expectedPoints}, {"expected_device",deviceBefore}, {"profile_name", SCRATCH}, {"profile_data", data}},
               tr("Helper reported Apply completed; checking fresh readback."), "Apply failed", [this, t0, requested, baseBefore, flatFrom, idsBefore, voltsBefore, gpuBefore, deviceBefore](bool ok, const QJsonObject &) {
         curveReadbackValid_ = false;
+        updateObservedOverlay();
         QJsonArray pts;
         if (ok) { clearCurveHistory(); trial_->offer([this] { revertTrial(); }); }
         QJsonObject result;
@@ -1375,6 +1402,7 @@ void NvidiaTab::resetCurveImpl(bool fromTrial) {
     runHelper({{"op", "reset_gpu_curve"}, {"request_id", t0}, {"origin", fromTrial ? QStringLiteral("trial") : QStringLiteral("manual")}}, "Reset successful.", "Reset failed", [this, t0](bool ok, const QJsonObject &) {
         resetBtn_->setText("Reset Curve");
         curveReadbackValid_ = false;
+        updateObservedOverlay();
         if (!ok) return;
         flatFrom_ = -1;
         profiles_->setCurrentIndex(-1);
@@ -1553,6 +1581,7 @@ void NvidiaTab::applyNamedProfile(const QString &name) {
     runHelper({{"op", "apply_named_profile"}, {"request_id", t0}, {"name", name}}, QString(), "Could not apply '" + name + "'",
               [this, t0, name](bool ok, const QJsonObject &) {
         curveReadbackValid_ = false;
+        updateObservedOverlay();
         if (!ok) return;
         trial_->offer([this] { revertTrial(); });
         selectProfile(name);        // tray quick-apply: the box still showed the previous pick
@@ -1618,13 +1647,120 @@ void NvidiaTab::reportClamping(const QVector<QPointF> &baseBefore, const QHash<i
                        "clock. Core cap holds the flat top instead (flatten fills it in; Apply Offsets and the profile include it).").arg(lowestGot));
 }
 
+static QString coverageHistoryPath() {
+    return diagsrc::dataDir() + QStringLiteral("/vf-coverage-v1.json");
+}
+
+bool NvidiaTab::matchesCoverageGpu() const {
+    return nvml_ && !nvml_->uuid().isEmpty()
+        && nvml_->uuid().compare(readGpuDevice_.value("uuid").toString(), Qt::CaseInsensitive) == 0;
+}
+
+void NvidiaTab::updateObservedOverlay() {
+    const bool same = curveReadbackValid_ && matchesCoverageGpu() && !coverageCurveKey_.isEmpty()
+        && observed_.curve == coverageCurveKey_ && vf_->points() == coverageGraph_;
+    const auto &counts = observed_.coverage.counts;
+    vf_->setObservedCounts(same ? QVector<int>(counts.begin(), counts.end()) : QVector<int>{});
+}
+
+void NvidiaTab::restoreObserved() {
+    observed_ = {};
+    if (!coverageCurveKey_.isEmpty()) {
+        if (const auto history = vfcoverage::loadHistory(coverageHistoryPath())) {
+            for (auto it = history->crbegin(); it != history->crend(); ++it) {
+                if (it->curve != coverageCurveKey_ || it->voltages != pointVoltages_) continue;
+                observed_ = *it;
+                log(tr("Restored V/F coverage from %1. Voltage is estimated from the curve.")
+                        .arg(observed_.started.toLocalTime().toString(Qt::ISODate)));
+                break;
+            }
+        }
+    }
+    updateObservedOverlay();
+}
+
+void NvidiaTab::finishObserved() {
+    if (!observeTimer_ || !observeTimer_->isActive()) return;
+    observeTimer_->stop();
+    { const QSignalBlocker blocker(observeButton_); observeButton_->setChecked(false); }
+    const auto &coverage = observed_.coverage;
+    if (!coverage.samples) return;
+    if (!vfcoverage::saveSession(coverageHistoryPath(), observed_))
+        log(tr("Could not save the V/F coverage session."));
+    log(tr("Used region: %1 sample(s) on %2 curve point(s), points %3–%4. Voltage is estimated.")
+        .arg(coverage.samples).arg(coverage.observedPoints()).arg(coverage.lowest()).arg(coverage.highest()));
+}
+
 void NvidiaTab::sampleObserved() {
-    if (!nvml_ || vf_->points().isEmpty()) return;
+    if (!curveReadbackValid_ || !matchesCoverageGpu()) {
+        finishObserved();
+        return;
+    }
     const auto clock = nvml_->clock(0);
-    if (!clock) return;
-    std::vector<double> mhz;
-    mhz.reserve(vf_->points().size());
-    for (const auto &pt : vf_->points()) mhz.push_back(pt.y());
-    observed_ = vfcoverage::add(observed_, mhz, double(*clock));
-    vf_->setObservedCounts(QVector<int>(observed_.counts.begin(), observed_.counts.end()));
+    if (!clock || !*clock) return;
+    observed_.coverage = vfcoverage::add(std::move(observed_.coverage), coverageClocks_, double(*clock));
+    updateObservedOverlay();
+    if (observed_.coverage.samples >= vfcoverage::MaxSamples) finishObserved();
+}
+
+void NvidiaTab::showCoverageHistory() {
+    const auto history = vfcoverage::loadHistory(coverageHistoryPath());
+    if (!history || history->isEmpty()) {
+        QMessageBox::information(this, tr("V/F coverage history"), history
+            ? tr("No saved V/F coverage sessions.") : tr("The V/F coverage history could not be read."));
+        return;
+    }
+    QDialog dialog(this);
+    dialog.setWindowTitle(tr("V/F coverage history"));
+    dialog.resize(680, 520);
+    auto *layout = new QVBoxLayout(&dialog);
+    auto *note = new QLabel(tr("Voltage is estimated from the last confirmed curve. Point shares can be compared for recordings of the same GPU and curve."));
+    note->setWordWrap(true);
+    layout->addWidget(note);
+    auto *first = new QComboBox;
+    auto *second = new QComboBox;
+    first->setAccessibleName(tr("First recording"));
+    second->setAccessibleName(tr("Second recording"));
+    for (auto it = history->crbegin(); it != history->crend(); ++it) {
+        const auto summary = tr("%1 · %2 samples · %3 points")
+            .arg(it->started.toLocalTime().toString(Qt::ISODate))
+            .arg(it->coverage.samples).arg(it->coverage.observedPoints());
+        first->addItem(summary);
+        second->addItem(summary);
+    }
+    second->setCurrentIndex(std::min(1, second->count() - 1));
+    layout->addWidget(first);
+    layout->addWidget(second);
+    auto *output = new QPlainTextEdit;
+    output->setReadOnly(true);
+    layout->addWidget(output);
+    const auto compare = [&] {
+        const auto &a = history->at(history->size() - 1 - first->currentIndex());
+        const auto &b = history->at(history->size() - 1 - second->currentIndex());
+        const auto describe = [this](const vfcoverage::Session &s) {
+            const auto [lo, hi] = vfcoverage::estimatedRange(s);
+            return tr("%1 samples · %2 points · estimated range %3–%4 mV").arg(s.coverage.samples)
+                .arg(s.coverage.observedPoints()).arg(lo / 1000.0, 0, 'f', 1).arg(hi / 1000.0, 0, 'f', 1);
+        };
+        QStringList lines{describe(a), describe(b), QString()};
+        if (!vfcoverage::comparable(a, b)) {
+            lines << tr("The GPU or curve differs. Point shares cannot be compared.");
+        } else {
+            lines << tr("Estimated voltage · first recording share · second recording share");
+            for (qsizetype i = 0; i < a.voltages.size(); ++i) {
+                const int n = a.coverage.counts.at(i), m = b.coverage.counts.at(i);
+                if (!n && !m) continue;
+                lines << tr("Point %1 · %2 mV · %3% · %4%").arg(i).arg(a.voltages.at(i) / 1000.0, 0, 'f', 1)
+                    .arg(100.0 * n / a.coverage.samples, 0, 'f', 1).arg(100.0 * m / b.coverage.samples, 0, 'f', 1);
+            }
+        }
+        output->setPlainText(lines.join(QLatin1Char('\n')));
+    };
+    connect(first, &QComboBox::currentIndexChanged, &dialog, compare);
+    connect(second, &QComboBox::currentIndexChanged, &dialog, compare);
+    compare();
+    auto *buttons = new QDialogButtonBox(QDialogButtonBox::Close);
+    connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+    layout->addWidget(buttons);
+    dialog.exec();
 }

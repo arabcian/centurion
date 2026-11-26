@@ -596,26 +596,29 @@ void inspectEdid(QWidget *parent, const diag::Table &bytes, const QString &conne
         QStringList lines; for (int i=0;i<capture.size();i+=16) lines << QStringLiteral("0x%1  %2").arg(i,4,16,QLatin1Char('0')).arg(QString::fromLatin1(capture.mid(i,16).toHex(' ')).toUpper());
         raw->setPlainText(lines.join(QLatin1Char('\n')));
         auto decoded=diagnostictools::decodeEdid(capture);
-        auto timings=edidfields::detailedTimings(data);
+        auto timings=edidfields::advertisedTimings(data);
         // The source reads one extra byte to detect a cap. A frozen report stores
         // at most 4096 bytes, so it cannot prove completeness at the cap.
         if (capture.size()>=4096 || !decoded.structuralValid) { timings.clear(); decoded.vrrMin=decoded.vrrMax=0; }
         QString status=decoded.vrrMax>0 ? tr("Explicit VRR: %1–%2 Hz (%3)").arg(decoded.vrrMin).arg(decoded.vrrMax).arg(decoded.vrrSource)
             : tr("Explicit VRR range unavailable; a general refresh range is not VRR evidence.");
-        status+=QStringLiteral("\n")+tr("The table lists verified base, CTA and supported DisplayID detailed timings. The plot shows progressive timings and the explicit VRR range.");
+        status+=QStringLiteral("\n")+tr("The table shows decoded EDID timings. Formula-based entries show their nominal rate. The plot shows progressive detailed timings and the explicit VRR range.");
         summary->setText(status); plot->setAccessibleName(status);
         timingTree->clear();
         for (const auto &t: timings) {
+            const auto unavailable = QStringLiteral("—");
+            const bool geometry = t.hasGeometry();
             auto *item=new QTreeWidgetItem(timingTree,{QStringLiteral("0x%1").arg(qulonglong(t.offset),4,16,QLatin1Char('0')),
                 t.interlaced ? tr("Interlaced") : tr("Progressive"),
                 QStringLiteral("%1 × %2").arg(t.hActive).arg(t.frameActiveLines()),
-                QStringLiteral("%1 × %2").arg(t.hActive+t.hBlank).arg(t.frameTotalLines()),
-                QString::number(t.pixelClockKHz/1000.0,'f',3),QString::number(t.refreshHz(),'f',2),
+                geometry ? QStringLiteral("%1 × %2").arg(t.hActive+t.hBlank).arg(t.frameTotalLines()) : unavailable,
+                geometry ? QString::number(t.pixelClockKHz/1000.0,'f',3) : unavailable,
+                geometry ? QString::number(t.refreshHz(),'f',2) : tr("%1 (nominal)").arg(t.nominalRefreshHz),
                 t.interlaced ? QString::number(2*t.refreshHz(),'f',2) : QStringLiteral("—"), diagnostictools::edidTimingSource(t.source)});
             item->setData(0,Qt::UserRole,int(t.offset));
             item->setData(0,Qt::UserRole + 1,int(t.length));
         }
-        std::erase_if(timings, [](const edidfields::Timing &timing) { return timing.interlaced; });
+        std::erase_if(timings, [](const edidfields::Timing &timing) { return timing.interlaced || !timing.hasGeometry(); });
         plot->setData(std::move(timings),decoded.vrrMin,decoded.vrrMax);
         update();
     };

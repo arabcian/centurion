@@ -269,11 +269,9 @@ fn preflight_profile(gpu_index: usize, p: &ProfileData, cfg: &Config,
     if let Some((from, mhz)) = p.flatten() {
         flatten_guard::verify_flatten_preflight_detailed(&state, &confirmation, from, mhz, &deltas)
             .map_err(|e| { invalid_points.extend(e.indices); format!("Flatten safety preflight: {}", e.message) })?;
-    } else {
-        if confirmation.points.len() != state.points.len() || state.points.iter().zip(&confirmation.points)
-            .any(|(p, q)| p.index != q.index || p.domain != q.domain || p.volt_uv != q.volt_uv || p.delta_khz != q.delta_khz) {
-            return Err("V/F points changed during preflight".into());
-        }
+    } else if confirmation.points.len() != state.points.len() || state.points.iter().zip(&confirmation.points)
+        .any(|(p, q)| p.index != q.index || p.domain != q.domain || p.volt_uv != q.volt_uv || p.delta_khz != q.delta_khz) {
+        return Err("V/F points changed during preflight".into());
     }
     // Another tool may not honor /run/nvcurve.lock. Re-read exact CT deltas
     // immediately before writing; abort without rollback when already stale.

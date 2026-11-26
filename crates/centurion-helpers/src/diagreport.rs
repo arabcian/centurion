@@ -20,6 +20,7 @@
 use crate::health;
 use crate::overview;
 use serde_json::{json, Value};
+use std::collections::BTreeSet;
 use std::ffi::CString;
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::os::unix::ffi::OsStrExt;
@@ -39,6 +40,8 @@ const LINES: usize = 200;
 const SNAPSHOT_MAX: u64 = 32 << 20;
 /// Text shown per file in the preview (the archive keeps everything).
 const PREVIEW_BYTES: usize = 32 << 10;
+const MAX_FIELDS: usize = 128;
+const MAX_FIELD_BYTES: usize = 256;
 
 /// Where the inputs live. The system paths are the real ones; tests point them at temp folders.
 pub struct Sources {
@@ -81,6 +84,8 @@ fn is_placeholder(v: &str) -> bool {
 }
 
 const IDENTITY_KEYS: [&str; 3] = ["serial", "uuid", "asset tag"];
+const TEXT_PRIVATE_KEYS: [&str; 10] = ["ssid", "bssid", "hostname", "machine_id", "machine-id",
+    "password", "access_token", "client_secret", "session_token", "authorization"];
 
 /// "Serial Number: X", "UUID=X", "POWER_SUPPLY_SERIAL_NUMBER=X", "…  uuid: X": the first word after the
 /// ':' or '=' that follows a serial/UUID/asset-tag key becomes <hidden>. Placeholders stay visible.
@@ -92,23 +97,40 @@ fn mask_serials(text: &str) -> (String, u64) {
         // Lowercasing ASCII keeps every byte offset, so offsets found here index `line` too.
         let low = line.to_ascii_lowercase();
         let mut spans: Vec<(usize, usize)> = Vec::new();
-        for key in IDENTITY_KEYS {
+        for (key, exact) in IDENTITY_KEYS.map(|key| (key, false)).into_iter()
+            .chain(TEXT_PRIVATE_KEYS.map(|key| (key, true))) {
             let mut from = 0;
             while let Some(p) = low[from..].find(key) {
-                let after = from + p + key.len();
+                let start = from + p;
+                let after = start + key.len();
                 from = after;
-                let Some(sep) = low[after..].find([':', '=']).map(|i| after + i) else { break };
+                let sep = if exact {
+                    let part = low[after..].trim_start_matches([' ', '\t']);
+                    if start > 0 && (low.as_bytes()[start - 1].is_ascii_alphanumeric()
+                        || b"_-".contains(&low.as_bytes()[start - 1])) { continue; }
+                    if !part.starts_with([':', '=']) { continue; }
+                    low.len() - part.len()
+                } else {
+                    let Some(sep) = low[after..].find([':', '=']).map(|i| after + i) else { break };
+                    sep
+                };
                 // The value ends at a space or at JSON / list punctuation, so a log record stays well formed.
-                let rest = line[sep + 1..].trim_start_matches(|c: char| c.is_whitespace() || c == '"' || c == '\'');
+                let rest = if exact { line[sep + 1..].trim_start_matches([' ', '\t']) }
+                    else { line[sep + 1..].trim_start_matches(|c: char| c.is_whitespace() || c == '"' || c == '\'') };
                 let word = |s: &str| s.find(|c: char| c.is_whitespace() || "\"',;}])|".contains(c)).unwrap_or(s.len());
                 let mut token_len = word(rest);
                 let token = &rest[..token_len];
                 let placeholder = is_placeholder(token) || is_placeholder(rest.trim_end())
                     || rest.starts_with("Not ") || rest.starts_with("To Be Filled") || rest.starts_with("Default ");
-                if token_len == 0 || placeholder { continue; }
+                if !exact && (token_len == 0 || placeholder) { continue; }
                 // "Serial Number: ABC DEF": after ':' the value runs on over single spaces, up to a double
                 // space, punctuation or the next "key:" / "key=". After '=' (cmdline, uevent) it is one word.
-                if line.as_bytes()[sep] == b':' {
+                if exact {
+                    // Values can contain spaces and delimiter characters. Stop at the line boundary.
+                    token_len = rest.find(['\r', '\n']).unwrap_or(rest.len());
+                    token_len = rest[..token_len].trim_end().len();
+                    if token_len == 0 || &rest[..token_len] == "<hidden>" { continue; }
+                } else if line.as_bytes()[sep] == b':' {
                     while let Some(next) = rest[token_len..].strip_prefix(' ').filter(|n| !n.starts_with(char::is_whitespace)) {
                         let w = &next[..word(next)];
                         if w.is_empty() || w.ends_with(':') || w.contains('=') { break; }
@@ -431,11 +453,12 @@ fn read_trim(p: &Path) -> Option<String> {
     let mut data = Vec::new();
     file.take(4097).read_to_end(&mut data).ok()?;
     if data.len() > 4096 { return None; }
-    String::from_utf8(data).ok().map(|s| s.trim().to_owned()).filter(|s| !s.is_empty())
+    String::from_utf8(data).ok().map(|s| s.trim().replace(['\r', '\n'], " ")).filter(|s| !s.is_empty())
 }
 
 fn system_text(src: &Sources, version: &str, now: i64, offset: i64) -> String {
     let dmi = |f: &str| read_trim(&src.dmi.join(f)).unwrap_or_else(|| "—".to_owned());
+    let version = version.replace(['\r', '\n'], " ");
     format!(
         "Centurion {version}\nkernel {}\nNVIDIA driver {}\nproduct {} / {}\nboard {}\nsys_vendor {}\nbios {}\ngenerated {} (local date)\n",
         read_trim(&src.release).unwrap_or_else(|| "—".to_owned()),
@@ -464,12 +487,12 @@ Files
 
 Best-effort redaction before saving (not a guarantee of anonymity)
   boot IDs and known private fields      -> <hidden>
-  serial numbers, UUIDs and asset tags   -> <hidden>
+  serial numbers, UUIDs and asset tags   -> <hidden>\n  labelled SSIDs and credentials        -> <hidden>
   MAC addresses                          -> <mac>
   IPv4 and IPv6 addresses                -> <ip>
   user names in home-folder paths        -> <user>
   kernel addresses                       -> <addr>
-Only selected files with matching preview digests are archived.
+Only selected files with matching preview digests are archived.\nSystem details and structured files can be limited to selected fields.
 Logs are bounded tails. Malformed sleep records are omitted.
 Long files are shown in pages when a saved snapshot is available.
 Look through the files before you attach them anywhere public.
@@ -514,21 +537,134 @@ fn preview_page(text: &str, page: usize) -> &str {
     &text[start..end]
 }
 
-/// The file list and each file's text, cut to PREVIEW_BYTES on a character boundary.
+// JSON paths skip array indices so one choice applies to every record.
+fn field_path(parent: &str, key: &str) -> String {
+    format!("{parent}/{}", key.replace('~', "~0").replace('/', "~1"))
+}
+
+fn field_paths(value: &Value, path: &str, fields: &mut BTreeSet<String>) -> bool {
+    if path.len() > MAX_FIELD_BYTES { return false; }
+    match value {
+        Value::Object(map) if !map.is_empty() => map.iter().all(|(k, v)| field_paths(v, &field_path(path, k), fields)),
+        Value::Array(items) if !items.is_empty() => items.iter().all(|v| field_paths(v, path, fields)),
+        _ if !path.is_empty() => {
+            fields.insert(path.to_owned());
+            fields.len() <= MAX_FIELDS
+        }
+        _ => true,
+    }
+}
+
+fn select_json(value: Value, path: &str, fields: &BTreeSet<String>) -> Option<Value> {
+    match value {
+        Value::Object(map) if !map.is_empty() => {
+            let filtered: serde_json::Map<_, _> = map.into_iter().filter_map(|(key, value)| {
+                let child = select_json(value, &field_path(path, &key), fields)?;
+                Some((key, child))
+            }).collect();
+            (!filtered.is_empty()).then_some(Value::Object(filtered))
+        }
+        Value::Array(items) if !items.is_empty() => {
+            let filtered: Vec<_> = items.into_iter().filter_map(|v| select_json(v, path, fields)).collect();
+            (!filtered.is_empty()).then_some(Value::Array(filtered))
+        }
+        value => fields.contains(path).then_some(value),
+    }
+}
+
+const SYSTEM_FIELDS: [&str; 8] = ["Centurion", "kernel", "NVIDIA driver", "product", "board", "sys_vendor", "bios", "generated"];
+
+enum FieldData<'a> { System(Vec<&'a str>), Json(Value), Sleep(Value) }
+
+impl<'a> FieldData<'a> {
+    fn read(entry: &'a Entry) -> Option<Self> {
+        if entry.status != "included" { return None; }
+        if entry.name == "system.txt" {
+            let lines: Vec<_> = entry.text.lines().collect();
+            return (lines.len() == SYSTEM_FIELDS.len() && lines.iter().zip(SYSTEM_FIELDS).all(|(line, field)|
+                line.strip_prefix(field).is_some_and(|v| v.starts_with(' ')))).then_some(Self::System(lines));
+        }
+        if entry.name == "sleep.log" {
+            let records: Vec<Value> = entry.text.lines().map(serde_json::from_str).collect::<Result<_, _>>().ok()?;
+            return Some(Self::Sleep(Value::Array(records)));
+        }
+        entry.name.ends_with(".json").then(|| serde_json::from_str(&entry.text).ok().map(Self::Json)).flatten()
+    }
+
+    fn fields(&self) -> BTreeSet<String> {
+        let mut fields = BTreeSet::new();
+        match self {
+            Self::System(_) => fields.extend(SYSTEM_FIELDS.map(str::to_owned)),
+            Self::Json(value) | Self::Sleep(value) => {
+                if !field_paths(value, "", &mut fields) { fields.clear(); }
+            }
+        }
+        fields
+    }
+
+    fn project(self, fields: &BTreeSet<String>) -> Option<String> {
+        match self {
+            Self::System(lines) => Some(lines.into_iter().zip(SYSTEM_FIELDS)
+                .filter(|(_, field)| fields.contains(*field)).map(|(line, _)| format!("{line}\n")).collect()),
+            Self::Json(value) => serde_json::to_string(&select_json(value, "", fields)?).ok(),
+            Self::Sleep(value) => {
+                let Value::Array(records) = select_json(value, "", fields)? else { return None };
+                let mut text = String::new();
+                for record in records {
+                    text.push_str(&serde_json::to_string(&record).ok()?);
+                    text.push('\n');
+                }
+                Some(text)
+            }
+        }
+    }
+}
+
+fn project_entry(entry: &mut Entry, requested: Option<&Value>) -> Result<(), &'static str> {
+    let Some(requested) = requested else { return Ok(()) };
+    let choices = requested.as_array().filter(|v| !v.is_empty() && v.len() <= MAX_FIELDS).ok_or("invalid field selection")?;
+    let data = FieldData::read(entry).ok_or("file does not support field selection")?;
+    let available = data.fields();
+    let mut selected = BTreeSet::new();
+    for field in choices {
+        let name = field.as_str().ok_or("invalid selected field")?;
+        if !available.contains(name) || !selected.insert(name.to_owned()) { return Err("unknown or duplicate selected field"); }
+    }
+    if selected != available {
+        entry.text = data.project(&selected).ok_or("could not select report fields")?;
+    }
+    Ok(())
+}
+
+fn file_preview(e: &Entry) -> Value {
+    let first = preview_page(&e.text, 0);
+    let mut file = json!({"name": e.name, "status": e.status, "bytes": e.text.len(), "masked": e.masked,
+                          "sha256": content_digest(&e.text), "truncated": first.len() < e.text.len(), "text": first});
+    if e.status == "included" && first.len() < e.text.len() {
+        let digests: Vec<_> = (0..e.text.len().div_ceil(PREVIEW_BYTES))
+            .map(|page| content_digest(preview_page(&e.text, page))).collect();
+        file["page_sha256"] = json!(digests);
+    }
+    file
+}
+
 fn preview(entries: &[Entry]) -> Value {
-    let files: Vec<Value> = entries.iter().map(|e| {
-        let first = preview_page(&e.text, 0);
-        let mut file = json!({"name": e.name, "status": e.status, "bytes": e.text.len(), "masked": e.masked,
-                             "sha256": content_digest(&e.text), "truncated": first.len() < e.text.len(), "text": first});
-        if e.status == "included" && first.len() < e.text.len() {
-            let digests: Vec<_> = (0..e.text.len().div_ceil(PREVIEW_BYTES))
-                .map(|page| content_digest(preview_page(&e.text, page))).collect();
-            file["page_sha256"] = json!(digests);
+    let files: Vec<Value> = entries.iter().map(|entry| {
+        let mut file = file_preview(entry);
+        if let Some(fields) = FieldData::read(entry).map(|data| data.fields()).filter(|fields| fields.len() > 1) {
+            file["fields"] = json!(fields);
         }
         file
     }).collect();
     let masked: u64 = entries.iter().map(|e| e.masked).sum();
     json!({"ok": true, "preview_schema": 2, "files": files, "masked": masked})
+}
+
+fn projected_preview(entries: Vec<Entry>, selection: &Value) -> Result<Value, &'static str> {
+    let name = selection["name"].as_str().ok_or("invalid selected file")?;
+    let mut entry = entries.into_iter().find(|e| e.name == name).ok_or("selected report file unavailable")?;
+    project_entry(&mut entry, selection.get("fields"))?;
+    Ok(file_preview(&entry))
 }
 
 fn content_digest(text: &str) -> String {
@@ -545,13 +681,14 @@ fn reviewed_entries(entries: Vec<Entry>, req: &Value) -> Result<Vec<Entry>, &'st
     for value in selection {
         let name = value["name"].as_str().ok_or("invalid selected file")?;
         let digest = value["sha256"].as_str().ok_or("missing preview digest")?;
-        if name.len() > 128 || digest.len() != 64 || !digest.bytes().all(|b| b.is_ascii_hexdigit()) || selected.insert(name, digest).is_some() {
+        if name.len() > 128 || digest.len() != 64 || !digest.bytes().all(|b| b.is_ascii_hexdigit()) || selected.insert(name, (digest, value.get("fields"))).is_some() {
             return Err("invalid or duplicate selected file");
         }
     }
     let mut result = Vec::new();
-    for entry in entries {
-        if let Some(digest) = selected.remove(entry.name.as_str()) {
+    for mut entry in entries {
+        if let Some((digest, fields)) = selected.remove(entry.name.as_str()) {
+            project_entry(&mut entry, fields)?;
             if entry.status != "included" || content_digest(&entry.text) != digest {
                 return Err("report contents changed after preview; reopen the report and review again");
             }
@@ -718,6 +855,15 @@ pub fn request(req: &Value) -> Value {
     if (out.is_some() || snapshot.is_some()) && unsafe { libc::geteuid() } == 0 {
         return json!({"ok": false, "error": "the report is written as the user, not as root"});
     }
+    if let Some(selection) = req.get("edit_fields") {
+        let error = |message| json!({"ok": false, "error": message});
+        if out.is_some() { return error("field preview cannot write an archive"); }
+        let Some(entries) = snapshot.and_then(thaw_entries) else { return error("invalid or missing report snapshot"); };
+        return match projected_preview(entries, selection) {
+            Ok(file) => json!({"ok": true, "file": file}),
+            Err(message) => error(message),
+        };
+    }
     let (now, offset) = overview::local_clock();
     let entries = if let (Some(_), Some(snapshot)) = (out, snapshot) {
         match thaw_entries(snapshot) {
@@ -741,6 +887,9 @@ pub fn request(req: &Value) -> Value {
             response
         }
         Some(out) => {
+            if snapshot.is_none() && req["selected"].as_array().is_some_and(|items| items.iter().any(|item| item.get("fields").is_some())) {
+                return json!({"ok": false, "error": "field selection requires a frozen report preview"});
+            }
             let entries = match reviewed_entries(entries, req) {
                 Ok(entries) => entries,
                 Err(error) => return json!({"ok": false, "error": error}),
@@ -768,6 +917,9 @@ mod tests {
     #[test]
     fn overlapping_identity_values_are_masked_in_full() {
         assert_eq!(mask_serials("serial=uuid:alpha beta | end"), ("serial=<hidden> | end".to_owned(), 1));
+        assert_eq!(mask_serials("SSID=Private | home network\nssid_counter=9\n"),
+                   ("SSID=<hidden>\nssid_counter=9\n".to_owned(), 1));
+
     }
 
     fn temp(tag: &str) -> PathBuf {
@@ -849,6 +1001,11 @@ mod tests {
         std::fs::write(logs.join("sleep.log"), "{\"start\": 1, \"end\": 2, \"woke_by\": \"serial=SN-SECRET-3\"}\n").unwrap();
         std::fs::write(logs.join("writes.log"), "Asset Tag: AT-SECRET-4\n").unwrap();
         std::fs::write(lib.join("exposure.json"), "{\"boots\": [{\"boot\": \"x\", \"start\": 1, \"note\": \"UUID: uuid-secret-5\"}]}").unwrap();
+        std::fs::write(state.join("health.log.1"), "boot=previous seq=9 SSID=ARCHIVE-SECRET | old\n").unwrap();
+        std::fs::write(state.join("kernel.log.1"), "old kernel UUID: uuid-secret-rotated\n").unwrap();
+        for (name, key) in [("cooling.json", "serial_number"), ("battery.json", "machine_id"), ("dgpu.json", "uuid")] {
+            std::fs::write(state.join(name), format!(r#"{{"{key}":"JSON-SECRET","sample":42}}"#)).unwrap();
+        }
         std::fs::write(dmi.join("product_name"), "16ARX8\n").unwrap();
         std::fs::write(dmi.join("product_serial"), "SN-SECRET-6\n").unwrap();
         let src = Sources { state, log_dir: logs, lib_dir: lib, dmi, release: root.join("none"), nvidia_version: root.join("none") };
@@ -857,9 +1014,15 @@ mod tests {
         let names: Vec<&str> = entries.iter().map(|e| e.name.as_str()).collect();
         assert!(names.contains(&"system.txt") && names.contains(&"exposure.json"));
         assert!(!names.contains(&"dgpu.json"), "no dGPU section unless asked for");
-        assert_eq!(entries.iter().find(|e| e.name == "battery.json").unwrap().status, "not present");
+        for name in ["health.log.1", "kernel.log.1", "cooling.json", "battery.json", "dgpu-usage.json"] {
+            let file = entries.iter().find(|e| e.name == name).unwrap();
+            assert_eq!(file.status, "included", "{name}");
+            assert!(file.masked > 0, "{name}");
+        }
+        let dgpu_status = entry("dgpu.json", "included", Some(r#"{"gpu_uuid":"JSON-SECRET","runtime_status":"active"}"#.into()));
+        assert!(dgpu_status.text.contains("<hidden>") && !dgpu_status.text.contains("JSON-SECRET"));
         for e in &entries {
-            for secret in ["SN-SECRET", "uuid-secret", "aa:bb:cc:dd:ee:ff", "203.0.113.7", "AT-SECRET"] {
+            for secret in ["SN-SECRET", "uuid-secret", "aa:bb:cc:dd:ee:ff", "203.0.113.7", "AT-SECRET", "JSON-SECRET", "ARCHIVE-SECRET"] {
                 assert!(!e.text.contains(secret), "{} still has {secret}", e.name);
             }
         }
@@ -999,6 +1162,75 @@ mod tests {
         std::fs::write(&snapshot, br#"[["source.log","tampered"]]"#).unwrap();
         assert!(reviewed_entries(thaw_entries(&snapshot).unwrap(), &req).is_err());
         std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn field_preview_paging_and_archive_use_identical_bytes() {
+        let root = temp("field-projection");
+        let snapshot = root.join("snapshot.json");
+        let file = "exposure.json";
+        let big = "abé".repeat(PREVIEW_BYTES);
+        let entries = [entry(file, "included", Some(json!({"boots": [
+            {"boot":"BOOT-SECRET", "text":big, "private":"do not share"},
+            {"boot":"OTHER-SECRET", "a/b":1, "a~b":2}
+        ]}).to_string()))];
+        freeze_entries(&snapshot, &entries).unwrap();
+        let catalog = preview(&entries);
+        assert_eq!(catalog["files"][0]["fields"], json!(["/boots/a~0b", "/boots/a~1b", "/boots/boot", "/boots/private", "/boots/text"]));
+        let mut selection = json!({"name":file,"fields":["/boots/text","/boots/a~1b","/boots/boot"]});
+        let filtered = projected_preview(thaw_entries(&snapshot).unwrap(), &selection).unwrap();
+        if unsafe { libc::geteuid() } != 0 {
+            let reply = request(&json!({"snapshot":snapshot, "edit_fields":selection}));
+            assert_eq!(reply["file"], filtered, "{reply}");
+        }
+        selection["sha256"] = filtered["sha256"].clone();
+        assert_eq!(filtered["truncated"], true);
+        let req = json!({"snapshot":snapshot, "preview_schema":2, "selected":[selection], "page":1});
+        let checked = reviewed_entries(thaw_entries(&snapshot).unwrap(), &req).unwrap();
+        assert_eq!(serde_json::from_str::<Value>(&checked[0].text).unwrap(),
+            json!({"boots":[{"boot":"<hidden>","text":big},{"a/b":1,"boot":"<hidden>"}]}));
+        assert_eq!(filtered["text"], preview_page(&checked[0].text, 0));
+        if unsafe { libc::geteuid() } != 0 {
+            let p = page_request(&req);
+            assert_eq!(p["text"], preview_page(&checked[0].text, 1), "{p}");
+        }
+        let out = root.join("projected.tar.gz");
+        if unsafe { libc::geteuid() } != 0 {
+            let mut save = req.clone();
+            save["out"] = json!(out);
+            let reply = request(&save);
+            assert_eq!(reply["ok"], true, "{reply}");
+        } else {
+            write_archive(&checked, "projected", &out).unwrap();
+        }
+        let body = Command::new("/usr/bin/tar").arg("-xzOf").arg(&out).output().unwrap();
+        assert!(body.status.success());
+        assert_eq!(body.stdout, checked[0].text.as_bytes());
+
+        for fields in [json!([]), json!(["/not_available"]), json!(["/boots/text","/boots/text"]), json!(["/boots/private"]), Value::Null] {
+            let mut wrong = req.clone();
+            wrong["selected"][0]["fields"] = fields;
+            assert!(reviewed_entries(thaw_entries(&snapshot).unwrap(), &wrong).is_err());
+        }
+        let mut wrong = req.clone();
+        wrong["selected"][0].as_object_mut().unwrap().remove("fields");
+        assert!(reviewed_entries(thaw_entries(&snapshot).unwrap(), &wrong).is_err());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn fields_can_be_removed_from_system_details_and_sleep_records() {
+        let mut system = entry("system.txt", "included", Some(
+            SYSTEM_FIELDS.map(|field| format!("{field} value\n")).join("")));
+        project_entry(&mut system, Some(&json!(["kernel", "NVIDIA driver"]))).unwrap();
+        assert_eq!(system.text, "kernel value\nNVIDIA driver value\n");
+        let mut sleep = entry("sleep.log", "included", Some(concat!(
+            r#"{"start":42,"boot":"secret","wake":"key"}"#, "\nmalformed\n",
+            r#"{"start":43,"wake":"timer"}"#, "\n").to_owned()));
+        project_entry(&mut sleep, Some(&json!(["/start"]))).unwrap();
+        assert_eq!(sleep.text, "{\"start\":42}\n{\"start\":43}\n");
+        let mut text = entry("kernel.log", "included", Some("example\n".into()));
+        assert!(project_entry(&mut text, Some(&json!(["/line"]))).is_err());
     }
 
     #[test]

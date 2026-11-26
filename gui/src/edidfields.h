@@ -89,7 +89,10 @@ inline bool trusted(const Inspection &i) {
 }
 // Only complete, structurally trusted captures are eligible for decoded timings.
 // Unknown extension formats remain opaque.
-enum class TimingSource { Base, Cta, DisplayIdTypeI, DisplayIdTypeVII };
+enum class TimingSource {
+    Base, Cta, DisplayIdTypeI, DisplayIdTypeII, DisplayIdTypeIII, DisplayIdTypeV,
+    DisplayIdTypeVI, DisplayIdTypeVII, DisplayIdTypeIX, DisplayIdTypeX
+};
 struct Timing {
     std::size_t offset;
     unsigned hActive, hBlank, vActive, vBlank, pixelClockKHz;
@@ -97,6 +100,8 @@ struct Timing {
     TimingSource source = TimingSource::Base;
     std::size_t length = 18;
     bool preferred = false;
+    unsigned nominalRefreshHz = 0;
+    bool hasGeometry() const { return pixelClockKHz != 0; }
     bool fieldEncoded() const { return interlaced && (source == TimingSource::Base || source == TimingSource::Cta); }
     unsigned frameActiveLines() const { return fieldEncoded() ? 2 * vActive : vActive; }
     unsigned frameTotalLines() const {
@@ -104,34 +109,125 @@ struct Timing {
         // includes the additional line from the two half-line offsets.
         return fieldEncoded() ? 2 * (vActive + vBlank) + 1 : vActive + vBlank;
     }
-    double refreshHz() const { return double(pixelClockKHz) * 1000.0 / (double(hActive+hBlank)*frameTotalLines()); }
+    double refreshHz() const {
+        return hasGeometry() ? double(pixelClockKHz) * 1000.0 / (double(hActive+hBlank)*frameTotalLines()) : nominalRefreshHz;
+    }
 };
 inline void appendDisplayIdTimings(std::vector<Timing> &out, std::span<const std::uint8_t> data, const Field &f) {
+    using Source = TimingSource;
     const auto version = data[(f.offset / 128) * 128 + 1] >> 4;
-    const bool typeI = f.tag == 0x03 && version == 1;
-    const bool typeVII = f.tag == 0x22 && version == 2;
-    if (!typeI && !typeVII) return;
-    const std::size_t length = 20 + (typeVII ? (data[f.offset + 1] >> 4) & 7 : 0);
-    if ((f.length - 3) % length != 0) return;
-    const auto originalSize = out.size();
-    for (std::size_t pos = f.offset + 3; pos < f.offset + f.length; pos += length) {
+    const unsigned revision = data[f.offset + 1];
+    Source source;
+    std::size_t descriptorSize;
+    if (version == 1) {
+        switch (f.tag) {
+        case 0x03: source = Source::DisplayIdTypeI; descriptorSize = 20; break;
+        case 0x04: source = Source::DisplayIdTypeII; descriptorSize = 11; break;
+        case 0x05: source = Source::DisplayIdTypeIII; descriptorSize = 3; break;
+        case 0x11: source = Source::DisplayIdTypeV; descriptorSize = 7; break;
+        case 0x13: source = Source::DisplayIdTypeVI; descriptorSize = 14; break;
+        default: return;
+        }
+        if (revision > ((f.tag == 0x03 || f.tag == 0x05) ? 1u : 0u)) return;
+    } else {
+        switch (f.tag) {
+        case 0x22:
+            if ((revision & 0x87) > 2) return;
+            source = Source::DisplayIdTypeVII; descriptorSize = 20 + ((revision >> 4) & 7); break;
+        case 0x24:
+            if (revision != 0) return;
+            source = Source::DisplayIdTypeIX; descriptorSize = 6; break;
+        case 0x2a:
+            if (revision != 0 && revision != 0x10 && revision != 0x20) return;
+            source = Source::DisplayIdTypeX; descriptorSize = 6 + (revision >> 4); break;
+        default: return;
+        }
+    }
+
+    // Publish the block together so a truncated or invalid later descriptor
+    // cannot leave timings from the same malformed block behind.
+    std::vector<Timing> decoded;
+    const auto end = f.offset + f.length;
+    for (std::size_t pos = f.offset + 3; pos < end;) {
+        if (descriptorSize > end - pos) return;
+        auto length = descriptorSize;
+        if (source == Source::DisplayIdTypeVI && (data[pos + 2] & 0x40)) length += 3;
+        if (length > end - pos) return;
         const auto d = data.subspan(pos, length);
         const auto word = [&d](std::size_t i) { return unsigned(d[i]) | (unsigned(d[i + 1]) << 8); };
-        const auto clock = (1 + (word(0) | (unsigned(d[2]) << 16))) * (typeI ? 10u : 1u);
-        const auto hBlank = 1 + word(6), vBlank = 1 + word(14);
-        const auto hSyncEnd = 2 + (word(8) & 0x7fff) + word(10);
-        const auto vSyncEnd = 2 + (word(16) & 0x7fff) + word(18);
-        if (hSyncEnd > hBlank || vSyncEnd > vBlank) {
-            out.resize(originalSize);
-            return;
+        const auto stereoReserved = [](unsigned flags) { return (flags & 0x60) == 0x60; };
+        Timing t{pos, 0, 0, 0, 0, 0, false, source, length};
+        unsigned hSyncEnd = 0, vSyncEnd = 0;
+        switch (source) {
+        case Source::DisplayIdTypeI:
+        case Source::DisplayIdTypeVII:
+            if (stereoReserved(d[3])) return;
+            t.pixelClockKHz = (1 + (word(0) | (unsigned(d[2]) << 16))) * (source == Source::DisplayIdTypeI ? 10u : 1u);
+            t.hActive = 1 + word(4); t.hBlank = 1 + word(6);
+            t.vActive = 1 + word(12); t.vBlank = 1 + word(14);
+            hSyncEnd = 2 + (word(8) & 0x7fff) + word(10);
+            vSyncEnd = 2 + (word(16) & 0x7fff) + word(18);
+            t.interlaced = d[3] & 0x10;
+            t.preferred = (revision & 7) < 2 && (d[3] & 0x80);
+            break;
+        case Source::DisplayIdTypeII:
+            if (stereoReserved(d[3])) return;
+            t.pixelClockKHz = 10 * (1 + (word(0) | (unsigned(d[2]) << 16)));
+            t.hActive = 8 * (1 + (word(4) & 0x1ff)); t.hBlank = 8 * (1 + (d[5] >> 1));
+            t.vActive = 1 + (word(7) & 0xfff); t.vBlank = 1 + d[9];
+            hSyncEnd = 8 * (2 + (d[6] >> 4) + (d[6] & 15));
+            vSyncEnd = 2 + (d[10] >> 4) + (d[10] & 15);
+            t.interlaced = d[3] & 0x10; t.preferred = d[3] & 0x80;
+            break;
+        case Source::DisplayIdTypeVI:
+            if (stereoReserved(d[13])) return;
+            t.pixelClockKHz = 1 + (word(0) | (unsigned(d[2] & 0x3f) << 16));
+            t.hActive = 1 + (word(3) & 0x3fff); t.vActive = 1 + (word(5) & 0x3fff);
+            t.hBlank = 1 + (d[7] | (unsigned(d[9] & 15) << 8)); t.vBlank = 1 + d[11];
+            hSyncEnd = 2 + (d[8] | (unsigned(d[9] >> 4) << 8)) + d[10];
+            vSyncEnd = 2 + d[12] + (d[13] & 15);
+            t.interlaced = d[13] & 0x80; t.preferred = d[2] & 0x80;
+            break;
+        case Source::DisplayIdTypeIII: {
+            constexpr unsigned widths[] = {1, 5, 4, 15, 16, 16, 64, 256};
+            constexpr unsigned heights[] = {1, 4, 3, 9, 9, 10, 27, 135};
+            const unsigned ratio = d[0] & 15;
+            if (ratio > 8 || ((d[0] >> 4) & 7) > 1) return;
+            if (ratio == 8) { // Undefined aspect ratio leaves vertical active lines unknown.
+                pos += length;
+                continue;
+            }
+            t.hActive = 8 * (1 + d[1]); t.vActive = t.hActive * heights[ratio] / widths[ratio];
+            t.nominalRefreshHz = 1 + (d[2] & 127); t.preferred = d[0] & 0x80;
+            break;
         }
-        out.push_back({pos, 1 + word(4), hBlank, 1 + word(12), vBlank, clock, bool(d[3] & 0x10),
-            typeI ? TimingSource::DisplayIdTypeI : TimingSource::DisplayIdTypeVII, length,
-            (data[f.offset + 1] & 7) < 2 && bool(d[3] & 0x80)});
+        case Source::DisplayIdTypeV:
+            if (stereoReserved(d[0]) || (d[0] & 3) > 1) return;
+            t.hActive = 1 + word(2); t.vActive = 1 + word(4);
+            t.nominalRefreshHz = 1 + d[6]; t.preferred = d[0] & 0x80;
+            break;
+        case Source::DisplayIdTypeIX:
+        case Source::DisplayIdTypeX: {
+            const bool typeX = source == Source::DisplayIdTypeX;
+            const unsigned formula = d[0] & 7;
+            if (stereoReserved(d[0]) || formula > (typeX ? 3u : 2u)) return;
+            if (typeX && ((formula < 2 && (d[0] & 0x10)) || (formula != 3 && (d[0] & 0x08))
+                || (formula != 3 && length > 6 && (d[6] & 0xfc))
+                || (length == 8 && ((d[7] & 0xfe) || (formula != 3 && d[7]))))) return;
+            t.hActive = 1 + word(1); t.vActive = 1 + word(3);
+            t.nominalRefreshHz = 1 + d[5] + (length > 6 ? unsigned(d[6] & 3) << 8 : 0);
+            break;
+        }
+        default: return;
+        }
+        if (hSyncEnd > t.hBlank || vSyncEnd > t.vBlank) return;
+        decoded.push_back(t);
+        pos += length;
     }
+    out.insert(out.end(), decoded.begin(), decoded.end());
 }
 
-inline std::vector<Timing> detailedTimings(std::span<const std::uint8_t> data) {
+inline std::vector<Timing> advertisedTimings(std::span<const std::uint8_t> data) {
     const auto inspection = inspect(data);
     std::vector<Timing> out;
     if (!trusted(inspection)) return out;
@@ -153,6 +249,12 @@ inline std::vector<Timing> detailedTimings(std::span<const std::uint8_t> data) {
     }
     return out;
 }
+inline std::vector<Timing> detailedTimings(std::span<const std::uint8_t> data) {
+    auto timings = advertisedTimings(data);
+    std::erase_if(timings, [](const Timing &timing) { return !timing.hasGeometry(); });
+    return timings;
+}
+
 inline std::vector<Timing> progressiveTimings(std::span<const std::uint8_t> data) {
     auto timings = detailedTimings(data);
     std::erase_if(timings, [](const Timing &timing) { return timing.interlaced; });

@@ -1530,7 +1530,7 @@ fn role_options(groups: &[Ccx], park: bool) -> Vec<(String, String)> {
         }
     }
     for (role, what, ct) in [("pcore", "P-cores", CoreType::P), ("ecore", "E-cores", CoreType::E)] {
-        if let Some(g) = hybrid_group(ct).filter(|g| usable(g)) {
+        if let Some(g) = hybrid_group(ct).filter(usable) {
             v.push((role.to_owned(), format!("{what} ({})", fmt_cpu_list(&g.cpus))));
         }
     }
@@ -2994,7 +2994,7 @@ pub fn files(t: &Tunable) -> Vec<PathBuf> {
             // Unreadable (unprivileged) = cannot tell; root re-checks at write time.
             match read(&f) {
                 _ if INFINITY_NEW_DEAD_FEATS.contains(&name) && infinity_new() => vec![],
-                Some(raw) if !sched_feature_state(&raw, name).is_some() => vec![],
+                Some(raw) if sched_feature_state(&raw, name).is_none() => vec![],
                 _ => existing(f),
             }
         }

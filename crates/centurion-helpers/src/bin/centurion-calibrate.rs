@@ -2720,8 +2720,7 @@ fn boot_run() -> i32 {
 
 // ── field evidence ───────────────────────────────────────────────────────────
 
-/// `--field LOG...`: frame-time logs of game sessions recorded by centurion-gamemode become rows of the
-/// load model (see centurion_helpers::field).
+/// `--field LOG...`: retain measured launches and link comparisons to applicable load-model predictions.
 fn field_import(cal: &mut Calibration, files: &[String], game: Option<String>) -> Result<String, String> {
     use centurion_helpers::field;
     if files.is_empty() { return Err("--field needs one or more frame-time logs (FLM or MangoHud CSV)".into()); }
@@ -2735,15 +2734,26 @@ fn field_import(cal: &mut Calibration, files: &[String], game: Option<String>) -
         let id = if f.len() >= 6 { f[2].parse::<u32>().ok()? } else { return None };
         ((uid == Some(id) || user.as_deref() == Some(f[0])) && id != 0).then(|| (f[5].to_owned(), id))
     })).ok_or("run from the account that plays the games (pkexec or sudo)")?;
-    let sessions = field::sessions(&std::fs::read_to_string(field::session_log(std::path::Path::new(&home))).unwrap_or_default());
-    if sessions.is_empty() { return Err("no recorded game sessions yet (centurion-gamemode records them while games run)".into()); }
+    use std::io::Read;
+    use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
+    let session_path = field::session_log(std::path::Path::new(&home));
+    let session_text = std::fs::OpenOptions::new().read(true)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK | libc::O_CLOEXEC)
+        .open(session_path)
+        .ok()
+        .filter(|file| file.metadata().is_ok_and(|m| m.is_file() && m.uid() == caller_uid))
+        .and_then(|file| {
+            const LIMIT: u64 = 16 << 20;
+            let mut text = String::new();
+            file.take(LIMIT + 1).read_to_string(&mut text).ok()?;
+            (text.len() as u64 <= LIMIT).then_some(text)
+        }).unwrap_or_default();
+    let sessions = field::sessions(&session_text);
     let defaults = centurion_helpers::defaults::load();
     let refs = cal.refs.clone();
     let boot = |k: &str| defaults.as_ref().and_then(|d| d.values.get(k).cloned()).or_else(|| refs.get(k).cloned());
     let (mut recs, mut msgs) = (Vec::new(), Vec::new());
     for f in files {
-        use std::io::Read;
-        use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
         let file = std::fs::OpenOptions::new().read(true)
             .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK | libc::O_CLOEXEC).open(f)
             .map_err(|e| format!("{f}: {e}"))?;
@@ -2759,17 +2769,34 @@ fn field_import(cal: &mut Calibration, files: &[String], game: Option<String>) -
         let content = std::str::from_utf8(&raw).map_err(|e| format!("{f}: invalid UTF-8: {e}"))?;
         let Some(ft) = field::parse_log(content) else { msgs.push(format!("{f}: no frame times found")); continue };
         let Some(fr) = field::frames(&ft) else { msgs.push(format!("{f}: too short ({} frames)", ft.len())); continue };
-        let Some(s) = field::match_session(&sessions, mtime) else { msgs.push(format!("{f}: no recorded game session around its time")); continue };
-        let g = game.clone().or_else(|| s["game"].as_str().map(str::to_owned)).unwrap_or_else(|| "unknown".into());
-        let cfg = field::session_cfg(s, &boot);
-        msgs.push(format!("{f}: {g} {} - median {:.2} ms, tail {:.2} ms, pacing {:.3} ms, {} frames, {} changed setting(s)",
-                          if cfg.is_empty() { "(A: boot defaults)" } else { "(B)" }, fr.med, fr.tail, fr.pacing, fr.n, cfg.len()));
-        recs.push(json!({"game": g, "start": s["start"], "cfg": cfg.iter().map(|(k, v)| json!([k, v])).collect::<Vec<_>>(),
+        let unknown = Value::Null;
+        let session = field::match_session(&sessions, mtime).unwrap_or(&unknown);
+        let recorded_game = session["game"].as_str().unwrap_or("unknown");
+        let game = game.as_deref().unwrap_or(recorded_game);
+        let cfg = session.is_object().then(|| field::session_cfg(session, &boot));
+        let session_id = session["id"].as_str();
+        let id = match session_id {
+            Some(id) => format!("{caller_uid}:{id}"),
+            None => format!("{caller_uid}:log:{:016x}", centurion_helpers::model::fnv(&raw)),
+        };
+        let context = if game == recorded_game && session["end"].is_u64() && session["comparison"].is_object() {
+            let mut context = session["comparison"].clone();
+            context["uid"] = json!(caller_uid);
+            context
+        } else { Value::Null };
+        let prediction = if session["ab"] == "B" {
+            field::historical_prediction(&cal.verify, &context, session["start"].as_u64().unwrap_or(0))
+        } else { None };
+        msgs.push(format!("{f}: {game} - median {:.2} ms, tail {:.2} ms, pacing {:.3} ms, {} frames{}",
+                          fr.med, fr.tail, fr.pacing, fr.n, if session_id.is_none() { " (launch unmatched)" } else { "" }));
+        recs.push(json!({"id": id, "game": game, "start": session["start"], "log_time": mtime, "ab": session["ab"],
+                         "cfg": cfg, "comparison": context, "prediction": prediction,
                          "med": fr.med, "tail": fr.tail, "pacing": fr.pacing, "n": fr.n}));
     }
-    let n = cal.add_field_sessions(recs);
-    save(cal);
-    msgs.push(format!("field rows in the load model: {n} (a game counts once it has two A sessions and one B session; centurion-gamemode's A/B mode alternates them)"));
+    cal.add_field_sessions(recs);
+    if !cfg!(test) { cal.save()?; }
+    let n = field::comparisons(&cal.field_sessions).len();
+    msgs.push(format!("Matched game comparisons: {n}. Two distinct reference launches and matching recorded conditions are required."));
     Ok(msgs.join("\n"))
 }
 

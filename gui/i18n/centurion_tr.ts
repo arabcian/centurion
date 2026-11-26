@@ -6595,6 +6595,34 @@ Seçilen dosyalar önizlemeyle eşleşti. Otomatik anonimleştirme kesin sonuç 
             <source>Retry page</source>
             <translation>Sayfayı yeniden yükle</translation>
         </message>
+        <message>
+            <source>Choose fields…</source>
+            <translation>Alanları seç…</translation>
+        </message>
+        <message>
+            <source>Choose fields</source>
+            <translation>Alanları seç</translation>
+        </message>
+        <message>
+            <source>Available for system details and structured records. Other files can be included or excluded as a whole.</source>
+            <translation>Sistem ayrıntıları ve yapılandırılmış kayıtlar için kullanılabilir. Diğer dosyalar bir bütün olarak dahil edilebilir veya çıkarılabilir.</translation>
+        </message>
+        <message>
+            <source>Choose which fields to include. A field path applies to every matching record.</source>
+            <translation>Eklenecek alanları seçin. Bir alan yolu eşleşen tüm kayıtlara uygulanır.</translation>
+        </message>
+        <message>
+            <source>Update preview</source>
+            <translation>Önizlemeyi güncelle</translation>
+        </message>
+        <message>
+            <source>The field preview could not be updated.</source>
+            <translation>Alan önizlemesi güncellenemedi.</translation>
+        </message>
+        <message>
+            <source> (selected fields)</source>
+            <translation> (seçilen alanlar)</translation>
+        </message>
 </context>
     <context>
         <name>ScenesTab</name>
@@ -10492,9 +10520,92 @@ P2/P5'te bırakabilir), çekirdek ve VRAM saat kilitleri, güç sınırı, Power
         <source>Helper reported Apply completed; checking fresh readback.</source>
         <translation>Helper uygulamanın tamamlandığını bildirdi; yeni geri okuma denetleniyor.</translation>
     </message>
+        <message>
+            <source>Samples the graphics clock while this tab is visible. Voltage is estimated from the last confirmed curve. Stopping or leaving this tab saves the session.</source>
+            <translation>Bu sekme görünürken grafik saat hızı örneklenir. Voltaj, son doğrulanan eğriden tahmin edilir. Kaydı durdurduğunuzda veya sekmeden ayrıldığınızda oturum kaydedilir.</translation>
+        </message>
+        <message>
+            <source>Read the curve and verify the GPU before recording.</source>
+            <translation>Kayda başlamadan önce eğriyi okuyun ve GPU kimliğini doğrulayın.</translation>
+        </message>
+        <message>
+            <source>V/F coverage history</source>
+            <translation>V/F kullanım geçmişi</translation>
+        </message>
+        <message>
+            <source>Voltage is estimated</source>
+            <translation>Voltaj tahminidir</translation>
+        </message>
+        <message>
+            <source>Restored V/F coverage from %1. Voltage is estimated from the curve.</source>
+            <translation>%1 tarihli V/F kullanımı geri yüklendi. Voltaj eğriden tahmin edilir.</translation>
+        </message>
+        <message>
+            <source>Could not save the V/F coverage session.</source>
+            <translation>V/F kullanım oturumu kaydedilemedi.</translation>
+        </message>
+        <message>
+            <source>Used region: %1 sample(s) on %2 curve point(s), points %3–%4. Voltage is estimated.</source>
+            <translation>Kullanılan bölge: %2 eğri noktasında %1 örnek, %3–%4 arası. Voltaj tahminidir.</translation>
+        </message>
+        <message>
+            <source>No saved V/F coverage sessions.</source>
+            <translation>Kayıtlı V/F kullanım oturumu yok.</translation>
+        </message>
+        <message>
+            <source>The V/F coverage history could not be read.</source>
+            <translation>V/F kullanım geçmişi okunamadı.</translation>
+        </message>
+        <message>
+            <source>Voltage is estimated from the last confirmed curve. Point shares can be compared for recordings of the same GPU and curve.</source>
+            <translation>Voltaj, son doğrulanan eğriden tahmin edilir. Nokta başına örnek oranları aynı GPU ve eğriye ait kayıtlarda karşılaştırılabilir.</translation>
+        </message>
+        <message>
+            <source>First recording</source>
+            <translation>İlk kayıt</translation>
+        </message>
+        <message>
+            <source>Second recording</source>
+            <translation>İkinci kayıt</translation>
+        </message>
+        <message>
+            <source>%1 · %2 samples · %3 points</source>
+            <translation>%1 · %2 örnek · %3 nokta</translation>
+        </message>
+        <message>
+            <source>%1 samples · %2 points · estimated range %3–%4 mV</source>
+            <translation>%1 örnek · %2 nokta · tahmini aralık %3–%4 mV</translation>
+        </message>
+        <message>
+            <source>The GPU or curve differs. Point shares cannot be compared.</source>
+            <translation>GPU veya eğri farklı. Nokta başına oranlar karşılaştırılamıyor.</translation>
+        </message>
+        <message>
+            <source>Estimated voltage · first recording share · second recording share</source>
+            <translation>Tahmini voltaj · ilk kaydın oranı · ikinci kaydın oranı</translation>
+        </message>
+        <message>
+            <source>Point %1 · %2 mV · %3% · %4%</source>
+            <translation>Nokta %1 · %2 mV · %%3 · %%4</translation>
+        </message>
 </context>
     <context>
         <name>OptimizeTab</name>
+        <message><source>No synthetic load prediction for these recorded conditions.</source><translation>Bu kayıtlı koşullar için sentetik yük tahmini bulunamadı.</translation></message>
+        <message><source>Matched results use two reference launches with the same recorded conditions. The synthetic load prediction is shown in model units. Game results show frame-time change in percent.</source><translation>Eşleşen sonuçlar, aynı kayıtlı koşullarda başlatılan iki referans oturumu kullanır. Sentetik yük tahmini model birimleriyle gösterilir. Oyun sonuçları kare süresi değişimini yüzde olarak gösterir.</translation></message>
+        <message><source>Session ID</source><translation>Oturum kimliği</translation></message>
+        <message><source>Comparison</source><translation>Karşılaştırma</translation></message>
+        <message><source>Matched</source><translation>Eşleşen</translation></message>
+        <message><source>Unmatched</source><translation>Eşleşmeyen</translation></message>
+        <message><source>Median reduction %1%</source><translation>Medyan kare süresi azalması %1%</translation></message>
+        <message><source>Median reduction %1%, tail reduction %2%, pacing reduction %3%</source><translation>Medyan azalması %1%, kuyruk azalması %2%, kare aralığı değişkenliğinde azalma %3%</translation></message>
+        <message><source>Synthetic gaming load prediction %1 ± %2</source><translation>Sentetik oyun yükü tahmini %1 ± %2</translation></message>
+        <message><source>Matching group %1</source><translation>Eşleşme grubu %1</translation></message>
+        <message><source>Reference sessions %1</source><translation>Referans oturumları %1</translation></message>
+        <message><source>Reference launch</source><translation>Referans oturumu</translation></message>
+        <message><source>Launches alternate between the game preset and skipping the preset. Set CENTURION_GAME_WORKLOAD to the same label for a fixed benchmark route and graphics setup. Import frame-time logs after both reference launches and a preset launch finish.</source><translation>Oyun, ön ayar kullanılarak ve ön ayar atlanarak dönüşümlü başlatılır. Sabit bir test rotası ve grafik yapılandırması için CENTURION_GAME_WORKLOAD değişkenine aynı etiketi verin. İki referans oturumu ve bir ön ayarlı oturum bittikten sonra kare süresi günlüklerini içe aktarın.</translation></message>
+        <message><source>Game telemetry imported. Open Measured Game Sessions to see the results.</source><translation>Oyun telemetrisi içe aktarıldı. Sonuçları Ölçülen Oyun Oturumları bölümünde görebilirsiniz.</translation></message>
+        <message><source>A/B field comparison: alternate applying and skipping the game preset</source><translation>Sahada A/B karşılaştırması: Oyun ön ayarını dönüşümlü uygula ve atla</translation></message>
         <message><source>Historical paired benchmark evidence. Gains are objective utility differences, not FPS. The decision interval can differ from the nominal 95% interval for sequential runs. No benchmark or tuning is started.</source><translation>Geçmiş eşleştirilmiş kıyaslama kanıtı. Kazançlar hedef fayda farklarıdır, FPS değildir. Ardışık çalışmalarda karar aralığı nominal yüzde 95 aralıktan farklı olabilir. Kıyaslama veya ayarlama başlatılmaz.</translation></message>
         <message><source>Filter preset, goal, phase or context</source><translation>Ön ayarı, hedefi, aşamayı veya bağlamı filtrele</translation></message>
         <message><source>Complete blocks</source><translation>Tam bloklar</translation></message>
@@ -19481,9 +19592,10 @@ Günlük okunamıyor, bu yüzden onu tutmak hiçbir şeyi korumaz ve yalnızca b
         <source>Kernel sequence</source>
         <translation>Kernel sıra numarası</translation>
     </message>
+    <message><source>%1 (nominal)</source><translation>%1 (nominal)</translation></message>
     <message>
-        <source>The table lists verified base, CTA and supported DisplayID detailed timings. The plot shows progressive timings and the explicit VRR range.</source>
-        <translation>Tablo, doğrulanan temel EDID, CTA ve desteklenen DisplayID ayrıntılı zamanlamalarını listeler. Grafik, aşamalı tarama zamanlamalarını ve açıkça bildirilen VRR aralığını gösterir.</translation>
+        <source>The table shows decoded EDID timings. Formula-based entries show their nominal rate. The plot shows progressive detailed timings and the explicit VRR range.</source>
+        <translation>Tablo, çözümlenen EDID zamanlamalarını ve formüle dayalı kayıtların nominal hızını gösterir. Grafikte aşamalı taramaya ait ayrıntılı zamanlamalar ve açıkça bildirilen VRR aralığı yer alır.</translation>
     </message>
 </context>
     <context>
@@ -24081,8 +24193,8 @@ Günlük okunamıyor, bu yüzden onu tutmak hiçbir şeyi korumaz ve yalnızca b
             <translation>Yalnızca kernelden okunan tam bloklar listelenir. Sağlama toplamının sıfır olması gereklidir ancak tüm EDID alanlarının doğru olduğunu kanıtlamaz.</translation>
         </message>
         <message>
-            <source>Decoded Detailed Timings</source>
-            <translation>Çözümlenen Ayrıntılı Zamanlamalar</translation>
+            <source>Advertised Timings</source>
+            <translation>Bildirilen Zamanlamalar</translation>
         </message>
         <message>
             <source>Timing</source>
@@ -24484,6 +24596,14 @@ Günlük okunamıyor, bu yüzden onu tutmak hiçbir şeyi korumaz ve yalnızca b
             <source>EDID base block</source>
             <translation>EDID temel bloğu</translation>
         </message>
+        <message><source>DisplayID Type II</source><translation>DisplayID Tip II</translation></message>
+        <message><source>DisplayID Type III</source><translation>DisplayID Tip III</translation></message>
+        <message><source>DisplayID Type V</source><translation>DisplayID Tip V</translation></message>
+        <message><source>DisplayID Type VI</source><translation>DisplayID Tip VI</translation></message>
+        <message><source>DisplayID Type IX</source><translation>DisplayID Tip IX</translation></message>
+        <message><source>DisplayID Type X</source><translation>DisplayID Tip X</translation></message>
+        <message><source>%1×%2 interlaced @ %3 Hz (field rate)</source><translation>%1×%2 geçmeli tarama @ %3 Hz (alan hızı)</translation></message>
+        <message><source>%1×%2 @ %3 Hz (nominal)</source><translation>%1×%2 @ %3 Hz (nominal)</translation></message>
         <message>
             <source>DisplayID Type I</source>
             <translation>DisplayID Tip I</translation>
@@ -24493,12 +24613,12 @@ Günlük okunamıyor, bu yüzden onu tutmak hiçbir şeyi korumaz ve yalnızca b
             <translation>DisplayID Tip VII</translation>
         </message>
         <message>
-            <source>Listed resolution</source>
-            <translation>Listelenen çözünürlük</translation>
+            <source>DRM mode name listed</source>
+            <translation>DRM mod adı listeleniyor</translation>
         </message>
         <message>
-            <source>A resolution match does not verify refresh rate or timing. Linux DRM sysfs lists mode names only.</source>
-            <translation>Çözünürlük eşleşmesi yenileme hızını veya zamanlamayı doğrulamaz. Linux DRM sysfs yalnızca mod adlarını listeler.</translation>
+            <source>Linux DRM sysfs lists mode names. A match covers the resolution and scan type. Refresh rates and timing parameters require another source.</source>
+            <translation>Linux DRM sysfs, mod adlarını listeler. Eşleşme çözünürlüğü ve tarama türünü kapsar. Yenileme hızı ve zamanlama parametreleri için ayrı bir kaynak gerekir.</translation>
         </message>
         <message>
             <source>Modes Listed by Linux DRM</source>
@@ -27872,6 +27992,58 @@ Kayıt kimliği: %6
         </message>
         <message>
             <source>Could not delete the imported snapshot.</source>
+            <translation>İçe aktarılan kayıt silinemedi.</translation>
+        </message>
+        <message>
+            <source>%1 snapshots · %2 rejected records or files · %3 log entries in view</source>
+            <translation>%1 rapor kaydı · %2 reddedilen kayıt veya dosya · %3 görüntülenen günlük kaydı</translation>
+        </message>
+        <message>
+            <source>The imported log archive could not be read.</source>
+            <translation>İçe aktarılan günlük arşivi okunamadı.</translation>
+        </message>
+        <message>
+            <source>Imported log event</source>
+            <translation>İçe aktarılan günlük olayı</translation>
+        </message>
+        <message>
+            <source>Imported %1</source>
+            <translation>İçe aktarılan %1</translation>
+        </message>
+        <message>
+            <source>Import saved log…</source>
+            <translation>Kayıtlı günlüğü içe aktar…</translation>
+        </message>
+        <message>
+            <source>Import saved log</source>
+            <translation>Kayıtlı günlüğü içe aktar</translation>
+        </message>
+        <message>
+            <source>Centurion health.log and kernel.log files up to 4 MiB. The import archive holds up to 1000 entries per source and 1 MiB total.</source>
+            <translation>4 MiB’ye kadar Centurion health.log ve kernel.log dosyaları. İçe aktarma arşivi kaynak başına en fazla 1000 kayıt ve toplam 1 MiB tutar.</translation>
+        </message>
+        <message>
+            <source>%1 imported · %2 duplicates · %3 unreadable or incomplete lines</source>
+            <translation>%1 içe aktarıldı · %2 yinelenen kayıt · %3 okunamayan veya eksik satır</translation>
+        </message>
+        <message>
+            <source>Choose a Centurion saved log up to 4 MiB with at least one complete entry.</source>
+            <translation>En az bir tam kayıt içeren, 4 MiB’ye kadar bir Centurion günlük dosyası seçin.</translation>
+        </message>
+        <message>
+            <source>Imported log archive full. Delete imported entries or choose a smaller file.</source>
+            <translation>İçe aktarma arşivi dolu. İçe aktarılan kayıtları silin veya daha küçük bir dosya seçin.</translation>
+        </message>
+        <message>
+            <source>Delete imported record…</source>
+            <translation>İçe aktarılan kaydı sil…</translation>
+        </message>
+        <message>
+            <source>Delete this imported record from the local archive?</source>
+            <translation>Bu içe aktarılan kayıt yerel arşivden silinsin mi?</translation>
+        </message>
+        <message>
+            <source>Could not delete the imported record.</source>
             <translation>İçe aktarılan kayıt silinemedi.</translation>
         </message>
 </context>

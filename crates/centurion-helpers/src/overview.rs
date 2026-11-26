@@ -64,7 +64,10 @@ pub fn local_clock() -> (i64, i64) {
     let t = now as libc::time_t;
     let mut tm: libc::tm = unsafe { std::mem::zeroed() };
     unsafe { libc::localtime_r(&t, &mut tm) };
-    (now, tm.tm_gmtoff as i64)
+    // tm_gmtoff is c_long, which can be narrower than i64.
+    #[allow(clippy::unnecessary_cast)]
+    let offset = tm.tm_gmtoff as i64;
+    (now, offset)
 }
 
 /// Local calendar date "YYYY-MM-DD" of a unix time.

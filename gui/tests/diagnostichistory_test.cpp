@@ -1,4 +1,4 @@
-#include "../src/diagnostichistorystore.h"
+#include "../src/diagnosticlogarchive.h"
 #include "../src/diagsources.h"
 #include <QCoreApplication>
 #include <QTemporaryDir>
@@ -155,6 +155,41 @@ int main(int argc,char **argv) {
     CHECK(records.at(1).sequence == 10 && records.at(1).current && records.at(1).rotated);
     CHECK(records.at(2).sequence == 10 && records.at(2).id != records.at(1).id);
     CHECK(records.at(3).sequence == 2 && records.at(4).sequence == 1);
+    QTemporaryDir importedLogs;
+    CHECK(importedLogs.isValid());
+    const auto importPath = importedLogs.filePath(QStringLiteral("legacy.log"));
+    const auto writeImport = [&](const QByteArray &contents) {
+        QFile file(importPath);
+        return file.open(QIODevice::WriteOnly) && file.write(contents) == contents.size();
+    };
+    const auto previousKernel = QByteArray("2026-01-02 10:00:00 boot=") + bootB.toLatin1()
+        + " seq=18446744073709551615 warn [1.2] at 192.168.1.42\n";
+    CHECK(writeImport(repeated + healthLine(bootA.left(8), 20, "legacy") + previousKernel
+        + "bad line\n" + QByteArray(1, char(0xff)) + "\n" + repeated.chopped(1)));
+    const auto import = importSavedLog(importedLogs.path(), importPath);
+    CHECK(import.status == ImportArchive::Imported && import.added == 3 && import.omitted == 3);
+    const auto duplicate = importSavedLog(importedLogs.path(), importPath);
+    CHECK(duplicate.status == ImportArchive::AlreadyPresent && duplicate.duplicates == 3);
+    const auto stored = readImportedLogs(importedLogs.path());
+    CHECK(stored && stored->size() == 3);
+    CHECK(stored->at(1).boot.isEmpty() && stored->at(1).reportedBoot == bootA.left(8));
+    CHECK(stored->at(2).source == RecordSource::KernelLog && stored->at(2).sequence == std::numeric_limits<quint64>::max());
+    CHECK(stored->at(2).detail.contains(QStringLiteral("[redacted]")));
+    const auto merged = recordedEvents(health, {}, *stored);
+    CHECK(merged.size() == 6 && merged.at(0).imported);
+    CHECK(merged.at(1).current && merged.at(1).rotated && merged.at(1).imported);
+    CHECK(removeImportedLog(importedLogs.path(), stored->at(0).id));
+    const auto afterRemoval = readImportedLogs(importedLogs.path());
+    CHECK(afterRemoval && afterRemoval->size() == 2 && !recordedEvents(health, {}, *afterRemoval).at(1).imported);
+
+    QByteArray tooMany;
+    for (int i = 0; i <= ImportedLogsPerSource; ++i) tooMany += healthLine(bootB, i, "eligible");
+    CHECK(writeImport(tooMany));
+    CHECK(importSavedLog(importedLogs.path(), importPath).status == ImportArchive::Full);
+    CHECK(readImportedLogs(importedLogs.path())->size() == 2);
+    CHECK(diagsrc::saveJson(logArchivePath(importedLogs.path()), {{"version", 99}}).isEmpty());
+    CHECK(!readImportedLogs(importedLogs.path()));
+    CHECK(importSavedLog(importedLogs.path(), importPath).status == ImportArchive::Conflict);
     CHECK(QFile::link(diagsrc::stateDir() + QStringLiteral("/health.log"),
                       diagsrc::stateDir() + QStringLiteral("/kernel.log.1")));
     CHECK(diagsrc::savedLog(diagsrc::SavedLog::Kernel, 10).files.at(0).state == diagsrc::LogFileState::Unreadable);

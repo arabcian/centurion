@@ -27,37 +27,50 @@ struct RecordedEvent {
     QString boot, reportedBoot, time, level, title, detail, id;
     quint64 sequence;
     RecordSource source;
-    bool current, rotated;
+    bool current = false, rotated = false, imported = false;
 };
 
 inline QString logName(RecordSource source) {
     return source == RecordSource::HealthLog ? QStringLiteral("health.log") : QStringLiteral("kernel.log");
 }
 
-inline QList<RecordedEvent> recordedEvents(const diagsrc::LogTail &health, const diagsrc::LogTail &kernel) {
+inline RecordedEvent recordedEvent(const diagsrc::LogLine &line, RecordSource source) {
+    const QJsonArray fields{logName(source), line.boot, QString::number(line.seq), line.time, line.level,
+                            line.kind, line.title, line.text};
+    const auto key = QCryptographicHash::hash(QJsonDocument(fields).toJson(QJsonDocument::Compact),
+                                              QCryptographicHash::Sha256);
+    return {QString::fromStdString(fullBoot(line.boot.toStdString())),
+            diag::redactPrivateText(line.boot).left(80), line.time.left(80), line.level.left(80),
+            diag::redactPrivateText(line.title).left(300), diag::redactPrivateText(line.text).left(8192),
+            QString::fromLatin1(key.toHex()), line.seq, source};
+}
+
+inline QList<RecordedEvent> recordedEvents(const diagsrc::LogTail &health, const diagsrc::LogTail &kernel,
+                                           const QList<RecordedEvent> &imported = {}) {
     QList<RecordedEvent> out;
-    QHash<QByteArray, qsizetype> seen;
-    const auto add = [&](const diagsrc::LogTail &tail, RecordSource source) {
-        const auto name = logName(source);
-        for (const auto &line : tail.lines) {
-            const QJsonArray fields{name, line.boot, QString::number(line.seq), line.time, line.level,
-                                    line.kind, line.title, line.text};
-            const auto key = QCryptographicHash::hash(QJsonDocument(fields).toJson(QJsonDocument::Compact), QCryptographicHash::Sha256);
-            if (const auto it = seen.constFind(key); it != seen.cend()) {
-                auto &event = out[it.value()];
-                event.current |= !line.rotated;
-                event.rotated |= line.rotated;
-                continue;
-            }
-            seen.insert(key, out.size());
-            out.append({QString::fromStdString(fullBoot(line.boot.toStdString())),
-                        diag::redactPrivateText(line.boot).left(80), line.time.left(80), line.level.left(80),
-                        diag::redactPrivateText(line.title).left(300), diag::redactPrivateText(line.text).left(8192),
-                        QString::fromLatin1(key.toHex()), line.seq, source, !line.rotated, line.rotated});
+    QHash<QString, qsizetype> seen;
+    const auto add = [&](const RecordedEvent &record) {
+        if (const auto it = seen.constFind(record.id); it != seen.cend()) {
+            auto &event = out[it.value()];
+            event.current |= record.current;
+            event.rotated |= record.rotated;
+            event.imported |= record.imported;
+        } else {
+            seen.insert(record.id, out.size());
+            out.append(record);
         }
     };
-    add(health, RecordSource::HealthLog);
-    add(kernel, RecordSource::KernelLog);
+    const auto addLog = [&](const diagsrc::LogTail &tail, RecordSource source) {
+        for (const auto &line : tail.lines) {
+            auto record = recordedEvent(line, source);
+            record.current = !line.rotated;
+            record.rotated = line.rotated;
+            add(record);
+        }
+    };
+    addLog(health, RecordSource::HealthLog);
+    addLog(kernel, RecordSource::KernelLog);
+    for (const auto &record : imported) add(record);
     // Sequence is only comparable within a known boot. Keep unknown records
     // in scan order and keep tied sequence numbers without assigning causality.
     std::stable_sort(out.begin(), out.end(), [](const RecordedEvent &a, const RecordedEvent &b) {
