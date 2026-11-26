@@ -285,8 +285,20 @@ fn cmd_write(a: &Args, cfg: &Config) {
     };
 
     if dry {
+        // The same checks the real write makes before it touches the GPU: a preview must not report
+        // success for a point or delta the write would refuse. --global picks its points from the live
+        // curve, which a dry run does not read: those are checked when written.
+        if !glob {
+            let errs = validate_write(&deltas, max_override.unwrap_or(cfg.max_delta_khz));
+            if !errs.is_empty() {
+                println!("{target}");
+                for e in errs { eprintln!("Error: {e}"); }
+                eprintln!("DRY RUN — this write would be refused.");
+                exit(1);
+            }
+        }
         println!("{target}\n\nDRY RUN — would send:");
-        if glob { println!("  Target: Global active points"); }
+        if glob { println!("  Target: Global active points (validated against the live curve when written)"); }
         else {
             let keys: Vec<i64> = deltas.keys().copied().collect();
             let tail = if keys.len() > 5 { format!(" ...and {} more", keys.len() - 5) } else { String::new() };
@@ -314,7 +326,23 @@ fn cmd_write(a: &Args, cfg: &Config) {
         snapshot::save(g, &name, &cfg.snapshot_dir, cfg.max_snapshots, Some(raw.bytes()));
     }
     let (rc, d) = vfcurve::write_offsets(g, &deltas, false, false, Some(raw.bytes()));
-    if rc != 0 { die(1, format!("Write failed ({rc}): {d}")); }
+    if rc != 0 {
+        // -997 / "read-back failed": the driver took the table and the check after it did not hold.
+        // Put the previous offsets of the points written back (same rollback profile apply makes).
+        // Rejections before the driver call (-998, -999 setup) changed nothing: no second write.
+        let landed = rc > 0 || rc == -997 || (rc == -999 && d.contains("write returned success"));
+        let rollback = if landed {
+            let before = vfcurve::parse_ct_entries(raw.bytes());
+            let previous: vfcurve::PointDeltas = deltas.keys()
+                .filter_map(|&i| usize::try_from(i).ok().and_then(|i| before.get(i)).map(|&(d, _)| (i as i64, i64::from(d))))
+                .collect();
+            Some(match vfcurve::restore_offsets_verified(g, &previous) {
+                Ok(()) => "previous offsets restored and verified".to_owned(),
+                Err(e) => format!("ROLLBACK FAILED ({e}) — read the curve and reset it before continuing"),
+            })
+        } else { None };
+        die(1, format!("Write failed ({rc}): {d}{}", rollback.map(|r| format!("\n{r}")).unwrap_or_default()));
+    }
     println!("Write OK — {} point(s) updated.", deltas.len());
     // Points that would have dropped to 0 MHz were raised to their floor.
     if let Some(notes) = d.split_once(" [").map(|x| x.1.trim_end_matches(']')) {
@@ -419,6 +447,14 @@ fn cmd_profile(a: &Args, cfg: &Config) {
         }
         Some("apply") => {
             let n = need("apply");
+            if a.flag("--dry-run") {
+                // Read-only preflight only: no root, no lock, no GPU write.
+                let warnings = nvcurve::profiles::apply::dry_run_profile(a.gpu(), n, cfg)
+                    .unwrap_or_else(|e| die(1, format!("Profile '{n}': {e}")));
+                println!("DRY RUN — profile '{n}' passed the preflight on GPU {}; nothing was written.", a.gpu());
+                for w in warnings { println!("NOTE: {w}"); }
+                return;
+            }
             require_root();
             let msg = ops::apply_profile_verified(a.gpu(), n, cfg, 1)
                 .unwrap_or_else(|e| die(1, format!("Profile '{n}': {e}")));
@@ -529,6 +565,11 @@ fn cmd_powermizer(a: &Args) {
 }
 
 fn cmd_reset_all(a: &Args) {
+    if a.flag("--dry-run") {
+        println!("DRY RUN — would reset GPU {}: V/F offsets (GPU and memory), core cap, NVML clock offsets in every \
+                  P-state, VRAM clock lock, power limit to its default, PowerMizer to auto. Nothing was written.", a.gpu());
+        return;
+    }
     require_root();
     let (done, errs) = ops::reset_everything(a.gpu());
     for d in &done { println!("✓ {d}"); }
@@ -608,6 +649,7 @@ fn main() {
     let writes = matches!((c0, c1), (Some("write" | "reset-all" | "autoload"), _)
         | (Some("snapshot"), Some("restore")) | (Some("profile"), Some("apply"))
         | (Some("memlock"), Some("set" | "reset")) | (Some("powermizer"), Some("set")));
+    if c0 == Some("autoload") && a.flag("--dry-run") { die(2, "autoload does not support --dry-run"); }
     let sensor_probe = c0 == Some("sensors");
     let _lock = ((writes || sensor_probe) && !a.flag("--dry-run") && unsafe { libc::geteuid() } == 0)
         .then(|| ops::gpu_write_lock().unwrap_or_else(|e| die(1, format!("nvcurve: {e}"))));
