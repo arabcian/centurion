@@ -563,6 +563,11 @@ QPushButton#btnAccent:disabled, QPushButton#btnDanger:disabled { background: tra
 QPushButton#btnMini { padding: 0 7px; min-height: 14px; font-size: 8pt; border-radius: 6px; }
 QToolButton { background: transparent; border: 1px solid transparent; border-radius: 7px; padding: 2px; }
 QToolButton:hover { background: @BG3; border-color: @BORDER; }
+QToolButton#lockButton { background: @BG2; border-color: @BORDER; padding: 4px 22px 4px 8px; }
+QToolButton#lockButton:hover, QToolButton#lockButton:focus { border-color: @ACCENT; }
+QToolButton#lockButton::menu-button { width: 17px; border-left: 1px solid @BORDER; }
+QToolButton#lockButton[collapsed="true"] { padding-left: 2px; padding-right: 12px; }
+QToolButton#lockButton[collapsed="true"]::menu-button { width: 11px; border-left: none; }
 
 /* ── inputs: recessed wells (shadowed top edge); the frame lights up only on focus ── */
 QLineEdit, QSpinBox, QDoubleSpinBox, Int64SpinBox, QComboBox { background: @WELL; color: @FG; border: 1px solid @BORDER_SOFT;

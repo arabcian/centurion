@@ -51,13 +51,6 @@ void runUntilExit(const QString &helper, const QByteArray &payload, QObject *con
                   Callback cb, int timeoutMs = 60000, std::function<void()> onTimeout = {},
                   std::uint64_t lease = 0);
 
-/// Unlock PIN (crates/centurion-helpers/src/unlock.rs): a helper answers {"locked": true} when a new value
-/// needs the unlocked window. The handler (set once by MainWindow) asks for the PIN and calls `done(true)`
-/// once unlocked; the request is then sent again. Requests marked "scene": true are never retried (the
-/// scene engine reports the refusal). Without a handler the refusal is returned as it is.
-using LockedHandler = std::function<void(std::function<void(bool unlocked)> done)>;
-void setLockedHandler(LockedHandler handler);
-
 /// Starts `pkexec helper`, writes `payload` to stdin. `context` bounds the
 /// callback's lifetime (not invoked if context is destroyed first).
 void run(const QString &helper, const QJsonObject &payload, QObject *context, Callback cb,

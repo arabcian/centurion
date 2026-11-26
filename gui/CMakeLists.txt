@@ -331,6 +331,12 @@ if(CENTURION_BUILD_TESTS)
     add_test(NAME privileged-lifecycle COMMAND centurion-privileged-lifecycle-test)
     set_tests_properties(privileged-lifecycle PROPERTIES TIMEOUT 80)
 
+    add_executable(centurion-unlock-test tests/unlock_test.cpp src/unlock.cpp src/unlock.h)
+    target_link_libraries(centurion-unlock-test PRIVATE Qt6::Widgets)
+    target_compile_definitions(centurion-unlock-test PRIVATE QT_NO_KEYWORDS CENTURION_HELPER_DIR="/nonexistent-centurion-test")
+    add_test(NAME unlock COMMAND centurion-unlock-test)
+    set_tests_properties(unlock PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 10)
+
     add_executable(centurion-simulation-visual-test tests/simulation_visual_test.cpp
         src/simulation.cpp src/simulation.h src/theme.cpp src/theme.h src/charts.cpp src/charts.h
         src/vfcurvewidget.cpp src/vfcurvewidget.h src/i18n.cpp src/i18n.h)

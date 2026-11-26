@@ -101,16 +101,20 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
     tabs_->tabBar()->setAttribute(Qt::WA_StyledBackground, true);  // ...and the selector rail behind the tabs
     tabs_->setDocumentMode(true);
     tabs_->setUsesScrollButtons(true);
-    // Unlock PIN: writing new values needs this window unlocked (unlock.h). The button shows the state; a
-    // refused write asks for the PIN itself (privileged::setLockedHandler) and is sent again once unlocked.
+    // Writing new values requires an explicit unlock from this button.
     lockButton_ = new QToolButton;
     lockButton_->setObjectName(QStringLiteral("lockButton"));
+    lockButton_->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+    lockButton_->setIconSize(QSize(22, 22));
+    lockButton_->setMinimumHeight(36);
+    lockButton_->setCursor(Qt::PointingHandCursor);
     lockButton_->setPopupMode(QToolButton::MenuButtonPopup);
     auto *lockMenu = new QMenu(lockButton_);
     lockMenu->addAction(tr("Change unlock PIN…"), this, [this] { unlock::Manager::instance().changePin(this); });
     lockButton_->setMenu(lockMenu);
     auto showLock = [this](bool on) {
-        lockButton_->setText(on ? tr("🔓 Unlocked") : tr("🔒 Locked"));
+        lockButton_->setIcon(sessionLockIcon(on));
+        lockButton_->setText(on ? tr("Unlocked") : tr("Locked"));
         lockButton_->setToolTip(on ? tr("New values can be written. Click to lock (closing the window locks too).")
                                    : tr("Writing new values (undervolt, curves, power limits, kernel tunables) needs the PIN. Click to unlock."));
     };
@@ -120,7 +124,6 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
         auto &m = unlock::Manager::instance();
         if (m.unlocked()) m.lock(false); else m.requestUnlock(this);
     });
-    privileged::setLockedHandler([this](std::function<void(bool)> done) { unlock::Manager::instance().requestUnlock(this, std::move(done)); });
     if (!theme::experimentalEnabled()) setCentralWidget(tabs_);
     if (!theme::experimentalEnabled()) tabs_->setCornerWidget(lockButton_, Qt::TopRightCorner);
     if (!theme::experimentalEnabled()) {
@@ -712,6 +715,10 @@ void MainWindow::setExperimentalCollapsed(bool collapsed) {
     expSplitter_->setHandleWidth(collapsed ? 1 : 6);
     expSplitter_->handle(1)->setEnabled(!collapsed);
     expBrandLabel_->setVisible(!collapsed);
+    lockButton_->setToolButtonStyle(collapsed ? Qt::ToolButtonIconOnly : Qt::ToolButtonTextBesideIcon);
+    lockButton_->setProperty("collapsed", collapsed);
+    lockButton_->style()->unpolish(lockButton_);
+    lockButton_->style()->polish(lockButton_);
     expToggle_->setText(collapsed ? QStringLiteral("»") : tr("«  Hide labels"));
     for (auto *button : std::as_const(expNavButtons_)) {
         button->setText(collapsed ? QString() : button->property("navLabel").toString());
@@ -1076,15 +1083,20 @@ void MainWindow::showTab(const QString &label) {
 
 void MainWindow::hideEvent(QHideEvent *e) {
     if (!isMinimized()) QSettings(QSettings::IniFormat, QSettings::UserScope, QStringLiteral("centurion"), QStringLiteral("gui")).setValue(QStringLiteral("ui/window_geometry"), saveGeometry());
+    if (!isMinimized()) unlock::Manager::instance().lock(true);
     QMainWindow::hideEvent(e);
     QTimer::singleShot(2000, this, [this] { if (!isVisible()) trimHeap(); });
 }
 
 void MainWindow::closeEvent(QCloseEvent *e) {
     if (!isMinimized()) QSettings(QSettings::IniFormat, QSettings::UserScope, QStringLiteral("centurion"), QStringLiteral("gui")).setValue(QStringLiteral("ui/window_geometry"), saveGeometry());
-    // Closing the window locks it again; scene steps keep running from the tray (unlock.h).
-    if (unlock::Manager::instance().unlocked()) unlock::Manager::instance().lock(true);
-    if (hideOnClose_ && !forceQuit_) { e->ignore(); hide(); return; }
+    if (hideOnClose_ && !forceQuit_) {
+        unlock::Manager::instance().lock(true);
+        e->ignore();
+        hide();
+        return;
+    }
     if (!canQuit()) { e->ignore(); return; }
+    unlock::Manager::instance().lock(true);
     QMainWindow::closeEvent(e);
 }

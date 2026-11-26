@@ -4588,12 +4588,12 @@ Centurion bunda test edilmedi; bazı donanım yazılımı özellikleri eksik ola
             <translation>Kilit PIN'ini değiştir…</translation>
         </message>
         <message>
-            <source>🔓 Unlocked</source>
-            <translation>🔓 Kilit açık</translation>
+            <source>Unlocked</source>
+            <translation>Kilit açık</translation>
         </message>
         <message>
-            <source>🔒 Locked</source>
-            <translation>🔒 Kilitli</translation>
+            <source>Locked</source>
+            <translation>Kilitli</translation>
         </message>
         <message>
             <source>New values can be written. Click to lock (closing the window locks too).</source>

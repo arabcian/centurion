@@ -8,6 +8,7 @@ class MainWindow;
 class QMenu;
 
 QIcon appIcon(int size = 64);
+QIcon sessionLockIcon(bool unlocked);
 
 class Tray : public QSystemTrayIcon {
     Q_OBJECT
