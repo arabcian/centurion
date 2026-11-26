@@ -780,20 +780,23 @@ void LightingTab::reload(bool elevate) {
     setBusy(true);
     QJsonObject req{{"op", "state"}};
     if (editProfile_ >= MIN_PROFILE && editProfile_ != active_) req["profile"] = editProfile_;
-    run(req, this, [this](const privileged::Result &r) {
+    run(req, this, [this, elevate](const privileged::Result &r) {
         if (r.reached && r.json.value("ok").toBool()) {
+            if (elevate) adminGranted_ = true;
             showBanner({}, false);
             applyState(r.json);
         } else if (r.reached && r.json.value("denied").toBool()) {
+            adminGranted_ = false;
             showBanner("No direct access to the keyboard controller: lighting goes through administrator rights.", true);
         } else if (r.reached && r.json.contains("present") && !r.json.value("present").toBool()) {
             showBanner("The Spectrum keyboard controller is not responding.", false);
         } else {
+            adminGranted_ = false;
             showBanner("Could not read the keyboard: " + r.message(), true);
         }
         setBusy(false);
         Q_EMIT stateChanged();
-    }, elevate);
+    }, elevate || adminGranted_);
 }
 
 void LightingTab::applyState(const QJsonObject &j) {

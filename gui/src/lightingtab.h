@@ -145,6 +145,7 @@ private:
     QPushButton *undo_ = nullptr, *redo_ = nullptr;
     int active_ = 0, editProfile_ = 0, brightness_ = 0, lastOn_ = 5;
     bool logo_ = false, ready_ = false, busy_ = false, filling_ = false;
+    bool adminGranted_ = false;  // "Use administrator rights" succeeded: later reloads go through pkexec too
     QColor paint_ = QColor(0xe0, 0xa4, 0x58);
 
     QLabel *banner_, *status_, *brightLabel_, *selLabel_, *budget_, *keysLabel_;

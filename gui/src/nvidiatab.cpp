@@ -1000,7 +1000,10 @@ bool NvidiaTab::runHelper(const QJsonObject &payload, const QString &okMsg, cons
         }
         setBusy(false);
         if (r.ok()) {
-            for (const QString &line : r.json.value("message").toString().split('\n', Qt::SkipEmptyParts)) log(line);
+            // First line is the result; any further line is a helper warning (e.g. no V3 base tuples, no lock
+            // read-back). Mark those so they are not mistaken for errors or for part of the result.
+            const QStringList lines = r.json.value("message").toString().split('\n', Qt::SkipEmptyParts);
+            for (qsizetype i = 0; i < lines.size(); ++i) log(i == 0 ? lines[i] : QStringLiteral("ℹ️ ") + lines[i]);
             if (!okMsg.isEmpty()) log("✔ " + okMsg);
         } else {
             log("✘ " + failMsg + ": " + r.message());

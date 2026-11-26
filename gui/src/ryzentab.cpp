@@ -229,7 +229,7 @@ ryzen::Layout ryzen::detect() {
         out.parked.insert(ccd);
         const int n = parked.size(), cores = n > SLOTS_PER_CCD ? n / 2 : n;
         for (int i = 0; i < cores; ++i)
-            out.cores[ccd].append({n > SLOTS_PER_CCD ? QList<int>{parked[i], parked[i + cores]} : QList<int>{parked[i]}, std::nullopt});
+            out.cores[ccd].append({n > SLOTS_PER_CCD ? QList<int>{parked[i], parked[i + cores]} : QList<int>{parked[i]}, std::nullopt, std::nullopt});
     }
     for (int ccd = 0; ccd < groups.size(); ++ccd) {
         if (out.parked.contains(ccd)) continue;

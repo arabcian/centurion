@@ -524,6 +524,8 @@ void OptimizeTab::buildUi() {
                      tr("Approve and apply the saved values of '%1'?").arg(name)) == QMessageBox::Yes)
             approvePreset(name, values, [this, name] { applyNamedPreset(name); });
     });
+    applySaved->setToolTip(tr("Apply the selected preset's approved values. Works while the window is locked; "
+                              "a preset that was never approved asks for approval first."));
     pl->addWidget(applySaved, 1, 4);
     pl->addWidget(bSave, 0, 2);
     pl->addWidget(bDel, 0, 3);
@@ -1013,7 +1015,8 @@ void OptimizeTab::buildUi() {
                            static_cast<QWidget *>(bLoad), static_cast<QWidget *>(bSave),
                            static_cast<QWidget *>(bDel), static_cast<QWidget *>(gameBtn_),
                            static_cast<QWidget *>(bootBtn_), static_cast<QWidget *>(bootClear_),
-                           static_cast<QWidget *>(summary), static_cast<QWidget *>(bootLabel_)})
+                           static_cast<QWidget *>(summary), static_cast<QWidget *>(bootLabel_),
+                           static_cast<QWidget *>(applySaved)})
             pl->removeWidget(w);
         while (QLayoutItem *item = pl->takeAt(0)) delete item;
         // Everything now lives in column 0: let it, not the old column 4, take the width.
@@ -1023,7 +1026,7 @@ void OptimizeTab::buildUi() {
         auto *presetLine = new QHBoxLayout;
         presetLine->setSpacing(5);
         for (QWidget *w : {static_cast<QWidget *>(presetCombo_),
-                           static_cast<QWidget *>(bLoad), static_cast<QWidget *>(bSave),
+                           static_cast<QWidget *>(bLoad), static_cast<QWidget *>(applySaved), static_cast<QWidget *>(bSave),
                            static_cast<QWidget *>(bDel), static_cast<QWidget *>(gameBtn_),
                            static_cast<QWidget *>(bootBtn_), static_cast<QWidget *>(bootClear_)})
             presetLine->addWidget(w);
@@ -4434,8 +4437,10 @@ QWidget *OptimizeTab::homePage(const QString &home) {
 
 void OptimizeTab::refreshEditorLock() {
     const bool unlocked = unlock::Manager::instance().unlocked();
-    if (applyBtn_) applyBtn_->setEnabled(unlocked && !busy_);
-    for (QPushButton *button : std::as_const(homeApply_)) button->setEnabled(unlocked && !busy_);
+    const QString lockedHint = unlocked ? QString()
+        : tr("Locked: unlock to write edited values. An approved preset can still be applied with \"Apply preset\".");
+    if (applyBtn_) { applyBtn_->setEnabled(unlocked && !busy_); applyBtn_->setToolTip(lockedHint); }
+    for (QPushButton *button : std::as_const(homeApply_)) { button->setEnabled(unlocked && !busy_); button->setToolTip(lockedHint); }
     for (const Row &r : rows_) {
         const bool enabled = unlocked && r.available && r.shadowedBy.isEmpty();
         for (QWidget *editor : {static_cast<QWidget *>(r.include), static_cast<QWidget *>(r.combo),
