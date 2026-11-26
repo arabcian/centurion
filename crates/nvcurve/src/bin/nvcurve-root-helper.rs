@@ -341,6 +341,11 @@ fn dispatch(op: &str) -> Option<fn(&Obj) -> OpResult> {
     })
 }
 
+/// Ops that put a new value on the GPU or change what loads at boot: only from the Centurion window that was
+/// unlocked with the PIN (centurion_helpers::unlock). Reads, resets, stored profiles by name and autoload are not.
+const NEW_VALUE_OPS: &[&str] = &["apply_gpu_offsets", "set_powermizer", "set_vram_memlock", "set_gpu_clocklock",
+                                 "write_nvcurve_profile", "set_default_gpu_profile"];
+
 /// Ops that change the GPU's live state. While centurion-calibrate holds the machine
 /// (/run/centurion/calibrating.json) they are refused, like the other hardware helpers do
 /// (centurion_helpers::refuse_during_calibration; this crate does not link that one).
@@ -398,6 +403,9 @@ fn run() -> Value {
     let Some(handler) = dispatch(op) else {
         return json!({"ok": false, "error": format!("Unknown or disallowed op: {}", obj.get("op").cloned().unwrap_or(Value::Null))});
     };
+    if NEW_VALUE_OPS.contains(&op) {
+        if let Some(r) = centurion_helpers::unlock::refuse(&payload) { return r; }
+    }
     if CURVE_WRITES.contains(&op) {
         if let Some(pid) = calibration_hold() {
             return json!({"ok": false, "calibrating": true, "error": format!(

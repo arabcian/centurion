@@ -21,7 +21,7 @@ fi
 own=(-o root -g root); [[ $EUID -eq 0 ]] || own=()
 T=target/release
 install -d "${own[@]}" -m 0755 "$DESTDIR$LIBEXEC" "$DESTDIR$PREFIX/bin"
-install "${own[@]}" -m 0755 "$T/legion-profile-helper" "$T/fwattr-helper" "$T/ryzen-co-helper" "$T/tune-helper" "$T/tune-profile-helper" "$T/intel-uv-helper" "$T/legion-gpu-helper" "$T/legion-firmware-helper" "$T/lighting-helper" "$T/amdgpu-helper" "$T/nvcurve-sensors" "$T/legion-ec-sensors" "$T/health-reader" "$T/centurion-boot-guard" "$T/netguard-helper" "$T/backup-helper" "$T/sysadmin-helper" \
+install "${own[@]}" -m 0755 "$T/legion-profile-helper" "$T/fwattr-helper" "$T/ryzen-co-helper" "$T/tune-helper" "$T/tune-profile-helper" "$T/intel-uv-helper" "$T/legion-gpu-helper" "$T/legion-firmware-helper" "$T/lighting-helper" "$T/amdgpu-helper" "$T/nvcurve-sensors" "$T/legion-ec-sensors" "$T/health-reader" "$T/centurion-boot-guard" "$T/netguard-helper" "$T/backup-helper" "$T/sysadmin-helper" "$T/sysadmin-config-helper" "$T/tune-admin-helper" \
     "$DESTDIR$LIBEXEC/"
 install "${own[@]}" -m 0700 "$T/nvcurve-root-helper" "$DESTDIR$LIBEXEC/"
 install "${own[@]}" -m 0755 "$T/nvcurve" "$T/centurion-gamemode" "$T/centurion-intel-uv" "$T/centurion-autotune" "$T/centurion-calibrate" "$T/centurion-netguard" "$T/centurion-display" "$T/centurion-export" "$T/centurion-cooltest" "$T/centurion-gpustress" "$T/centurion-cpustress" "$DESTDIR$PREFIX/bin/"
@@ -34,7 +34,7 @@ install -d "${own[@]}" -m 0755 "$DESTDIR$PREFIX/share/polkit-1/actions" "$DESTDI
     "$DESTDIR/etc/init.d" "$DESTDIR/etc/nvcurve/profiles"
 # Every action id in the policy must be known to the rules file (allowlist, not a namespace prefix).
 for id in $(grep -o 'action id="com\.centurion\.[^"]*"' packaging/polkit/com.centurion.policy | cut -d'"' -f2); do
-    grep -qF "\"$id\"" <(grep -v '^ *\*' packaging/polkit/49-centurion.rules) || [[ $id == com.centurion.firmware.write || $id == com.centurion.backup || $id == com.centurion.netguard || $id == com.centurion.sysadmin ]] \
+    grep -qF "\"$id\"" <(grep -v '^ *\*' packaging/polkit/49-centurion.rules) || [[ $id == com.centurion.firmware.write || $id == com.centurion.backup || $id == com.centurion.netguard || $id == com.centurion.sysadmin || $id == com.centurion.sysadmin.config || $id == com.centurion.tune.admin ]] \
         || { echo "polkit action $id is in com.centurion.policy but not in the rules allowlist (49-centurion.rules)" >&2; exit 2; }
 done
 sed "s|@LIBEXEC@|$LIBEXEC|g" packaging/polkit/com.centurion.policy > "$DESTDIR$PREFIX/share/polkit-1/actions/com.centurion.policy"

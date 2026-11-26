@@ -52,6 +52,22 @@
  * them, so it never gets a silent grant: AUTH_ADMIN_KEEP (password, then polkit's cache window) for a
  * wheel/sudo admin at the machine, AUTH_ADMIN (password every time) for everyone else.
  *
+ * Exception: sysadmin-config-helper (com.centurion.sysadmin.config) writes the configuration files
+ * themselves (/etc/fstab, sysctl, modprobe, udev), loads and unloads kernel modules and sets NVIDIA driver
+ * options. Each of these can make root run a command at the next module load, device event or boot, so it
+ * always gets AUTH_ADMIN (the password every time, no keep window), for wheel members at the machine too.
+ * The runtime-only actions stay in sysadmin-helper (above).
+ *
+ * Exception: tune-admin-helper (com.centurion.tune.admin) changes what root applies at every boot (boot
+ * preset, preset store, boot calibration, wake sources, wireless power lock) and sets the unlock PIN. It
+ * always gets AUTH_ADMIN.
+ *
+ * Unlock PIN: the helpers that put a new value on the hardware or the kernel (tune-helper, intel-uv-helper,
+ * ryzen-co-helper, amdgpu-helper, legion-gpu-helper, legion-profile-helper, nvcurve-root-helper,
+ * fwattr-helper) stay password-free here, but refuse those writes themselves unless the Centurion window
+ * that runs them was unlocked with the user's PIN (centurion_helpers::unlock). Reads, stored presets
+ * (tune-profile-helper) and the boot services are not affected.
+ *
  * Single tier (no install-time choice): a wheel or sudo admin, local and
  * active, runs the helpers without a password. There is no longer a "security
  * level" knob -- the graduated auth_admin_keep / preset-only tiers were removed.
@@ -98,6 +114,10 @@ var NETGUARD_ACTION = "com.centurion.netguard";
 var NETGUARD_HELPER = "@LIBEXEC@/netguard-helper";
 var SYSADMIN_ACTION = "com.centurion.sysadmin";
 var SYSADMIN_HELPER = "@LIBEXEC@/sysadmin-helper";
+var SYSADMIN_CONFIG_ACTION = "com.centurion.sysadmin.config";
+var SYSADMIN_CONFIG_HELPER = "@LIBEXEC@/sysadmin-config-helper";
+var TUNE_ADMIN_ACTION = "com.centurion.tune.admin";
+var TUNE_ADMIN_HELPER = "@LIBEXEC@/tune-admin-helper";
 
 polkit.addRule(function (action, subject) {
     // Firmware-persistent writes: always the password, never cached.
@@ -108,6 +128,16 @@ polkit.addRule(function (action, subject) {
     // System backup / restore: always the password, never cached.
     if (action.id === BACKUP_ACTION ||
         (action.id === "org.freedesktop.policykit.exec" && action.lookup("program") === BACKUP_HELPER)) {
+        return polkit.Result.AUTH_ADMIN;
+    }
+    // System configuration files, modules, driver options: always the password, never cached.
+    if (action.id === SYSADMIN_CONFIG_ACTION ||
+        (action.id === "org.freedesktop.policykit.exec" && action.lookup("program") === SYSADMIN_CONFIG_HELPER)) {
+        return polkit.Result.AUTH_ADMIN;
+    }
+    // What root applies at every boot, and the unlock PIN: always the password, never cached.
+    if (action.id === TUNE_ADMIN_ACTION ||
+        (action.id === "org.freedesktop.policykit.exec" && action.lookup("program") === TUNE_ADMIN_HELPER)) {
         return polkit.Result.AUTH_ADMIN;
     }
     // Network guard rules: never silent, the password is kept for polkit's cache window.

@@ -328,6 +328,13 @@ fn run() -> Value {
     let writes = obj.contains_key("device") || obj.contains_key("profile")
         || obj.get("fan_table").and_then(Value::as_str).is_some_and(|o| o != "get")
         || obj.get("wmae_toggle").and_then(Value::as_str) == Some("set");
+    // Cooling and firmware switches need the unlocked GUI (centurion_helpers::unlock): the fan table, a fan
+    // target, the firmware toggles. The platform profile, battery charge mode, Fn lock, camera, USB charging,
+    // keyboard backlight and fan full speed do not.
+    let gated = obj.get("fan_table").and_then(Value::as_str).is_some_and(|o| o != "get")
+        || obj.get("wmae_toggle").and_then(Value::as_str) == Some("set")
+        || obj.get("device").and_then(Value::as_str).is_some_and(|d| fan_index(d).is_some());
+    if gated { if let Some(r) = centurion_helpers::unlock::refuse(&req) { return r; } }
     if writes { if let Some(r) = centurion_helpers::refuse_during_calibration() { return r; } }
     let _lock = match writes.then(|| centurion_helpers::helper_lock("legion-profile-helper")).transpose() { Ok(l) => l, Err(e) => return json!({"ok": false, "error": e}) };
     if let Some(op) = obj.get("fan_table") {

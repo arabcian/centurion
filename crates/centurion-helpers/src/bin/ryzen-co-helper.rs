@@ -234,6 +234,10 @@ fn run() -> Value {
                      op.map(|v| v.to_string()).unwrap_or_else(|| "None".into()))}),
         };
     centurion_helpers::watchdog(120);
+    // New Curve Optimizer offsets need the unlocked GUI (centurion_helpers::unlock); probe and reset to 0 do not.
+    if matches!(op.and_then(Value::as_str), Some("set_coall" | "set_coper_batch")) {
+        if let Some(r) = centurion_helpers::unlock::refuse(&req) { return r; }
+    }
     if let Some(r) = refuse_during_calibration() { return r; }
     let _lock = match centurion_helpers::helper_lock("ryzen-co-helper") { Ok(l) => l, Err(e) => return json!({"ok": false, "error": e}) };
     let empty = Map::new();

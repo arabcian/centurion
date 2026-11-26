@@ -235,6 +235,7 @@ dependencies = [
 name = "nvcurve"
 version = "2.0.0"
 dependencies = [
+ "centurion-helpers",
  "libc",
  "log",
  "serde",

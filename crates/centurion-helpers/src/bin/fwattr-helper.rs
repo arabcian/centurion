@@ -196,6 +196,10 @@ fn run() -> Value {
         Ok(v) => v,
         Err(_) => return json!({"ok": false, "error": "malformed request"}),
     };
+    // Every request writes firmware power limits: the unlocked GUI only (centurion_helpers::unlock).
+    // A scene sends {"scene": true, "batch": [..]}, an array or a single item otherwise.
+    if let Some(r) = centurion_helpers::unlock::refuse(&req) { return r; }
+    let req = match req { Value::Object(mut o) if o.get("batch").is_some_and(Value::is_array) => o.remove("batch").unwrap_or_default(), v => v };
     if let Some(r) = centurion_helpers::refuse_during_calibration() { return r; }
     let _lock = match centurion_helpers::helper_lock("fwattr-helper") { Ok(l) => l, Err(e) => return json!({"ok": false, "error": e}) };
     match &req {

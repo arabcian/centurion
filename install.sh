@@ -12,9 +12,11 @@
 #                 offscreen training
 #                 run over every tab, then the final build with the profile)
 #   --no-harden   drop stack protector / FORTIFY=3 / CET / full RELRO / PIE on the GUI
-#   (The root helpers are password-free for a wheel/sudo admin at the machine.
-#    Firmware-persistent writes, backups and netguard rules always ask for the
-#    password; there is no longer a --security-level option.)
+#   (The root helpers are password-free for a wheel/sudo admin at the machine;
+#    writing new values needs the Centurion window unlocked with the user's PIN.
+#    Firmware-persistent writes, backups, configuration files and boot presets always
+#    ask for the password; netguard rules and runtime system actions use polkit's keep
+#    window. There is no --security-level option.)
 #   --clang       build the GUI with clang++ (+ lld when present) and link the Rust
 #                 helpers with clang; same as ./install-clang.sh
 #

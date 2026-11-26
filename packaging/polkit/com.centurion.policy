@@ -3,7 +3,7 @@
  "http://www.freedesktop.org/standards/PolicyKit/1/policyconfig.dtd">
 <policyconfig>
   <vendor>centurion</vendor>
-  <!-- Seventeen actions, one per Rust root helper, each pinned by exec.path; installed root:root 0755
+  <!-- Nineteen actions, one per Rust root helper, each pinned by exec.path; installed root:root 0755
        (nvcurve-root-helper 0700) under /usr/libexec/centurion.
        The password-less grant (wheel, local active session) comes only from
        /etc/polkit-1/rules.d/49-centurion.rules; the defaults below
@@ -170,6 +170,26 @@
     <!-- Never silent (see the rules file): it edits /etc/fstab, sysctl, modprobe and udev configuration. -->
     <defaults><allow_any>auth_admin</allow_any><allow_inactive>auth_admin</allow_inactive><allow_active>auth_admin_keep</allow_active></defaults>
     <annotate key="org.freedesktop.policykit.exec.path">@LIBEXEC@/sysadmin-helper</annotate>
+    <annotate key="org.freedesktop.policykit.exec.allow_gui">true</annotate>
+  </action>
+  <action id="com.centurion.sysadmin.config">
+    <description>Change system configuration files, kernel modules and driver options from Centurion's Health tools</description>
+    <description xml:lang="tr">Centurion'ın Sağlık araçlarından sistem yapılandırma dosyalarını, çekirdek modüllerini ve sürücü seçeneklerini değiştir</description>
+    <message>Authentication is required to change system configuration files, kernel modules or driver options</message>
+    <message xml:lang="tr">Sistem yapılandırma dosyalarını, çekirdek modüllerini veya sürücü seçeneklerini değiştirmek için kimlik doğrulama gerekiyor</message>
+    <!-- The password every time (see the rules file): fstab, modprobe, udev and modules decide what root runs. -->
+    <defaults><allow_any>auth_admin</allow_any><allow_inactive>auth_admin</allow_inactive><allow_active>auth_admin</allow_active></defaults>
+    <annotate key="org.freedesktop.policykit.exec.path">@LIBEXEC@/sysadmin-config-helper</annotate>
+    <annotate key="org.freedesktop.policykit.exec.allow_gui">true</annotate>
+  </action>
+  <action id="com.centurion.tune.admin">
+    <description>Change what Centurion applies at every boot (boot preset, preset store, unlock PIN)</description>
+    <description xml:lang="tr">Centurion'ın her açılışta uyguladıklarını değiştir (açılış ön ayarı, ön ayar deposu, kilit PIN'i)</description>
+    <message>Authentication is required to change the boot preset, the saved presets or the unlock PIN</message>
+    <message xml:lang="tr">Açılış ön ayarını, kayıtlı ön ayarları veya kilit PIN'ini değiştirmek için kimlik doğrulama gerekiyor</message>
+    <!-- The password every time (see the rules file): these persist and are applied as root at every boot. -->
+    <defaults><allow_any>auth_admin</allow_any><allow_inactive>auth_admin</allow_inactive><allow_active>auth_admin</allow_active></defaults>
+    <annotate key="org.freedesktop.policykit.exec.path">@LIBEXEC@/tune-admin-helper</annotate>
     <annotate key="org.freedesktop.policykit.exec.allow_gui">true</annotate>
   </action>
 </policyconfig>

@@ -1,4 +1,5 @@
 #include "dbusapi.h"
+#include "unlock.h"
 #include "healthtab.h"
 #include "hometab.h"
 #include "mainwindow.h"
@@ -52,6 +53,12 @@ QString DbusApi::ActiveScene() { return win_->scenes()->active(); }
 void DbusApi::ApplyScene(const QString &name) {
     if (!scenes::names().contains(name)) {
         sendErrorReply(QDBusError::InvalidArgs, QStringLiteral("no scene named '%1'").arg(name));
+        return;
+    }
+    // Scene files live in the user's home: while the window is locked another program could edit one and have
+    // it applied with the window's unlock grant. A D-Bus caller can only apply scenes while it is unlocked.
+    if (!unlock::Manager::instance().unlocked()) {
+        sendErrorReply(QDBusError::AccessDenied, QStringLiteral("Centurion is locked: unlock it with the PIN to apply scenes over D-Bus"));
         return;
     }
     win_->scenes()->apply(name, QStringLiteral("dbus"));

@@ -29,14 +29,12 @@ use std::path::Path;
 const MAX_STDIN_BYTES: usize = 16 * 1024;
 const BOOT_DIR: &str = "/etc/centurion";
 const BOOT_FILE: &str = "/etc/centurion/intel-uv-boot.json";
-/// The deepest offset the Intel tab offers (gui/src/inteltab.cpp UV_MIN). intel_uv itself accepts
-/// down to -1000 mV; this pkexec entry point (password-free for a console admin) takes nothing the
-/// GUI could not have sent. The boot service reads BOOT_FILE directly and is not affected.
-const GUI_UV_FLOOR_MV: f64 = -300.0;
-
+/// Early, readable refusal of an offset below this CPU's floor (intel_uv::uv_floor_mv: -200 mV, -50 mV on
+/// Core Ultra). intel_uv::apply enforces the same floor on every write, the boot service and daemon included.
 fn within_gui_floor(p: &intel_uv::Profile) -> Result<(), String> {
-    match p.voltage.iter().find(|(_, _, mv)| *mv < GUI_UV_FLOOR_MV) {
-        Some((plane, _, mv)) => Err(format!("voltage.{plane}: {mv} mV is below the Intel tab's {GUI_UV_FLOOR_MV} mV floor")),
+    let floor = intel_uv::uv_floor_mv();
+    match p.voltage.iter().find(|(_, _, mv)| *mv < floor) {
+        Some((plane, _, mv)) => Err(format!("voltage.{plane}: {mv} mV is below this CPU's {floor} mV floor")),
         None => Ok(()),
     }
 }
@@ -86,6 +84,10 @@ fn run() -> Value {
         parse_profile(&v).and_then(|p| within_gui_floor(&p).map(|()| p)).map(|p| (v, p)).map_err(|e| json!({"ok": false, "error": format!("invalid profile: {e}")}))
     };
     let hold = obj.get("hold").and_then(Value::as_bool).unwrap_or(false);
+    // New offsets need the unlocked GUI (centurion_helpers::unlock); status, reset to 0 mV and the stored boot profile do not.
+    if matches!(obj.get("op").and_then(Value::as_str), Some("apply" | "probe_uv_lock" | "set_boot")) {
+        if let Some(r) = centurion_helpers::unlock::refuse(&req) { return r; }
+    }
     if matches!(obj.get("op").and_then(Value::as_str), Some("apply" | "reset")) {
         if let Some(r) = centurion_helpers::refuse_during_calibration() { return r; }
     }
@@ -154,18 +156,19 @@ fn main() { init(); centurion_helpers::watchdog(120); std::process::exit(finish(
 mod tests {
     use super::*;
 
-    fn core(mv: f64) -> Result<(), String> { within_gui_floor(&parse_profile(&json!({"voltage": {"core": mv}})).unwrap()) }
+    fn core(mv: f64) -> Result<(), String> { parse_profile(&json!({"voltage": {"core": mv}})).and_then(|p| within_gui_floor(&p)) }
 
     #[test]
-    fn gui_floor_is_the_limit() {
-        assert!(core(-300.0).is_ok() && core(-50.0).is_ok());
-        assert!(core(-300.5).is_err() && core(-1000.0).is_err());
+    fn cpu_floor_is_the_limit() {
+        let f = intel_uv::uv_floor_mv();
+        assert!(core(f).is_ok() && core(-5.0).is_ok());
+        assert!(core(f - 0.5).is_err() && core(-300.0).is_err() && core(-1000.0).is_err());
     }
 
     #[test]
     fn boot_config_profiles_are_checked() {
-        let ok = json!({"ac": {"voltage": {"core": -300}}, "battery": null});
-        let deep = json!({"ac": {"voltage": {"core": -100}}, "battery": {"voltage": {"core": -400}}});
+        let ok = json!({"ac": {"voltage": {"core": -40}}, "battery": null});
+        let deep = json!({"ac": {"voltage": {"core": -40}}, "battery": {"voltage": {"core": -400}}});
         assert!(boot_within_gui_floor(&ok).is_ok());
         assert!(boot_within_gui_floor(&deep).is_err());
     }

@@ -1,5 +1,8 @@
-//! sysadmin-helper (com.centurion.sysadmin, password then polkit's keep window): the system changes
-//! Health → System tools and the Health pages offer. Every operation has a fixed target:
+//! sysadmin-helper / sysadmin-config-helper: the system changes Health → System tools and the Health pages offer.
+//! The two binaries split the operations (see src/bin/sysadmin-helper.rs): CONFIG_OPS go through
+//! sysadmin-config-helper (com.centurion.sysadmin.config, the password every time), the rest through
+//! sysadmin-helper (com.centurion.sysadmin, the password then polkit's keep window).
+//! Every operation has a fixed target:
 //!   - one-shot actions (TRIM, drop caches, a SMART self-test, load / unload a module);
 //!   - a fixed table of runtime sysfs knobs, each with its own value check (`sysfs_set`);
 //!   - per-device power switches (rfkill, USB / PCI runtime PM) whose device name is shape-checked;
@@ -14,6 +17,10 @@ use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
 pub const MAX_CONFIG: usize = 256 * 1024;
+
+/// Operations served only by sysadmin-config-helper: each can make root run a command or change what boots
+/// (modprobe install, udev RUN, fstab, a kernel module), so they never ride on a cached authorization.
+pub const CONFIG_OPS: &[&str] = &["config_write", "config_append", "config_restore", "module", "nvreg_set"];
 const BACKUP_ROOT: &str = "/var/lib/centurion/config-backups";
 const KEEP_BACKUPS: usize = 10;
 const BIN_DIRS: &[&str] = &["/usr/sbin", "/usr/bin", "/sbin", "/bin"];
@@ -114,6 +121,67 @@ pub fn validate(kind: Kind, text: &str) -> Result<(), String> {
     }
     Ok(())
 }
+
+/// sysctl keys a configuration file written here may not set: they turn a file write into running a command
+/// as root, or switch off a kernel hardening. `kernel.core_pattern` is refused only as a pipe ("|program").
+const SYSCTL_DENY: &[&str] = &[
+    "kernel.modprobe", "kernel.usermodehelper.", "kernel.kptr_restrict", "kernel.yama.ptrace_scope",
+    "kernel.unprivileged_bpf_disabled", "kernel.perf_event_paranoid", "fs.protected_", "kernel.randomize_va_space",
+    "kernel.modules_disabled", "kernel.dmesg_restrict", "kernel.kexec_load_disabled", "fs.suid_dumpable",
+];
+
+/// The modprobe `install` / `remove` commands accepted: only the "never load this module" idiom.
+const MODPROBE_NOOP: &[&str] = &["/bin/true", "/bin/false", "/usr/bin/true", "/usr/bin/false"];
+
+fn sysctl_key_denied(key: &str, value: &str) -> bool {
+    let k = key.trim().trim_start_matches('-').replace('/', ".");
+    if k == "kernel.core_pattern" { return value.trim_start().starts_with('|'); }
+    let hit = |d: &str| if d.ends_with('.') || d.ends_with('_') { k.starts_with(d) } else { k == d };
+    if let Some(prefix) = k.split('*').next().filter(|_| k.contains('*')) {
+        // A glob: refused if it could match a denied key.
+        return SYSCTL_DENY.iter().any(|d| d.starts_with(prefix) || prefix.starts_with(d)) || "kernel.core_pattern".starts_with(prefix);
+    }
+    SYSCTL_DENY.iter().any(|d| hit(d))
+}
+
+/// Lines of `new` that `old` does not already have, with their line numbers. Lines the file already had are the
+/// system's own (an existing `install pcspkr /bin/false` stays editable around); only what a request adds is checked.
+fn added_lines<'a>(old: &str, new: &'a str) -> Vec<(usize, &'a str)> {
+    let before: std::collections::HashSet<&str> = old.lines().map(str::trim).collect();
+    new.lines().enumerate().map(|(n, l)| (n + 1, l.trim())).filter(|(_, l)| !l.is_empty() && !l.starts_with('#') && !before.contains(l)).collect()
+}
+
+/// Refuses added lines that would make root run a command or lower a kernel hardening (see SYSCTL_DENY,
+/// MODPROBE_NOOP; udev RUN / PROGRAM / IMPORT{program}). fstab is checked by fstabcheck instead.
+pub fn new_lines_allowed(kind: Kind, old: &str, new: &str) -> Result<(), String> {
+    for (n, line) in added_lines(old, new) {
+        let bad = |why: &str| Err(format!("line {n}: {why}: {}", line.chars().take(80).collect::<String>()));
+        match kind {
+            Kind::Sysctl => if let Some((k, v)) = line.split_once('=') {
+                if sysctl_key_denied(k, v) { return bad("this key cannot be set from Centurion (it runs a command as root or lowers a kernel protection)"); }
+            },
+            Kind::Modprobe => {
+                let w: Vec<&str> = line.split_whitespace().collect();
+                if matches!(w.first(), Some(&"install") | Some(&"remove")) && !(w.len() == 3 && MODPROBE_NOOP.contains(&w[2])) {
+                    return bad("install / remove run a command as root; only \"install <module> /bin/false\" (never load it) is accepted here");
+                }
+            }
+            Kind::Udev => {
+                for part in line.split(',') {
+                    let key = part.trim().split(|c: char| c == '=' || c == '+' || c == '-' || c == ':' || c == '!').next().unwrap_or("").trim();
+                    if key.starts_with("RUN") || key.starts_with("PROGRAM") || key.starts_with("IMPORT{program}") {
+                        return bad("RUN, PROGRAM and IMPORT{program} start a program as root and are not accepted here");
+                    }
+                }
+            }
+            Kind::ModulesLoad | Kind::Fstab | Kind::ShellVars => {}
+        }
+    }
+    Ok(())
+}
+
+/// The file as it is now ("" when it does not exist yet), only to compare a request with.
+fn current_text(c: &Conf) -> String { std::fs::read_to_string(c.path).unwrap_or_default() }
 
 fn find_bin(name: &str) -> Option<PathBuf> {
     BIN_DIRS.iter().map(|d| Path::new(d).join(name)).find(|p| crate::trusted_path(p))
@@ -401,11 +469,28 @@ pub fn handle(req: &Value) -> Value {
             None => fail("values must be an object"),
         },
         "config_write" => match (conf(s("id")), req.get("content").and_then(Value::as_str)) {
-            (Some(c), Some(text)) => from(config_write(c, text)),
+            (Some(c), Some(text)) => {
+                let old = current_text(c);
+                if let Err(e) = new_lines_allowed(c.kind, &old, text) { return fail(e); }
+                // fstab: the added / changed lines are compared with the disks present now. A finding is
+                // reported back; the same request with "confirm_fstab": true writes anyway.
+                if c.kind == Kind::Fstab && req.get("confirm_fstab").and_then(Value::as_bool) != Some(true) {
+                    let disks = crate::fstabcheck::Disks::scan(&crate::fstabcheck::changed_mount_points(&old, text));
+                    let issues = crate::fstabcheck::check(&old, text, &disks);
+                    if !issues.is_empty() {
+                        return json!({"ok": false, "needs_confirm": true, "fstab_issues": issues,
+                                      "error": format!("the fstab change does not match the disks on this machine:\n{}", issues.join("\n"))});
+                    }
+                }
+                from(config_write(c, text))
+            }
             _ => fail("config_write needs a known id and content"),
         },
         "config_append" => match conf(s("id")) {
-            Some(c) => from(config_append(c, s("line"))),
+            Some(c) => match new_lines_allowed(c.kind, "", s("line")) {
+                Ok(()) => from(config_append(c, s("line"))),
+                Err(e) => fail(e),
+            },
             None => fail("unknown configuration id"),
         },
         "config_restore" => match conf(s("id")) {
@@ -442,6 +527,27 @@ mod tests {
         for bad in ["modules=\"$(reboot)\"", "modules=\"`id`\"", "modules=a; reboot", "modules=\"a\"; reboot", "rm -rf /",
                     "1x=\"a\"", "modules=\"a", "m='a'b", "modules=a&&b", "modules=\"a\\\"\""] {
             assert!(validate(Kind::ShellVars, bad).is_err(), "{bad}");
+        }
+    }
+
+    #[test]
+    fn added_lines_that_run_commands_are_refused() {
+        let ok = |k, o: &str, n: &str| new_lines_allowed(k, o, n).is_ok();
+        assert!(!ok(Kind::Modprobe, "", "install nvidia /sbin/modprobe --ignore-install nvidia; /bin/sh -c id"));
+        assert!(!ok(Kind::Modprobe, "", "remove nvidia /tmp/x"));
+        assert!(ok(Kind::Modprobe, "", "install pcspkr /bin/false\noptions nvidia NVreg_X=1"));
+        // A line the file already had is the system's own.
+        assert!(ok(Kind::Modprobe, "install foo /opt/vendor/load-foo\n", "install foo /opt/vendor/load-foo\nblacklist bar\n"));
+        assert!(!ok(Kind::Udev, "", "ACTION==\"add\", SUBSYSTEM==\"usb\", RUN+=\"/tmp/x\""));
+        assert!(!ok(Kind::Udev, "", "KERNEL==\"sda\", PROGRAM=\"/bin/x\""));
+        assert!(!ok(Kind::Udev, "", "KERNEL==\"sda\", IMPORT{program}=\"/bin/x\""));
+        assert!(ok(Kind::Udev, "", "ACTION==\"add\", SUBSYSTEM==\"pci\", ATTR{power/control}=\"auto\", TAG+=\"uaccess\""));
+        for bad in ["kernel.core_pattern = |/tmp/x %p", "kernel.modprobe=/tmp/x", "kernel/yama/ptrace_scope = 0",
+                    "fs.protected_symlinks=0", "-kernel.kptr_restrict=0", "kernel.* = 0", "kernel.usermodehelper.bset = 1"] {
+            assert!(!ok(Kind::Sysctl, "", bad), "{bad}");
+        }
+        for good in ["kernel.core_pattern = core.%p", "vm.swappiness = 10", "net.ipv4.tcp_congestion_control = bbr", "vm.* = 1"] {
+            assert!(ok(Kind::Sysctl, "", good), "{good}");
         }
     }
 

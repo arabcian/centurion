@@ -118,6 +118,8 @@ fi
 %{_libexecdir}/centurion/netguard-helper
 %{_libexecdir}/centurion/backup-helper
 %{_libexecdir}/centurion/sysadmin-helper
+%{_libexecdir}/centurion/sysadmin-config-helper
+%{_libexecdir}/centurion/tune-admin-helper
 %{_libexecdir}/centurion/nvcurve-sensors
 %{_libexecdir}/centurion/legion-ec-sensors
 %{_libexecdir}/centurion/health-reader

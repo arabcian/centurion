@@ -4583,6 +4583,26 @@ Centurion bunda test edilmedi; bazı donanım yazılımı özellikleri eksik ola
             <source>Unavailable favorite: %1</source>
             <translation>Kullanılamayan favori: %1</translation>
         </message>
+        <message>
+            <source>Change unlock PIN…</source>
+            <translation>Kilit PIN'ini değiştir…</translation>
+        </message>
+        <message>
+            <source>🔓 Unlocked</source>
+            <translation>🔓 Kilit açık</translation>
+        </message>
+        <message>
+            <source>🔒 Locked</source>
+            <translation>🔒 Kilitli</translation>
+        </message>
+        <message>
+            <source>New values can be written. Click to lock (closing the window locks too).</source>
+            <translation>Yeni değerler yazılabilir. Kilitlemek için tıklayın (pencereyi kapatmak da kilitler).</translation>
+        </message>
+        <message>
+            <source>Writing new values (undervolt, curves, power limits, kernel tunables) needs the PIN. Click to unlock.</source>
+            <translation>Yeni değer yazmak (undervolt, eğriler, güç sınırları, çekirdek ayarları) PIN gerektirir. Kilidi açmak için tıklayın.</translation>
+        </message>
     </context>
     <context>
         <name>NetPage</name>
@@ -27343,6 +27363,26 @@ Satırlar sıralamadan bağımsız karşılaştırılır; değişen satırlar si
             <source>A file in /etc/modprobe.d. Takes effect the next time the module loads; for drivers in the initramfs, regenerate it (dracut) and reboot.</source>
             <translation>/etc/modprobe.d içindeki bir dosya. Modül bir sonraki yüklenişinde geçerli olur; initramfs içindeki sürücüler için initramfs'i yeniden oluşturun (dracut) ve yeniden başlatın.</translation>
         </message>
+        <message>
+            <source>Check /etc/fstab</source>
+            <translation>/etc/fstab'ı kontrol edin</translation>
+        </message>
+        <message>
+            <source>These changed lines do not match the disks on this machine. A wrong entry can stop the next boot at an emergency shell.
+
+%1
+
+Save anyway?</source>
+            <translation>Değiştirilen bu satırlar bu makinedeki disklerle eşleşmiyor. Hatalı bir kayıt bir sonraki açılışı acil durum kabuğunda durdurabilir.
+
+%1
+
+Yine de kaydedilsin mi?</translation>
+        </message>
+        <message>
+            <source>Not saved: the fstab check found problems.</source>
+            <translation>Kaydedilmedi: fstab denetimi sorun buldu.</translation>
+        </message>
     </context>
     <context>
         <name>PipewireConfig</name>
@@ -28103,6 +28143,61 @@ Kayıt kimliği: %6
         <message>
             <source>CCD%1 core %2: %3</source>
             <translation>CCD%1 çekirdek %2: %3</translation>
+        </message>
+</context>
+<context>
+    <name>unlock::Manager</name>
+        <message>
+            <source>Unlock</source>
+            <translation>Kilidi aç</translation>
+        </message>
+        <message>
+            <source>Set an unlock PIN</source>
+            <translation>Kilit PIN'i belirle</translation>
+        </message>
+        <message>
+            <source>Writing new values (undervolt, curves, power limits, kernel tunables) needs an unlock PIN.
+
+Set a 4-digit PIN now? The administrator password is asked once to store it.</source>
+            <translation>Yeni değer yazmak (undervolt, eğriler, güç sınırları, çekirdek ayarları) bir kilit PIN'i gerektirir.
+
+Şimdi 4 haneli bir PIN belirlensin mi? Kaydetmek için yönetici parolası bir kez sorulur.</translation>
+        </message>
+        <message>
+            <source>Too many wrong PINs: the PIN is disabled. Set a new one (administrator password)?</source>
+            <translation>Çok fazla hatalı PIN: PIN devre dışı. Yenisi belirlensin mi (yönetici parolası)?</translation>
+        </message>
+        <message>
+            <source>Too many wrong PINs: try again in %1 s.</source>
+            <translation>Çok fazla hatalı PIN: %1 sn sonra tekrar deneyin.</translation>
+        </message>
+        <message>
+            <source>Unlock Centurion</source>
+            <translation>Centurion kilidini aç</translation>
+        </message>
+        <message>
+            <source>PIN (4 digits):</source>
+            <translation>PIN (4 hane):</translation>
+        </message>
+        <message>
+            <source>The PIN is 4 digits.</source>
+            <translation>PIN 4 hanelidir.</translation>
+        </message>
+        <message>
+            <source>Set unlock PIN</source>
+            <translation>Kilit PIN'ini belirle</translation>
+        </message>
+        <message>
+            <source>New PIN (4 digits):</source>
+            <translation>Yeni PIN (4 hane):</translation>
+        </message>
+        <message>
+            <source>The same PIN again:</source>
+            <translation>Aynı PIN tekrar:</translation>
+        </message>
+        <message>
+            <source>The two PINs differ.</source>
+            <translation>İki PIN birbirinden farklı.</translation>
         </message>
 </context>
 </TS>

@@ -23,6 +23,22 @@ path = "src/bin/tune-helper.rs"
 name = "tune-profile-helper"
 path = "src/bin/tune-profile-helper.rs"
 
+#   tune-admin-helper    only what root applies at every boot, and the unlock PIN (password every time)
+[[bin]]
+name = "tune-admin-helper"
+path = "src/bin/tune-admin-helper.rs"
+
+# Same pattern for the system tools (see src/bin/sysadmin-helper.rs):
+#   sysadmin-helper         runtime actions (password, then polkit's keep window)
+#   sysadmin-config-helper  configuration files, modules, driver options (password every time)
+[[bin]]
+name = "sysadmin-helper"
+path = "src/bin/sysadmin-helper.rs"
+
+[[bin]]
+name = "sysadmin-config-helper"
+path = "src/bin/sysadmin-config-helper.rs"
+
 [dev-dependencies]
 # Property-based tests only (`cargo test`); nothing in a normal build links it.
 proptest = { version = "1", default-features = false, features = ["std"] }

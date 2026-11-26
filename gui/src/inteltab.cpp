@@ -54,7 +54,7 @@
 #include <QVariant>
 
 // Limits mirror intel_uv.rs; the helper re-checks everything.
-static constexpr double UV_MIN = -300.0;  // GUI floor (helper accepts down to -1000)
+static constexpr double UV_MIN = -200.0;  // intel_uv.rs UV_MIN_MV; the CPU's own floor (-50 mV on Core Ultra) arrives with the status
 static constexpr double ICC_MAX = 511.75;  // 11-bit field (not throttled's 10-bit 255.75)
 static constexpr double UV_MAX_POSITIVE = 50.0;  // helper cap for allow_positive
 static constexpr int MONITOR_MS = 2000;
@@ -1359,6 +1359,11 @@ void IntelTab::showStatus(const QJsonObject &s) {
     if (s.contains("allow_writes") && s.value("allow_writes").toString() != "on")
         bits << QStringLiteral("<span style='color:%1'>msr.allow_writes=%2</span>").arg(theme::WARN, s.value("allow_writes").toString());
 
+    // This CPU's floor (intel_uv::uv_floor_mv): -200 mV, -50 mV on Core Ultra. The helper refuses anything deeper.
+    if (s.contains("uv_floor_mv")) {
+        const double floor = std::max(UV_MIN, s.value("uv_floor_mv").toDouble(UV_MIN));
+        for (Row &r : volt_) r.val->setMinimum(floor);
+    }
     const QJsonObject v = s.value("voltage").toObject();
     voltageSnapshot_ = v; voltageSnapshotTime_ = QDateTime::currentDateTime().toString(Qt::ISODate);
     bool anyPlane = false;

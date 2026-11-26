@@ -115,11 +115,20 @@ fn is_root() -> bool { unsafe { libc::geteuid() == 0 } }
 const PRESET_DIR: &str = "/etc/centurion/presets";
 
 fn profile_role() -> bool { env!("CARGO_BIN_NAME") == "tune-profile-helper" }
+fn admin_role() -> bool { env!("CARGO_BIN_NAME") == "tune-admin-helper" }
+
+/// Ops that change what root applies at every boot, and the unlock PIN. Through pkexec only tune-admin-helper
+/// serves them (com.centurion.tune.admin: the administrator password every time); root callers without pkexec
+/// (centurion-calibrate, the boot service) still reach them through tune-helper.
+const ADMIN_OPS: &[&str] = &["set_boot", "preset_save", "preset_delete", "calibrate_on_boot", "wakeup_set", "set_wireless_pm_lock", "pin_set"];
+
+/// The unlock PIN's own ops (centurion_helpers::unlock), served by every role.
+const UNLOCK_OPS: &[&str] = &["pin_status", "unlock", "lock"];
 
 /// Ops tune-profile-helper serves as root. None can put a value on the kernel that the user has not approved:
 /// stored presets by name, restoring saved originals, game-session bookkeeping, fixed read-only tools, and the
 /// root-owned boot preset. (Read-only ops that need no root are answered before this check.)
-const PROFILE_OPS: &[&str] = &["snapshot", "apply_preset", "apply_scene_preset", "release", "prune", "restore", "restore_keys", "restore_defaults", "boost", "isolate_join", "zram", "tool", "boot"];
+const PROFILE_OPS: &[&str] = &["pin_status", "unlock", "lock", "snapshot", "apply_preset", "apply_scene_preset", "release", "prune", "restore", "restore_keys", "restore_defaults", "boost", "isolate_join", "zram", "tool", "boot"];
 
 struct Lock(#[allow(dead_code)] fs::File);
 
@@ -1783,7 +1792,25 @@ fn run() -> Value {
     if profile_role() && !PROFILE_OPS.contains(&op) {
         return json!({"ok": false, "error": format!("'{op}' is not available in tune-profile-helper (it needs tune-helper)")});
     }
+    let via_pkexec = std::env::var_os("PKEXEC_UID").is_some();
+    if admin_role() && !ADMIN_OPS.contains(&op) && !UNLOCK_OPS.contains(&op) {
+        return json!({"ok": false, "error": format!("'{op}' is not available in tune-admin-helper (it needs tune-helper)")});
+    }
+    if !admin_role() && via_pkexec && ADMIN_OPS.contains(&op) {
+        return json!({"ok": false, "error": format!("'{op}' is handled by tune-admin-helper (administrator password every time)")});
+    }
     if !is_root() { return json!({"ok": false, "error": format!("'{op}' needs root (run through pkexec)")}); }
+    match op {
+        "pin_status" => return centurion_helpers::unlock::status(),
+        "unlock" => return centurion_helpers::unlock::unlock(req["pin"].as_str().unwrap_or("")),
+        "lock" => return centurion_helpers::unlock::lock(req["scenes"].as_bool().unwrap_or(false)),
+        "pin_set" => return centurion_helpers::unlock::set_pin(req["pin"].as_str().unwrap_or("")),
+        _ => {}
+    }
+    // New values on the kernel need the unlocked GUI (centurion_helpers::unlock); stored presets and restores do not.
+    if !profile_role() && !admin_role() && !PROFILE_OPS.contains(&op) {
+        if let Some(r) = centurion_helpers::unlock::refuse(&req) { return r; }
+    }
     let boot_receipt = if op == "boot" {
         match BootReceipt::begin() { Ok(r) => Some(r), Err(e) => { eprintln!("tune-helper: boot receipt unavailable: {e}"); None } }
     } else { None };

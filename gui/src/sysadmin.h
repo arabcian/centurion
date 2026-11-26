@@ -16,6 +16,12 @@ using Done = std::function<void(bool ok, const QString &message)>;
 
 /// Runs one request (no dialog). `cb` is not called if `ctx` is destroyed first.
 void run(const QJsonObject &req, QObject *ctx, Done cb, int timeoutMs = 120000);
+/// Same, with the helper's whole reply (e.g. "needs_confirm" / "fstab_issues" of a config_write).
+using DoneJson = std::function<void(bool ok, const QString &message, const QJsonObject &reply)>;
+void runJson(const QJsonObject &req, QObject *ctx, DoneJson cb, int timeoutMs = 120000);
+/// The helper that serves `op`: sysadmin-config-helper (password every time) for configuration files,
+/// modules and driver options (crates/centurion-helpers/src/sysadmin.rs CONFIG_OPS), sysadmin-helper otherwise.
+QString helperFor(const QString &op);
 
 /// Asks `confirm` (skipped when empty), runs `req`, shows the answer, then calls `after(ok)`.
 /// The answer goes in `status` when given (inline, no dialog), else in a message box.

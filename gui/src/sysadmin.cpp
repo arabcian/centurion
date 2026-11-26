@@ -48,10 +48,21 @@ void restartPipewire(QObject *ctx, Done cb) {
 
 }  // namespace
 
+QString helperFor(const QString &op) {
+    static const QStringList configOps{QStringLiteral("config_write"), QStringLiteral("config_append"), QStringLiteral("config_restore"),
+                                       QStringLiteral("module"), QStringLiteral("nvreg_set")};
+    return privileged::helperPath(configOps.contains(op) ? QStringLiteral("sysadmin-config-helper") : QStringLiteral("sysadmin-helper"));
+}
+
 void run(const QJsonObject &req, QObject *ctx, Done cb, int timeoutMs) {
     if (req.value(QStringLiteral("op")).toString() == QLatin1String("pipewire_restart")) { restartPipewire(ctx, std::move(cb)); return; }
-    privileged::run(privileged::helperPath(QStringLiteral("sysadmin-helper")), req, ctx,
+    privileged::run(helperFor(req.value(QStringLiteral("op")).toString()), req, ctx,
                     [cb](const privileged::Result &r) { cb(r.ok(), r.message()); }, timeoutMs);
+}
+
+void runJson(const QJsonObject &req, QObject *ctx, DoneJson cb, int timeoutMs) {
+    privileged::run(helperFor(req.value(QStringLiteral("op")).toString()), req, ctx,
+                    [cb](const privileged::Result &r) { cb(r.ok(), r.message(), r.json); }, timeoutMs);
 }
 
 void act(QWidget *parent, const QString &title, const QString &confirm, const QJsonObject &req, std::function<void(bool)> after,

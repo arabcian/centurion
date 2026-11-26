@@ -177,7 +177,7 @@ void NvRegDialog::apply() {
         return;
     apply_->setEnabled(false);
     status_->setText(QStringLiteral("Writing…"));
-    privileged::run(privileged::helperPath(QStringLiteral("sysadmin-helper")), QJsonObject{{QStringLiteral("op"), QStringLiteral("nvreg_set")}, {QStringLiteral("values"), values}},
+    privileged::run(privileged::helperPath(QStringLiteral("sysadmin-config-helper")), QJsonObject{{QStringLiteral("op"), QStringLiteral("nvreg_set")}, {QStringLiteral("values"), values}},
                     this, [this](const privileged::Result &r) {
         apply_->setEnabled(true);
         if (!r.ok()) { status_->setText(QStringLiteral("Not written: ") + r.message()); return; }

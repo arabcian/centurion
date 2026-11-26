@@ -1036,7 +1036,10 @@ void SceneEngine::helper(const QString &name, const QJsonObject &req, Done done,
     };
     // A transaction cannot roll back or advance before the previous root process exits.
     // A CPU lease is supplied only by the scene step that actually owns it (never tray calls).
-    privileged::runUntilExit(privileged::helperPath(name), req, this, callback, 120000, {}, cpuLease);
+    // "scene": the unlock grant keeps covering scene steps while the window is closed (unlock.rs).
+    QJsonObject marked = req;
+    marked.insert(QStringLiteral("scene"), true);
+    privileged::runUntilExit(privileged::helperPath(name), marked, this, callback, 120000, {}, cpuLease);
 }
 
 /// Applies a saved CPU profile (Ryzen Curve Optimizer or Intel undervolt, by vendor) straight from its
@@ -1343,7 +1346,7 @@ void SceneEngine::start(const Scene &s, const QString &expectedGeneration) {
                 });
             };
             if (batch.isEmpty()) { afterSysfs(true, {}); return; }
-            privileged::runUntilExit(privileged::helperPath("fwattr-helper"), QJsonDocument(batch).toJson(QJsonDocument::Compact), this,
+            privileged::runUntilExit(privileged::helperPath("fwattr-helper"), QJsonObject{{"scene", true}, {"batch", batch}}, this,
                                 [afterSysfs](const privileged::Result &r) {
                                     if (r.ok()) { afterSysfs(true, {}); return; }
                                     QStringList bad;
@@ -1451,7 +1454,7 @@ void SceneEngine::start(const Scene &s, const QString &expectedGeneration) {
             if (OptimizeTab::storeFresh(c.name, values)) { run(req); return; }
             // First use, or the preset changed since it was approved (a built-in updated with the
             // program): approve (store root-owned) once, then apply by name.
-            privileged::runUntilExit(privileged::helperPath("tune-helper"),
+            privileged::runUntilExit(privileged::helperPath("tune-admin-helper"),
                             QJsonObject{{"op", "preset_save"}, {"name", c.name}, {"values", values}}, this,
                             [run, req, done, name = c.name, values](const privileged::Result &r) {
                                 if (!r.ok()) { done(false, r.message()); return; }

@@ -7,6 +7,7 @@
 #include <QTimeZone>
 #include <QFileInfo>
 #include <QJsonDocument>
+#include <QJsonObject>
 #include <QPointer>
 #include <QProcess>
 #include <QStandardPaths>
@@ -240,8 +241,28 @@ static void runInternal(const QString &helper, const QByteArray &payload, QObjec
     timer->start(timeoutMs);
 }
 
+static LockedHandler &lockedHandler() { static LockedHandler h; return h; }
+void setLockedHandler(LockedHandler handler) { lockedHandler() = std::move(handler); }
+
+/// `cb`, but a {"locked": true} reply to a request that is not a scene's first asks for the PIN and sends the
+/// request again once (see setLockedHandler).
+static Callback retryWhenLocked(const QString &helper, const QByteArray &payload, QObject *ctx, Callback cb, int timeoutMs,
+                                bool waitForExit, std::function<void()> onTimeout, std::uint64_t lease) {
+    const QJsonDocument doc = QJsonDocument::fromJson(payload);
+    if (!lockedHandler() || (doc.isObject() && doc.object().value(QStringLiteral("scene")).toBool())) return cb;
+    QPointer<QObject> guard(ctx);
+    return [=](const Result &r) {
+        if (!r.reached || !r.json.value(QStringLiteral("locked")).toBool() || !lockedHandler()) { cb(r); return; }
+        lockedHandler()([=](bool unlocked) {
+            if (!guard) return;
+            if (!unlocked) { cb(r); return; }
+            runInternal(helper, payload, guard, cb, timeoutMs, waitForExit, onTimeout, lease);
+        });
+    };
+}
+
 void run(const QString &helper, const QByteArray &payload, QObject *ctx, Callback cb, int timeoutMs) {
-    runInternal(helper, payload, ctx, std::move(cb), timeoutMs, false, {}, 0);
+    runInternal(helper, payload, ctx, retryWhenLocked(helper, payload, ctx, std::move(cb), timeoutMs, false, {}, 0), timeoutMs, false, {}, 0);
 }
 void runUntilExit(const QString &helper, const QJsonObject &payload, QObject *ctx, Callback cb, int timeoutMs,
                   std::function<void()> onTimeout, std::uint64_t lease) {
@@ -249,7 +270,8 @@ void runUntilExit(const QString &helper, const QJsonObject &payload, QObject *ct
 }
 void runUntilExit(const QString &helper, const QByteArray &payload, QObject *ctx, Callback cb, int timeoutMs,
                   std::function<void()> onTimeout, std::uint64_t lease) {
-    runInternal(helper, payload, ctx, std::move(cb), timeoutMs, true, std::move(onTimeout), lease);
+    Callback wrapped = retryWhenLocked(helper, payload, ctx, std::move(cb), timeoutMs, true, onTimeout, lease);
+    runInternal(helper, payload, ctx, std::move(wrapped), timeoutMs, true, std::move(onTimeout), lease);
 }
 
 } // namespace privileged

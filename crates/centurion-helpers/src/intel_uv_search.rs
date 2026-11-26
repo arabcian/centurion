@@ -33,7 +33,8 @@ pub enum Next { Test(f64), Done(String) }
 impl Search {
     pub fn new(step: f64, floor: f64, seconds: u64) -> Result<Search, String> {
         if !(1.0..=25.0).contains(&step) { return Err("step must be 1..25 mV".into()); }
-        if !(-250.0..=-5.0).contains(&floor) { return Err("floor must be -250..-5 mV".into()); }
+        let lo = crate::intel_uv::uv_floor_mv();
+        if !(lo..=-5.0).contains(&floor) { return Err(format!("floor must be {lo}..-5 mV on this CPU")); }
         if !(5..=600).contains(&seconds) { return Err("seconds per core must be 5..600".into()); }
         Ok(Search { step, floor, seconds, good: 0.0, testing: None, failed: None, boot: String::new() })
     }

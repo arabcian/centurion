@@ -30,6 +30,7 @@ private:
     void tableToText();
     void textToTable();
     void save();
+    void writeConfig(const QString &id, const QString &text, bool confirmFstab);
     void restore();
     void addRow();
     void fillLive();

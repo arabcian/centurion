@@ -17,6 +17,7 @@
 #include <QHBoxLayout>
 #include <QHeaderView>
 #include <QInputDialog>
+#include <QJsonArray>
 #include <QJsonObject>
 #include <QLabel>
 #include <QLineEdit>
@@ -504,10 +505,34 @@ void ConfigPage::save() {
     status_->setStyleSheet(QString());
     status_->setText(tr("Saving…"));
     const QString id = QLatin1String(f.id);
-    sysadmin::run(QJsonObject{{QStringLiteral("op"), QStringLiteral("config_write")}, {QStringLiteral("id"), id}, {QStringLiteral("content"), text}}, this,
-                  [this, id](bool ok, const QString &msg) {
+    writeConfig(id, text, false);
+}
+
+void ConfigPage::writeConfig(const QString &id, const QString &text, bool confirmFstab) {
+    QJsonObject req{{QStringLiteral("op"), QStringLiteral("config_write")}, {QStringLiteral("id"), id}, {QStringLiteral("content"), text}};
+    if (confirmFstab) req.insert(QStringLiteral("confirm_fstab"), true);
+    sysadmin::runJson(req, this, [this, id, text](bool ok, const QString &msg, const QJsonObject &reply) {
         save_->setEnabled(true);
         if (QLatin1String(file().id) != id) return;  // another file was opened meanwhile
+        // fstab: the helper compared the changed lines with the disks present now (fstabcheck.rs).
+        if (!ok && reply.value(QStringLiteral("needs_confirm")).toBool()) {
+            QStringList issues;
+            for (const QJsonValue &v : reply.value(QStringLiteral("fstab_issues")).toArray()) issues << QStringLiteral("• ") + v.toString();
+            const auto answer = QMessageBox::warning(this, tr("Check /etc/fstab"),
+                tr("These changed lines do not match the disks on this machine. A wrong entry can stop the next boot "
+                   "at an emergency shell.\n\n%1\n\nSave anyway?").arg(issues.join(QLatin1Char('\n'))),
+                QMessageBox::Save | QMessageBox::Cancel, QMessageBox::Cancel);
+            if (answer == QMessageBox::Save) {
+                save_->setEnabled(false);
+                status_->setStyleSheet(QString());
+                status_->setText(tr("Saving…"));
+                writeConfig(id, text, true);
+                return;
+            }
+            status_->setStyleSheet(QStringLiteral("color:%1").arg(theme::DANGER));
+            status_->setText(tr("Not saved: the fstab check found problems."));
+            return;
+        }
         status_->setStyleSheet(QStringLiteral("color:%1").arg(ok ? theme::OK : theme::DANGER));
         if (ok) { load(); status_->setStyleSheet(QStringLiteral("color:%1").arg(theme::OK)); }
         status_->setText((ok ? tr("Saved. ") : tr("Not saved: ")) + msg);

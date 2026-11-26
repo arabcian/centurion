@@ -11,7 +11,11 @@ fn main() {
     centurion_helpers::watchdog(120);
     let code = match read_request(amdgpu::MAX_REQUEST) {
         // Both ops write the card (overdrive, power limit, fan): wait for a running calibration.
-        Ok(req) => finish(refuse_during_calibration().unwrap_or_else(|| amdgpu::handle(&req))),
+        Ok(req) => {
+            // New overdrive / power / fan values need the unlocked GUI (centurion_helpers::unlock); reset does not.
+            let locked = if req["op"] == "apply" { unlock::refuse(&req) } else { None };
+            finish(locked.or_else(refuse_during_calibration).unwrap_or_else(|| amdgpu::handle(&req)))
+        }
         Err(e) => finish(e),
     };
     std::process::exit(code);

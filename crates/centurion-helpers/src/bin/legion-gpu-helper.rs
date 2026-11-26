@@ -16,6 +16,10 @@ use serde_json::{json, Value};
 fn run() -> Value {
     let req = match read_request(8192) { Ok(v) => v, Err(e) => return e };
     let Some(o) = req.as_object() else { return json!({"ok": false, "error": "payload must be an object"}) };
+    // New power limits, the iGPU mode and the driver hand-over need the unlocked GUI (centurion_helpers::unlock).
+    if matches!(o.get("op").and_then(Value::as_str), Some("apply" | "set_igpu_mode" | "dgpu_release")) {
+        if let Some(r) = centurion_helpers::unlock::refuse(&req) { return r; }
+    }
     if matches!(o.get("op").and_then(Value::as_str), Some("apply" | "set_panel_od" | "set_gpu_mode" | "set_igpu_mode" | "set_fw_oc")) {
         if let Some(r) = centurion_helpers::refuse_during_calibration() { return r; }
     }

@@ -80,6 +80,7 @@ add_executable(centurion
     src/overviewpage.cpp src/overviewpage.h
     src/reportpreview.cpp src/reportpreview.h
     src/userhelper.cpp   src/userhelper.h
+    src/unlock.cpp       src/unlock.h
     src/dgpuusage.cpp    src/dgpuusage.h
     src/bootpage.cpp     src/bootpage.h
     src/nvregdialog.cpp  src/nvregdialog.h

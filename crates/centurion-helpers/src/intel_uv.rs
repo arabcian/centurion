@@ -66,7 +66,21 @@ pub const UV_MAX_POSITIVE_MV: f64 = 50.0;
 pub const PL_MAX_W: f64 = 250.0;
 
 pub const TICKS_PER_MV: f64 = 1.024;
-pub const UV_MIN_MV: f64 = -1000.0; // -1024 ticks, signed 11-bit floor (throttled)
+/// Deepest offset any profile may set, on every path (pkexec, boot file, daemon, scenes).
+pub const UV_MIN_MV: f64 = -200.0;
+/// Core Ultra parts: Intel's own limit for these is much shallower; nothing below this is written there.
+pub const UV_MIN_MV_CORE_ULTRA: f64 = -50.0;
+/// Range of the signed 11-bit offset field (-1024 ticks). Only used to write back a value read from the
+/// CPU (rollback), never for a requested one.
+const ENCODE_MIN_MV: f64 = -1000.0;
+
+/// The floor for a CPU, from its name in /proc/cpuinfo: Core Ultra -> UV_MIN_MV_CORE_ULTRA, else UV_MIN_MV.
+pub fn uv_floor_for(cpu_name: &str) -> f64 {
+    if cpu_name.contains("Core(TM) Ultra") || cpu_name.contains("Core Ultra") { UV_MIN_MV_CORE_ULTRA } else { UV_MIN_MV }
+}
+
+/// The floor for this CPU (see uv_floor_for). Unknown CPU: the general floor.
+pub fn uv_floor_mv() -> f64 { cpu_id_ref().map_or(UV_MIN_MV, |c| uv_floor_for(&c.name)) }
 /// IccMax field width. throttled uses 10 bits (0x3FF, max 255.75 A), which
 /// truncates current HX parts: a Core Ultra 7 255HX reports 0x41C = 263 A and
 /// throttled/10-bit decoding shows 7 A. The field is 11 bits (max 511.75 A).
@@ -143,6 +157,12 @@ pub fn mv_to_ticks_ex(mv: f64, allow_positive: bool) -> Result<i64, String> {
     }
     // f64::round = half away from zero == intel-undervolt's (|v|*1.024 + 0.5)
     // truncation. (undervolt.py's banker's round differs only on exact .5 ties.)
+    Ok((mv * TICKS_PER_MV).round() as i64)
+}
+
+/// Ticks of a value read back from the CPU, for a rollback: the whole field, not the request floor.
+fn restore_ticks(mv: f64) -> Result<i64, String> {
+    if !mv.is_finite() || !(ENCODE_MIN_MV..=999.0).contains(&mv) { return Err(format!("{mv} mV is outside the offset field")); }
     Ok((mv * TICKS_PER_MV).round() as i64)
 }
 
@@ -877,6 +897,7 @@ pub fn read_status() -> Value {
             "model": c.model, "stepping": c.stepping, "codename": codename(c.model)})),
         "lockdown": lockdown(),
         "uv_map_verified": uv_map_verified(),
+        "uv_floor_mv": uv_floor_mv(),
     });
     if id.as_ref().map(|c| c.vendor.as_str()) != Some("GenuineIntel") {
         out["ok"] = json!(false);
@@ -1213,6 +1234,8 @@ fn apply_ex(p: &Profile, rollback: bool) -> Value {
             // Profiles are also built in code: reset, full_apply, hold).
             if !uv_map_verified() { return Err(uv_map_refusal()); }
             if !cpu_planes().any(|p| p.1 == idx) { return Err(format!("domain {idx} does not exist on this CPU — not written")); }
+            let floor = uv_floor_mv();
+            if mv < floor { return Err(format!("{mv} mV is below this CPU's {floor} mV floor — not written")); }
             let ticks = mv_to_ticks_ex(mv, p.allow_positive)?;
             let (cmd, back) = match msr.mailbox_rmw(uv_read_cmd(idx), |cur| Some(uv_write_cmd_keep(idx, ticks, cur))).map_err(|e| err_str(&e))? {
                 Rmw::Absent(st) if ticks == 0 => return Ok(format!("not present on this CPU (status {st:#04x}) — skipped")),
@@ -1564,7 +1587,7 @@ fn apply_ex(p: &Profile, rollback: bool) -> Value {
     let mut rolled = Vec::new();
     for (what, u) in undo.into_iter().rev() {
         let r: Result<String, String> = match u {
-            Undo::Volt(idx, cur) => mv_to_ticks_ex(decode_mv(cur), true).and_then(|t| {
+            Undo::Volt(idx, cur) => restore_ticks(decode_mv(cur)).and_then(|t| {
                 match msr.mailbox_rmw(uv_read_cmd(idx), |c| Some(uv_write_cmd_keep(idx, t, c))).map_err(|e| err_str(&e))? {
                     Rmw::Done { back, .. } if mb_status(back) == 0 && back & 0xFFFF_FFFF == cur & 0xFFFF_FFFF => Ok(format!("{:.2} mV restored", decode_mv(cur))),
                     Rmw::Done { back, .. } => Err(format!("readback {:.2} mV, wanted {:.2} mV", decode_mv(back), decode_mv(cur))),
@@ -1810,11 +1833,23 @@ mod tests {
         assert_eq!(decode_mv(0xf0000000), -125.0);
         // status byte set: undervolt.py would mis-decode this, throttled/us not
         assert_eq!(decode_mv(0x0000_00FF_F9A0_0000), decode_mv(0xF9A0_0000));
-        for mv in (-1000..=0).map(|x| x as f64) {
+        for mv in (UV_MIN_MV as i64..=0).map(|x| x as f64) {
             let t = mv_to_ticks(mv).unwrap();
-            assert_eq!(mv_to_ticks(decode_mv(encode_offset(t))).unwrap(), t);
+            assert_eq!(restore_ticks(decode_mv(encode_offset(t))).unwrap(), t);
         }
-        assert!(mv_to_ticks(1.0).is_err() && mv_to_ticks(-1000.5).is_err());
+        for mv in (-1000..=0).map(|x| x as f64) {
+            let t = restore_ticks(mv).unwrap();
+            assert_eq!(restore_ticks(decode_mv(encode_offset(t))).unwrap(), t);
+        }
+        assert!(mv_to_ticks(1.0).is_err() && mv_to_ticks(-200.5).is_err() && mv_to_ticks(-300.0).is_err());
+    }
+
+    #[test]
+    fn floor_by_cpu_name() {
+        assert_eq!(uv_floor_for("Intel(R) Core(TM) Ultra 7 255HX"), UV_MIN_MV_CORE_ULTRA);
+        assert_eq!(uv_floor_for("Intel(R) Core(TM) Ultra 9 285K"), -50.0);
+        assert_eq!(uv_floor_for("13th Gen Intel(R) Core(TM) i9-13980HX"), -200.0);
+        assert_eq!(uv_floor_for(""), UV_MIN_MV);
     }
 
     #[test]

@@ -126,6 +126,10 @@ QString OptimizeTab::helperPathForDescribe() { return helperPath(); }
 // asks for the password there only).
 static QString helperForOp(const QString &op) {
     static const QStringList profileOps{"snapshot", "apply_preset", "release", "prune", "restore", "restore_keys", "restore_defaults", "boost", "isolate_join", "tool"};
+    // What root applies at every boot (and the preset store) goes through tune-admin-helper: the administrator
+    // password every time (crates/centurion-helpers/src/bin/tune-helper.rs ADMIN_OPS).
+    static const QStringList adminOps{"set_boot", "preset_save", "preset_delete", "calibrate_on_boot", "wakeup_set", "set_wireless_pm_lock", "pin_set"};
+    if (adminOps.contains(op)) return privileged::helperPath(QStringLiteral("tune-admin-helper"));
     return privileged::helperPath(profileOps.contains(op) ? QStringLiteral("tune-profile-helper") : QStringLiteral("tune-helper"));
 }
 

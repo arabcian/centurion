@@ -47,6 +47,10 @@
 #include <QMessageBox>
 #include <QPointer>
 #include "uinavigator.h"
+#include "unlock.h"
+#include "privileged.h"
+#include <QMenu>
+#include <QToolButton>
 #include "navigationtargets.h"
 #include "tuningnavigation.h"
 #include "experimentalui.h"
@@ -97,7 +101,28 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
     tabs_->tabBar()->setAttribute(Qt::WA_StyledBackground, true);  // ...and the selector rail behind the tabs
     tabs_->setDocumentMode(true);
     tabs_->setUsesScrollButtons(true);
+    // Unlock PIN: writing new values needs this window unlocked (unlock.h). The button shows the state; a
+    // refused write asks for the PIN itself (privileged::setLockedHandler) and is sent again once unlocked.
+    lockButton_ = new QToolButton;
+    lockButton_->setObjectName(QStringLiteral("lockButton"));
+    lockButton_->setPopupMode(QToolButton::MenuButtonPopup);
+    auto *lockMenu = new QMenu(lockButton_);
+    lockMenu->addAction(tr("Change unlock PIN…"), this, [this] { unlock::Manager::instance().changePin(this); });
+    lockButton_->setMenu(lockMenu);
+    auto showLock = [this](bool on) {
+        lockButton_->setText(on ? tr("🔓 Unlocked") : tr("🔒 Locked"));
+        lockButton_->setToolTip(on ? tr("New values can be written. Click to lock (closing the window locks too).")
+                                   : tr("Writing new values (undervolt, curves, power limits, kernel tunables) needs the PIN. Click to unlock."));
+    };
+    showLock(false);
+    connect(&unlock::Manager::instance(), &unlock::Manager::changed, lockButton_, showLock);
+    connect(lockButton_, &QToolButton::clicked, this, [this] {
+        auto &m = unlock::Manager::instance();
+        if (m.unlocked()) m.lock(false); else m.requestUnlock(this);
+    });
+    privileged::setLockedHandler([this](std::function<void(bool)> done) { unlock::Manager::instance().requestUnlock(this, std::move(done)); });
     if (!theme::experimentalEnabled()) setCentralWidget(tabs_);
+    if (!theme::experimentalEnabled()) tabs_->setCornerWidget(lockButton_, Qt::TopRightCorner);
     if (!theme::experimentalEnabled()) {
         // Classic retains its original header, tab strip and positioning.
         mark_ = new QWidget(tabs_);
@@ -463,6 +488,7 @@ void MainWindow::installExperimentalShell() {
     operationsButton->setAccessibleName(tr("Active operations"));
     operationsButton->setToolTip(tr("Active operations") + QStringLiteral(" · Ctrl+Shift+O"));
     connect(operationsButton, &QPushButton::clicked, this, &MainWindow::showOperations);
+    rail->addWidget(lockButton_);
     rail->addWidget(operationsButton);
     rail->addWidget(expToggle_);
     auto *collapseShortcut = new QShortcut(QKeySequence(QStringLiteral("Ctrl+B")), this);
@@ -1056,6 +1082,8 @@ void MainWindow::hideEvent(QHideEvent *e) {
 
 void MainWindow::closeEvent(QCloseEvent *e) {
     if (!isMinimized()) QSettings(QSettings::IniFormat, QSettings::UserScope, QStringLiteral("centurion"), QStringLiteral("gui")).setValue(QStringLiteral("ui/window_geometry"), saveGeometry());
+    // Closing the window locks it again; scene steps keep running from the tray (unlock.h).
+    if (unlock::Manager::instance().unlocked()) unlock::Manager::instance().lock(true);
     if (hideOnClose_ && !forceQuit_) { e->ignore(); hide(); return; }
     if (!canQuit()) { e->ignore(); return; }
     QMainWindow::closeEvent(e);

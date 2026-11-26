@@ -5,6 +5,29 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions follo
 
 ## [Unreleased]
 
+### Security
+- Unlock PIN: the helpers that write new values to the hardware or the kernel (tune-helper, intel-uv-helper,
+  ryzen-co-helper, amdgpu-helper, legion-gpu-helper fan/power, legion-profile-helper fan table / fan targets /
+  firmware switches, nvcurve-root-helper, fwattr-helper) stay password-free in polkit but refuse those writes unless
+  the request comes from the Centurion window unlocked with a 4-digit PIN (lock button; a refused write asks for it).
+  Closing the window locks it again; scene steps keep running from the tray. The PIN is checked by root
+  (salted, iterated SHA-256 in `/etc/centurion/pin.json`, 0600); from the 5th wrong PIN each try waits longer, the
+  10th disables it until it is set again with the administrator password. Reads, stored presets, resets and the
+  boot services are not affected. D-Bus *ApplyScene* is refused while the window is locked.
+- New `tune-admin-helper` (polkit `com.centurion.tune.admin`, the administrator password every time): boot preset,
+  preset store, boot calibration, wake sources, wireless power lock and the PIN. tune-helper refuses these through
+  pkexec.
+- `sysadmin-helper` split: configuration files, module load/unload and NVIDIA driver options moved to
+  `sysadmin-config-helper` (polkit `com.centurion.sysadmin.config`, the password every time); runtime actions stay.
+  Added lines may no longer use modprobe `install`/`remove` (except `/bin/false`/`/bin/true`), udev
+  `RUN`/`PROGRAM`/`IMPORT{program}`, or sysctl keys that run a command or lower a kernel protection
+  (`kernel.core_pattern=|…`, `kernel.modprobe`, `kernel.yama.ptrace_scope`, `fs.protected_*`, …).
+- `/etc/fstab` edits: the changed lines are compared with the disks present (UUID / PARTUUID / LABEL / PARTLABEL /
+  device node, file system type, mount point, field count, explicit `suid`/`dev`), with "did you mean" suggestions;
+  saving with findings needs a second confirmation.
+- Intel undervolt: no offset below -200 mV on any path (pkexec, boot file, daemon, scenes, search), -50 mV on Core
+  Ultra CPUs. The Intel tab's spin boxes follow the CPU's floor.
+
 ### Changed
 - 61 rows that neither calibration nor Autotune touch and no built-in preset sets (network latency and buffering, the
   Wi-Fi/Bluetooth rows, elevator and discard fine tuning, NUMA/KSM/khugepaged internals, unmeasured scheduler feature

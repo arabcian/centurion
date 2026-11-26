@@ -73,7 +73,8 @@ preset from the GUI — enabling the service early is harmless.
         legion-profile-helper  fwattr-helper  ryzen-co-helper
         tune-helper  intel-uv-helper  legion-gpu-helper
         legion-firmware-helper  lighting-helper  amdgpu-helper  legion-ec-sensors  health-reader
-        netguard-helper  backup-helper  sysadmin-helper
+        netguard-helper  backup-helper  sysadmin-helper  sysadmin-config-helper
+        tune-profile-helper  tune-admin-helper
         centurion-boot-guard                                          (root:root 0755)
         nvcurve-root-helper                                     (root:root 0700)
     /usr/share/polkit-1/actions/com.centurion.policy
@@ -748,7 +749,10 @@ came up during the sysfs review, as one tab backed by a Rust root helper.
     crates/centurion-helpers/src/bin/tune-helper  pkexec target: apply / restore / boost / boot
     crates/centurion-helpers/src/bin/tune-helper.rs is also built as tune-profile-helper (Cargo [[bin]]): only
     apply_preset (values from the root-owned store /etc/centurion/presets, by name) / restore / release /
-    boost / boot / tools. Raw values, preset_save/delete, set_boot and driver options stay in tune-helper.
+    boost / boot / tools. Raw values and driver options stay in tune-helper, which accepts them through pkexec
+    only from the Centurion window unlocked with the user's PIN (crates/centurion-helpers/src/unlock.rs).
+    It is also built as tune-admin-helper (polkit com.centurion.tune.admin, password every time): set_boot,
+    preset_save/delete, calibrate_on_boot, wakeup_set, set_wireless_pm_lock and pin_set.
     crates/centurion-helpers/src/bin/centurion-gamemode Lutris/Steam front end (user process)
     gui/src/optimizetab.{h,cpp}             the tab
     packaging/openrc/centurion-tune               boot preset service
