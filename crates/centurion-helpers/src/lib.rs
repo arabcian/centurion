@@ -16,6 +16,7 @@ pub mod abverify;
 pub mod amdgpu;
 pub mod autotune;
 pub mod backup;
+mod restore_guide;
 pub mod distro;
 pub mod tarscan;
 pub mod bootguard;

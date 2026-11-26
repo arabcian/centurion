@@ -61,7 +61,7 @@ use std::time::{Duration, Instant, SystemTime};
 pub const HOME_EXCLUDE: &str = "/home/*";
 /// Mount points created in the restore target when the archive lacks them
 /// (archives made with plain `--exclude=/proc`): (path, mode).
-const MOUNT_POINTS: &[(&str, u32)] = &[("proc", 0o755), ("sys", 0o755), ("dev", 0o755), ("run", 0o755),
+pub(crate) const MOUNT_POINTS: &[(&str, u32)] = &[("proc", 0o755), ("sys", 0o755), ("dev", 0o755), ("run", 0o755),
     ("tmp", 0o1777), ("var/tmp", 0o1777), ("mnt", 0o755), ("media", 0o755), ("home", 0o755)];
 
 pub const CONFIG_FORMAT: &str = "centurion-config-backup";
@@ -73,8 +73,8 @@ const SYS_CENTURION_LOGS: &[&str] = &["var/log/centurion"];
 /// /var/lib/centurion files worth restoring; the rest (boot guard
 /// state, boot-default snapshot, pending GPU mode) belongs to the boot it was made in.
 /// /etc/centurion files a restore may write (everything the helpers keep there); anything else in an archive is skipped.
-const ETC_RESTORE: &[&str] = &["tune-boot.json", "intel-uv-boot.json", "netguard.json", "wakeup.json", "dgpu-awake", "wireless-pm-lock"];
-const VARLIB_RESTORE: &[&str] = &["signature.json", "calibration.json", "outcomes.json", "io-probe.json", "wmae-verified.json"];
+pub(crate) const ETC_RESTORE: &[&str] = &["tune-boot.json", "intel-uv-boot.json", "netguard.json", "wakeup.json", "dgpu-awake", "wireless-pm-lock"];
+pub(crate) const VARLIB_RESTORE: &[&str] = &["signature.json", "calibration.json", "outcomes.json", "io-probe.json", "wmae-verified.json"];
 // "System profile": how this installation is put together, reference only — `distro::PROFILE_COMMON` plus
 // `distro::profile_paths(family)`. Left out: `distro::PROFILE_SKIP` (Portage's / pacman's GnuPG homes, which
 // hold private keys and agent sockets, and repository credentials).
@@ -750,6 +750,16 @@ fn system_backup_inner(req: &Value) -> Result<Value, String> {
         "parent": tip.as_ref().map(|t| t.image.file_name().unwrap_or_default().to_string_lossy().into_owned())});
     let side = sidecar(&fin);
     let _ = crate::write_root_file(&side, info.to_string().as_bytes());
+    // Hand-restore instructions next to the image (best effort: the image is good without them).
+    let steps: Vec<String> = restore_sequence(&fin).map_or_else(|_| vec![name.clone()], |s| s.iter()
+        .map(|(p, _)| p.file_name().unwrap_or_default().to_string_lossy().into_owned()).collect());
+    let guide = crate::restore_guide::guide_path(&fin);
+    let guide_text = crate::restore_guide::image_guide(&crate::restore_guide::Image {
+        dir: &dest.to_string_lossy(), steps: &steps, include_home: req["include_home"].as_bool().unwrap_or(false),
+        created: &st.iso, host: &host,
+        crypt: match &enc { Enc::None => crate::restore_guide::Crypt::None, Enc::Recipient(_) => crate::restore_guide::Crypt::Key,
+                            Enc::Passphrase => crate::restore_guide::Crypt::Passphrase } });
+    let guide_ok = crate::write_root_file(&guide, guide_text.as_bytes()).is_ok();
     crate::wlog::log("backup", &format!("system_backup {} level {level_out}{}", fin.display(),
                                         if age.is_some() { format!(" ({})", enc.label()) } else { String::new() }));
 
@@ -772,6 +782,7 @@ fn system_backup_inner(req: &Value) -> Result<Value, String> {
     let removed = prune(&dest, req["keep"].as_u64().unwrap_or(0) as usize, &chain);
     if !removed.is_empty() { crate::wlog::log("backup", &format!("retention removed {}", removed.join(" "))); }
     Ok(json!({"ok": true, "archive": fin, "bytes": bytes, "files": files, "tar_status": tcode,
+              "restore_guide": guide_ok.then_some(guide),
               "degraded": tcode == 2, "verified": verified, "encrypted": age.is_some(), "encryption": info["encryption"],
               "level": level_out, "chain": chain, "notes": notes,
               "removed": removed, "message_count": prog.msg_count.load(Ordering::Relaxed), "messages": prog.tail(),
@@ -853,6 +864,7 @@ fn prune(dir: &Path, keep: usize, kept: &str) -> Vec<String> {
             if fs::remove_file(&p).is_ok() {
                 let _ = fs::remove_file(sidecar(&p));
                 let _ = fs::remove_file(snar_of(&p));
+                let _ = fs::remove_file(crate::restore_guide::guide_path(&p));
                 removed.push(n.clone());
             }
         }
@@ -1474,7 +1486,8 @@ fn pre_write_victims(mut names: Vec<String>, keep: usize) -> Vec<String> {
 
 fn prune_pre_write(dir: &Path, keep: usize) -> Vec<String> {
     let names: Vec<String> = fs::read_dir(dir).into_iter().flatten().flatten().filter_map(|e| e.file_name().into_string().ok()).collect();
-    pre_write_victims(names, keep).into_iter().filter(|n| fs::remove_file(dir.join(n)).is_ok()).collect()
+    pre_write_victims(names, keep).into_iter().filter(|n| fs::remove_file(dir.join(n)).is_ok())
+        .inspect(|n| { let _ = fs::remove_file(crate::restore_guide::guide_path(&dir.join(n))); }).collect()
 }
 
 /// {"op":"config_backup","dest_dir":"/…","include_profile":true,"include_logs":false,"tag":"pre-restore","centurion_version":"2.0.0"}
@@ -1557,11 +1570,19 @@ fn config_backup_inner(req: &Value) -> Result<Value, String> {
     }
     let _ = fs::set_permissions(&partial, fs::Permissions::from_mode(0o600));
     fs::rename(&partial, &fin).map_err(|e| { let _ = fs::remove_file(&partial); format!("{}: {e}", fin.display()) })?;
+    // Hand-restore instructions next to the archive (best effort).
+    let guide = crate::restore_guide::guide_path(&fin);
+    let c = &manifest["contents"];
+    let guide_text = crate::restore_guide::config_guide(&crate::restore_guide::Config {
+        archive: &fin.to_string_lossy(), created: &st.iso, host: &host, profile_only,
+        user_config: c["user_config"].as_u64().unwrap_or(0), user_state: c["user_state"].as_u64().unwrap_or(0),
+        system: c["system"].as_u64().unwrap_or(0), system_profile: c["system_profile"].as_u64().unwrap_or(0) });
+    let guide_ok = fs::write(&guide, guide_text).is_ok();
     let removed = match safe_tag(&req["tag"]) {
         Some(t) if PRE_WRITE_TAGS.contains(&t) => prune_pre_write(&dest, PRE_WRITE_KEEP),
         _ => Vec::new(),
     };
-    Ok(json!({"ok": true, "archive": fin, "bytes": fs::metadata(&fin).map_or(0, |m| m.len()),
+    Ok(json!({"ok": true, "archive": fin, "restore_guide": guide_ok.then_some(guide), "bytes": fs::metadata(&fin).map_or(0, |m| m.len()),
               "contents": manifest["contents"], "skipped": manifest["skipped"], "removed": removed}))
 }
 
