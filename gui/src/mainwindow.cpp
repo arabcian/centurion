@@ -84,6 +84,8 @@
 // glibc keeps heap freed by the window's tabs, dialogs and previews mapped;
 // once it is back in the tray, hand that memory to the kernel.
 static void trimHeap() { ::malloc_trim(0); }
+/// Height of the four boxes at the foot of the experimental rail (lock, operations, favorites, hide labels).
+static constexpr int RAIL_BOX_HEIGHT = 32;
 
 MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
     setWindowTitle("Centurion");
@@ -486,23 +488,30 @@ void MainWindow::installExperimentalShell() {
         expUserToggled_ = true;
         setExperimentalCollapsed(!expCollapsed_);
     });
-    auto *operationsButton = new QPushButton;
-    operationsButton->setObjectName(QStringLiteral("btnMini"));
-    operationsButton->setText(QStringLiteral("…"));
-    operationsButton->setAccessibleName(tr("Active operations"));
-    operationsButton->setToolTip(tr("Active operations") + QStringLiteral(" · Ctrl+Shift+O"));
-    connect(operationsButton, &QPushButton::clicked, this, &MainWindow::showOperations);
+    // The four rail controls share one box: same height, full rail width, a glyph plus a short label (the label
+    // is dropped, the glyph kept, when the rail is collapsed; the tooltips say the rest).
+    expOperations_ = new QPushButton;
+    expOperations_->setObjectName(QStringLiteral("expRailAction"));
+    expOperations_->setAccessibleName(tr("Active operations"));
+    expOperations_->setToolTip(tr("Active operations") + QStringLiteral(" · Ctrl+Shift+O"));
+    connect(expOperations_, &QPushButton::clicked, this, &MainWindow::showOperations);
+    expToggle_->setFixedHeight(RAIL_BOX_HEIGHT);
+    expOperations_->setFixedHeight(RAIL_BOX_HEIGHT);
+    lockButton_->setFixedHeight(RAIL_BOX_HEIGHT);
+    lockButton_->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
     rail->addWidget(lockButton_);
-    rail->addWidget(operationsButton);
+    rail->addWidget(expOperations_);
     rail->addWidget(expToggle_);
     auto *collapseShortcut = new QShortcut(QKeySequence(QStringLiteral("Ctrl+B")), this);
     collapseShortcut->setContext(Qt::ApplicationShortcut);
     connect(collapseShortcut, &QShortcut::activated, expToggle_, &QPushButton::click);
-    auto *favoritesButton = new QPushButton(QStringLiteral("☆"));
-    favoritesButton->setAccessibleName(tr("Navigation favorites and startup page"));
-    favoritesButton->setToolTip(tr("Navigation favorites and startup page") + QStringLiteral(" · Ctrl+Shift+F"));
-    connect(favoritesButton, &QPushButton::clicked, this, &MainWindow::showNavigationPreferences);
-    rail->insertWidget(rail->count() - 1, favoritesButton);
+    expFavorites_ = new QPushButton;
+    expFavorites_->setObjectName(QStringLiteral("expRailAction"));
+    expFavorites_->setFixedHeight(RAIL_BOX_HEIGHT);
+    expFavorites_->setAccessibleName(tr("Navigation favorites and startup page"));
+    expFavorites_->setToolTip(tr("Navigation favorites and startup page") + QStringLiteral(" · Ctrl+Shift+F"));
+    connect(expFavorites_, &QPushButton::clicked, this, &MainWindow::showNavigationPreferences);
+    rail->insertWidget(rail->count() - 1, expFavorites_);
     expSplitter_->addWidget(expRail_);
 
     auto *content = new QWidget;
@@ -721,6 +730,13 @@ void MainWindow::setExperimentalCollapsed(bool collapsed) {
     lockButton_->style()->unpolish(lockButton_);
     lockButton_->style()->polish(lockButton_);
     expToggle_->setText(collapsed ? QStringLiteral("»") : tr("«  Hide labels"));
+    expOperations_->setText(collapsed ? QStringLiteral("⋯") : QStringLiteral("⋯  ") + tr("Operations"));
+    expFavorites_->setText(collapsed ? QStringLiteral("☆") : QStringLiteral("☆  ") + tr("Favorites"));
+    for (QPushButton *box : {expToggle_, expOperations_, expFavorites_}) {
+        box->setProperty("collapsed", collapsed);
+        box->style()->unpolish(box);
+        box->style()->polish(box);
+    }
     for (auto *button : std::as_const(expNavButtons_)) {
         button->setText(collapsed ? QString() : button->property("navLabel").toString());
         button->setProperty("collapsed", collapsed);

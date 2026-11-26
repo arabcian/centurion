@@ -105,6 +105,7 @@ private:
     QLabel *expHint_ = nullptr;              // top bar: one line on what the page is for
     QFrame *expSignal_ = nullptr;            // under the top bar, in the power profile's colour
     QPushButton *expToggle_ = nullptr;
+    QPushButton *expOperations_ = nullptr, *expFavorites_ = nullptr;  // rail actions, same box as the lock button
     QToolButton *lockButton_ = nullptr;  // unlock PIN (unlock.h): classic tab corner / experimental rail
     QPushButton *expProfileChip_ = nullptr;  // top bar: current power profile
     QPushButton *expSceneChip_ = nullptr;    // top bar: active scene

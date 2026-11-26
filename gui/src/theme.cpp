@@ -563,7 +563,7 @@ QPushButton#btnAccent:disabled, QPushButton#btnDanger:disabled { background: tra
 QPushButton#btnMini { padding: 0 7px; min-height: 14px; font-size: 8pt; border-radius: 6px; }
 QToolButton { background: transparent; border: 1px solid transparent; border-radius: 7px; padding: 2px; }
 QToolButton:hover { background: @BG3; border-color: @BORDER; }
-QToolButton#lockButton { background: @BG2; border-color: @BORDER; padding: 4px 22px 4px 8px; }
+QToolButton#lockButton { background: @BG2; border-color: @BORDER; padding: 0 22px 0 8px; }
 QToolButton#lockButton:hover, QToolButton#lockButton:focus { border-color: @ACCENT; }
 QToolButton#lockButton::menu-button { width: 17px; border-left: 1px solid @BORDER; }
 QToolButton#lockButton[collapsed="true"] { padding-left: 2px; padding-right: 12px; }
@@ -715,10 +715,12 @@ QPushButton#expNavButton:checked { color: @FG;
     border: 1px solid @ACCENT_EDGE; border-left: 3px solid @ACCENT; font-weight: 700; }
 QPushButton#expNavButton:disabled { color: @BG4; }
 QPushButton#expNavButton[collapsed="true"] { text-align: center; padding: 3px 1px; font-size: 8pt; }
-QPushButton#expRailToggle { text-align: left; color: @MUTED; font-size: 8pt;
-    background: transparent; border: 0; border-top: 1px solid @BORDER_SOFT;
-    border-radius: 0; padding: 7px 10px; min-height: 21px; }
-QPushButton#expRailToggle:hover { color: @FG; background: @HILITE; }
+/* The boxes at the foot of the rail (the lock button is styled with them): one height, one look. */
+QPushButton#expRailAction, QPushButton#expRailToggle { text-align: center; color: @FG_DIM;
+    background: @BG2; border: 1px solid @BORDER; border-radius: 7px; padding: 0 8px; min-height: 0; }
+QPushButton#expRailAction:hover, QPushButton#expRailToggle:hover { color: @FG; border-color: @ACCENT; }
+QPushButton#expRailAction:pressed, QPushButton#expRailToggle:pressed { background: @HILITE2; }
+QPushButton#expRailAction[collapsed="true"], QPushButton#expRailToggle[collapsed="true"] { padding: 0; }
 QFrame#expTopbar { background: @BG0; border-bottom: 1px solid @BORDER_SOFT; }
 QLabel#expTopPath { color: @MUTED; font-size: 7pt; font-weight: 700; letter-spacing: 1.4px; }
 QLabel#expTopTitle { color: @FG; font-size: 14pt; font-weight: 700; }

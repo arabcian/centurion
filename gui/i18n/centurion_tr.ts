@@ -4370,6 +4370,14 @@ Centurion bunda test edilmedi; bazı donanım yazılımı özellikleri eksik ola
     <context>
         <name>MainWindow</name>
         <message>
+            <source>Operations</source>
+            <translation>İşlemler</translation>
+        </message>
+        <message>
+            <source>Favorites</source>
+            <translation>Favoriler</translation>
+        </message>
+        <message>
             <source>Set or change the PIN: the arrow next to this button.</source>
             <translation>PIN'i belirlemek veya değiştirmek için: bu düğmenin yanındaki ok.</translation>
         </message>
