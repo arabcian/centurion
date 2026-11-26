@@ -16,7 +16,7 @@ checks = {
   'new GUI source linked': 'src/insights.cpp src/insights.h' in cmake and 'src/cosearchdialog.cpp src/cosearchdialog.h' in cmake,
   'unit test linked to CTest': 'add_test(NAME insights COMMAND centurion-insights-test)' in cmake,
   'incident timeline in Health': 'Hardware Incident Timeline' in read('healthtab.cpp') and 'insights::incident(' in read('healthtab.cpp'),
-  'incident boot guard': 'canonicalBoot(header.value("boot").toString()) != identity' in ins and 'identity.isEmpty() ||' in ins and 'if (b.isEmpty())' in ins,
+  'incident boot guard': 'flight.value("boot").toString() != identity' in ins and 'diagnostichistory::fullBoot(header.value("boot")' in read('flightrec.cpp') and 'identity.isEmpty() ||' in ins and 'if (b.isEmpty())' in ins,
   'scene tx log with boot identity': 'scene-transactions.jsonl' in read('diagsources.cpp') and 'diagsrc::SavedLog::SceneTransactions' in scene and '{"boot", diagsrc::bootId()}' in scene,
   'scene logs failures and advances without clearing remaining steps': 'QStringLiteral("failed")' in step_callback and 'steps_.clear()' not in step_callback and '&SceneEngine::next' in step_callback,
   'scene uses the partial approved-preset operation': '{"op", "apply_scene_preset"}' in scene and 'rollbackNext' not in scene,
