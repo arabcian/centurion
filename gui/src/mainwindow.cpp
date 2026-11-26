@@ -1083,7 +1083,10 @@ void MainWindow::showTab(const QString &label) {
 
 void MainWindow::hideEvent(QHideEvent *e) {
     if (!isMinimized()) QSettings(QSettings::IniFormat, QSettings::UserScope, QStringLiteral("centurion"), QStringLiteral("gui")).setValue(QStringLiteral("ui/window_geometry"), saveGeometry());
-    if (!isMinimized()) unlock::Manager::instance().lock(true);
+    if (!isMinimized()) {
+        unlock::Manager::instance().lock(true);
+        if (lighting_) lighting_->releaseAdmin();  // closing the window also drops the keyboard's administrator rights
+    }
     QMainWindow::hideEvent(e);
     QTimer::singleShot(2000, this, [this] { if (!isVisible()) trimHeap(); });
 }
@@ -1092,11 +1095,13 @@ void MainWindow::closeEvent(QCloseEvent *e) {
     if (!isMinimized()) QSettings(QSettings::IniFormat, QSettings::UserScope, QStringLiteral("centurion"), QStringLiteral("gui")).setValue(QStringLiteral("ui/window_geometry"), saveGeometry());
     if (hideOnClose_ && !forceQuit_) {
         unlock::Manager::instance().lock(true);
+        if (lighting_) lighting_->releaseAdmin();
         e->ignore();
         hide();
         return;
     }
     if (!canQuit()) { e->ignore(); return; }
     unlock::Manager::instance().lock(true);
+    if (lighting_) lighting_->releaseAdmin();
     QMainWindow::closeEvent(e);
 }

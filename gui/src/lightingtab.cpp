@@ -586,7 +586,7 @@ void LightingTab::buildUi() {
     root->addWidget(status_);
 
     // ── wiring ──
-    connect(elevate_, &QPushButton::clicked, this, [this] { reload(true); });
+    connect(elevate_, &QPushButton::clicked, this, [this] { grantAdmin(); });
     connect(reloadBtn_, &QPushButton::clicked, this, [this] {
         if (confirmDiscard()) reload(false);
     });
@@ -799,6 +799,21 @@ void LightingTab::reload(bool elevate) {
     }, elevate || adminGranted_);
 }
 
+void LightingTab::grantAdmin() {
+    if (busy_ && ready_) return;
+    if (!confirmDiscard()) return;  // reading the keyboard again replaces the unapplied draft
+    reload(true);
+}
+
+void LightingTab::releaseAdmin() {
+    if (!adminGranted_) return;
+    adminGranted_ = false;
+    ready_ = false;  // the shown state is no longer backed by access; the draft stays until the next read
+    setBusy(busy_);
+    showBanner(tr("Administrator rights released. Use them again to read or change the keyboard."), true);
+    Q_EMIT stateChanged();
+}
+
 void LightingTab::applyState(const QJsonObject &j) {
     const KeyMap m = KeyMap::fromJson(j.value("keymap").toObject());
     if (!m.isEmpty() && (m.grid != map_.grid || m.extra != map_.extra)) {
@@ -849,7 +864,7 @@ void LightingTab::sendSet(const QJsonObject &fields, const QString &what) {
         filling_ = false;
         showStatus(what + ".", theme::OK);
         Q_EMIT stateChanged();
-    });
+    }, adminGranted_);
 }
 
 void LightingTab::activateProfile(int p) {
@@ -861,7 +876,7 @@ void LightingTab::activateProfile(int p) {
         active_ = editProfile_ = p;
         showStatus(QStringLiteral("Profile %1 active.").arg(p), theme::OK);
         reload(false);  // loads that profile's effects (and emits stateChanged)
-    });
+    }, adminGranted_);
 }
 
 void LightingTab::setBrightness(int b) {
@@ -886,7 +901,7 @@ void LightingTab::write() {
         showStatus(tr("Profile %1 sent (%2 / %3 bytes); independent readback not verified.").arg(p).arg(r.json.value("bytes").toInt()).arg(REPORT_LEN), theme::OK);
         refreshAll();
         Q_EMIT stateChanged();
-    });
+    }, adminGranted_);
 }
 
 void LightingTab::factoryReset() {
@@ -904,7 +919,7 @@ void LightingTab::factoryReset() {
         resetEditHistory();
         showStatus(QStringLiteral("Profile %1 reset to factory defaults.").arg(p), theme::OK);
         reload(false);
-    });
+    }, adminGranted_);
 }
 
 // ── editing ─────────────────────────────────────────────────────────────────

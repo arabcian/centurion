@@ -66,6 +66,15 @@ Tray::Tray(MainWindow *win) : QSystemTrayIcon(appIcon(), win), win_(win), menu_(
     setToolTip("Centurion");
     // Rebuilt on every open: profiles can change behind our back.
     connect(menu_, &QMenu::aboutToShow, this, &Tray::rebuild);
+    // Keyboard administrator rights enabled from this menu end one minute after the menu closes.
+    adminRelease_.setSingleShot(true);
+    adminRelease_.setInterval(60 * 1000);
+    connect(&adminRelease_, &QTimer::timeout, this, [this] {
+        adminFromTray_ = false;
+        if (LightingTab *lt = win_->lighting()) lt->releaseAdmin();
+    });
+    connect(menu_, &QMenu::aboutToShow, &adminRelease_, &QTimer::stop);
+    connect(menu_, &QMenu::aboutToHide, this, [this] { if (adminFromTray_) adminRelease_.start(); });
     setContextMenu(menu_);
     connect(this, &QSystemTrayIcon::activated, this, [this](ActivationReason r) {
         if (r == Trigger || r == DoubleClick) toggleWindow();
@@ -439,6 +448,23 @@ void Tray::rebuild() {
     // Keyboard lighting (Spectrum controller) — immediate, no cooldown needed.
     if (LightingTab *lt = win_->lighting()) {
         QMenu *lm = menu_->addMenu(glyphIcon(glyph::KEYBOARD, theme::PURPLE), tr("Keyboard Lighting"));
+        // Lighting goes through administrator rights; give them here when the keyboard is not readable without.
+        if (lt->adminGranted()) {
+            connect(lm->addAction(tr("Release administrator rights")), &QAction::triggered, this, [this, lt] {
+                adminRelease_.stop();
+                adminFromTray_ = false;
+                lt->releaseAdmin();
+            });
+            lm->addSeparator();
+        } else if (!lt->ready()) {
+            connect(lm->addAction(tr("Enable administrator rights")), &QAction::triggered, this, [this, lt] {
+                adminFromTray_ = true;
+                adminRelease_.start();  // the menu is closing; aboutToHide restarts it from the moment it is closed
+                lt->grantAdmin();
+                notify(tr("Keyboard lighting"), tr("Administrator rights are released one minute after this menu closes."));
+            });
+            lm->addSeparator();
+        }
         if (!lt->ready()) {
             disabledEntry(lm, tr("(keyboard not read — see the Lighting tab)"));
         } else {

@@ -4225,6 +4225,106 @@ Kapalı: artık klavyeyi izlemez; kendi parlaklığı buradan ayarlanamaz.</tran
     <context>
         <name>MainText</name>
         <message>
+            <location filename="work/gui/src/main.cpp" line="0"/>
+            <source>Important</source>
+            <translation>Önemli</translation>
+        </message>
+        <message>
+            <location filename="work/gui/src/main.cpp" line="0"/>
+            <source>Unlock PIN.</source>
+            <translation>Kilit PIN'i.</translation>
+        </message>
+        <message>
+            <location filename="work/gui/src/main.cpp" line="0"/>
+            <source>Writing new values (undervolt, curves, power limits, fan tables, kernel settings) now needs the window unlocked with a 4-digit PIN. Click "Locked" in the side bar and set your PIN once (the administrator password is asked for that). The window locks again when it is closed and after 10 minutes without use.</source>
+            <translation>Yeni değer yazmak (undervolt, eğriler, güç sınırları, fan tabloları, çekirdek ayarları) artık pencerenin 4 haneli PIN ile açılmasını gerektiriyor. Kenar çubuğundaki "Locked" düğmesine tıklayıp PIN'inizi bir kez belirleyin (bunun için yönetici parolası sorulur). Pencere kapatılınca ve 10 dakika kullanılmayınca yeniden kilitlenir.</translation>
+        </message>
+        <message>
+            <location filename="work/gui/src/main.cpp" line="0"/>
+            <source>Scenes and presets.</source>
+            <translation>Sahneler ve presetler.</translation>
+        </message>
+        <message>
+            <location filename="work/gui/src/main.cpp" line="0"/>
+            <source>Apply each scene that runs automatically (and each one with a command) once by hand from the unlocked window. Automatic runs only use values you approved. A saved preset is approved once the same way; then Optimize → Apply preset works while locked.</source>
+            <translation>Otomatik çalışan her sahneyi (ve komutu olan her sahneyi) kilidi açık pencereden bir kez elle uygulayın. Otomatik çalıştırmalar yalnızca onayladığınız değerleri kullanır. Kayıtlı bir preset de aynı şekilde bir kez onaylanır; sonrasında Optimize → Apply preset kilitliyken çalışır.</translation>
+        </message>
+        <message>
+            <location filename="work/gui/src/main.cpp" line="0"/>
+            <source>Keyboard lighting.</source>
+            <translation>Klavye aydınlatması.</translation>
+        </message>
+        <message>
+            <location filename="work/gui/src/main.cpp" line="0"/>
+            <source>The old udev rule is gone. Lighting now uses administrator rights: press "Use administrator rights" on the Lighting page, or tray → Keyboard Lighting → Enable. They end when the window closes, or one minute after the tray menu closes.</source>
+            <translation>Eski udev kuralı kaldırıldı. Aydınlatma artık yönetici haklarıyla çalışır: Lighting sayfasında "Use administrator rights"a basın ya da tepsi → Keyboard Lighting → Enable seçin. Haklar pencere kapanınca veya tepsi menüsü kapandıktan bir dakika sonra biter.</translation>
+        </message>
+        <message>
+            <location filename="work/gui/src/main.cpp" line="0"/>
+            <source>Update completely.</source>
+            <translation>Güncellemeyi tamamlayın.</translation>
+        </message>
+        <message>
+            <location filename="work/gui/src/main.cpp" line="0"/>
+            <source>Reinstall with your usual method (your package manager, or ./install.sh) so the new helpers and polkit rules are installed together. A half-updated install refuses writes.</source>
+            <translation>Yeni yardımcıların ve polkit kurallarının birlikte kurulması için her zamanki yöntemle (paket yöneticiniz veya ./install.sh) yeniden kurun. Yarım güncellenmiş kurulum yazma isteklerini reddeder.</translation>
+        </message>
+        <message>
+            <location filename="work/gui/src/main.cpp" line="0"/>
+            <source>Also changed</source>
+            <translation>Diğer değişiklikler</translation>
+        </message>
+        <message>
+            <location filename="work/gui/src/main.cpp" line="0"/>
+            <source>Password every time:</source>
+            <translation>Her seferinde parola:</translation>
+        </message>
+        <message>
+            <location filename="work/gui/src/main.cpp" line="0"/>
+            <source>boot preset, preset store, wake sources, system files (fstab, sysctl, modprobe, udev), kernel modules, driver options, firmware and backups.</source>
+            <translation>açılış preseti, preset deposu, uyandırma kaynakları, sistem dosyaları (fstab, sysctl, modprobe, udev), çekirdek modülleri, sürücü seçenekleri, donanım yazılımı ve yedekler.</translation>
+        </message>
+        <message>
+            <location filename="work/gui/src/main.cpp" line="0"/>
+            <source>Checks:</source>
+            <translation>Denetimler:</translation>
+        </message>
+        <message>
+            <location filename="work/gui/src/main.cpp" line="0"/>
+            <source>fstab edits are compared with your disks first; risky sysctl, modprobe and udev lines are refused.</source>
+            <translation>fstab düzenlemeleri önce disklerinizle karşılaştırılır; riskli sysctl, modprobe ve udev satırları reddedilir.</translation>
+        </message>
+        <message>
+            <location filename="work/gui/src/main.cpp" line="0"/>
+            <source>Intel undervolt:</source>
+            <translation>Intel undervolt:</translation>
+        </message>
+        <message>
+            <location filename="work/gui/src/main.cpp" line="0"/>
+            <source>never below -200 mV (-50 mV on Core Ultra).</source>
+            <translation>hiçbir zaman -200 mV'nin altına inmez (Core Ultra'da -50 mV).</translation>
+        </message>
+        <message>
+            <location filename="work/gui/src/main.cpp" line="0"/>
+            <source>Health reader:</source>
+            <translation>Sağlık okuyucusu:</translation>
+        </message>
+        <message>
+            <location filename="work/gui/src/main.cpp" line="0"/>
+            <source>asks for a password unless you are an administrator at the machine.</source>
+            <translation>makinenin başındaki bir yönetici değilseniz parola ister.</translation>
+        </message>
+        <message>
+            <location filename="work/gui/src/main.cpp" line="0"/>
+            <source>Centurion — what's new</source>
+            <translation>Centurion — yenilikler</translation>
+        </message>
+        <message>
+            <location filename="work/gui/src/main.cpp" line="0"/>
+            <source>Don't show again</source>
+            <translation>Bir daha gösterme</translation>
+        </message>
+        <message>
             <location filename="work/gui/src/main.cpp" line="243"/>
             <source>Centurion — model not supported</source>
             <translation>Centurion — model desteklenmiyor</translation>
@@ -7245,6 +7345,21 @@ Uyanma sonrası sayaç birimi: %3</translation></message>
     </context>
     <context>
         <name>Tray</name>
+        <message>
+            <location filename="work/gui/src/tray.cpp" line="0"/>
+            <source>Release administrator rights</source>
+            <translation>Yönetici haklarını bırak</translation>
+        </message>
+        <message>
+            <location filename="work/gui/src/tray.cpp" line="0"/>
+            <source>Enable administrator rights</source>
+            <translation>Yönetici haklarını etkinleştir</translation>
+        </message>
+        <message>
+            <location filename="work/gui/src/tray.cpp" line="0"/>
+            <source>Administrator rights are released one minute after this menu closes.</source>
+            <translation>Yönetici hakları bu menü kapandıktan bir dakika sonra bırakılır.</translation>
+        </message>
         <message>
             <location filename="work/gui/src/tray.cpp" line="83"/>
             <source>GPU curve guard</source>
@@ -26086,6 +26201,11 @@ Satırlar sıralamadan bağımsız karşılaştırılır; değişen satırlar si
     </context>
     <context>
         <name>LightingTab</name>
+        <message>
+            <location filename="work/gui/src/lightingtab.cpp" line="0"/>
+            <source>Administrator rights released. Use them again to read or change the keyboard.</source>
+            <translation>Yönetici hakları bırakıldı. Klavyeyi okumak veya değiştirmek için yeniden kullanın.</translation>
+        </message>
         <message>
             <source>Undo</source>
             <translation>Geri Al</translation>

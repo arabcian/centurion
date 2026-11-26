@@ -46,6 +46,10 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions follo
 - Intel undervolt: no offset below -200 mV on any path (pkexec, boot file, daemon, scenes, search), -50 mV on Core
   Ultra CPUs. The Intel tab's spin boxes follow the CPU's floor.
 
+- Keyboard lighting administrator rights: the Lighting page drops them when the Centurion window closes (reading
+  the keyboard again needs *Use administrator rights*), and the tray's Keyboard Lighting menu can enable them; those
+  end one minute after the tray menu closes. Reload keeps using rights that were granted.
+
 ### Changed
 - 61 rows that neither calibration nor Autotune touch and no built-in preset sets (network latency and buffering, the
   Wi-Fi/Bluetooth rows, elevator and discard fine tuning, NUMA/KSM/khugepaged internals, unmeasured scheduler feature
@@ -59,6 +63,10 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions follo
   after steps 1–2 had already been written to the target (which can be the running system).
 
 ### Added
+- What's new window after an update, starting with *Important*: the PIN, approving scenes and presets once, the
+  lighting administrator rights and re-installing everything together. *Don't show again* hides it for good.
+- Optimize: *Apply preset* in the experimental layout sits in the preset row (it was lost from the layout and floated
+  over it); the greyed *Apply checked* explains why while locked.
 - Health → Backups: every backup (system image and configuration backup) now also writes `<archive>.RESTORE.txt`
   beside it — a Turkish/English, step-by-step guide to restoring that exact archive by hand with Centurion not
   running (live USB): plain, encrypted (age key or passphrase), incremental (every file of the chain in order, without

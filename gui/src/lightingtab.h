@@ -91,6 +91,11 @@ public:
     void setBrightness(int b);
     void setLightsOn(bool on);  // off = brightness 0; on = last non-zero level
     void reload(bool elevate = false);
+    bool adminGranted() const { return adminGranted_; }
+    /// Asks for administrator rights now and reads the keyboard through them (Lighting banner, tray).
+    void grantAdmin();
+    /// Drops the rights: the tab stops using pkexec until the next grant. No-op when none were granted.
+    void releaseAdmin();
     bool hasUnappliedChanges() const { return dirty(); }
     /// Something else (scene, tray) changed the device: re-read unless edits are pending.
     void refreshIfClean() { if (ready_ && !busy_ && !dirty()) reload(false); }
