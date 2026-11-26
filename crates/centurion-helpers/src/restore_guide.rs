@@ -192,8 +192,8 @@ pub fn image_guide(g: &Image) -> String {
     }
     bi(&mut s, "'Unexpected EOF' / 'not in gzip format' / 'Truncated' = dosya yarım kopyalanmış veya bozuk. Dosya boyutunu yedek diskteki özgün ile karşılaştırın,\nyeniden kopyalayın. Aynı klasördeki '.info.json' dosyası yedeğin bayt sayısını ve dosya sayısını kaydeder.",
        "'Unexpected EOF' / 'not in gzip format' / 'Truncated' = the file was copied halfway or is damaged. Compare its size with the original on the backup disk and\ncopy it again. The '.info.json' next to it records the backup's byte count and file count.");
-    bi(&mut s, "Yedekle birlikte '.snar' / '.info.json' dosyaları da yazılır (şifreli imajlarda .snar, /var/lib/centurion/backup-snar altındadır); geri yüklemek için gerekmezler\n(yalnızca bir sonraki artımlı yedek için). Silinmişlerse sonraki yedek otomatik olarak yeni bir tam imaj olur.",
-       "The '.snar' / '.info.json' files written with the backup (for encrypted images the .snar is under /var/lib/centurion/backup-snar) are not needed to restore\n(only to make the next increment). If they are gone, the next backup simply\nbecomes a new full image.");
+    bi(&mut s, "Artımlı yedekleri Centurion ile geri yüklemek için zincirdeki her imajın '.info.json' dosyasını saklayın.\nElle geri yükleme için yukarıdaki sırayı izleyin. '.snar' dosyası yalnızca sonraki artımlı yedeği oluşturmak için gerekir.",
+       "Keep each image's '.info.json' to restore an incremental chain with Centurion.\nFor manual restore, follow the sequence above. The '.snar' file is only needed to create the next increment.");
     bi(&mut s, "Centurion çalışıyorsa aynı işlem: Health → Backups → bu yedeği seçip Restore (artımlı zinciri ve silinen/yeniden adlandırılanları kendisi uygular).",
        "With Centurion running it is the same job: Health → Backups → select this backup → Restore (it applies the chain, deletions and renames itself).");
     line(&mut s, "");

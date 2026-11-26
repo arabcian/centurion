@@ -757,7 +757,8 @@ fn system_backup_inner(req: &Value) -> Result<Value, String> {
         "rules": rules,
         "parent": tip.as_ref().map(|t| t.image.file_name().unwrap_or_default().to_string_lossy().into_owned())});
     let side = sidecar(&fin);
-    let _ = crate::write_root_file(&side, info.to_string().as_bytes());
+    crate::write_root_file(&side, info.to_string().as_bytes())
+        .map_err(|e| format!("{name} was kept, but its restore metadata could not be saved: {e}"))?;
     // Hand-restore instructions next to the image (best effort: the image is good without them).
     let steps: Vec<String> = restore_sequence(&fin).map_or_else(|_| vec![name.clone()], |s| s.iter()
         .map(|(p, _)| p.file_name().unwrap_or_default().to_string_lossy().into_owned()).collect());
@@ -1264,10 +1265,7 @@ fn verify_one(archive_v: &Value, key: Option<&Key>, low: bool) -> Value {
             return f;
         }
     }
-    let chain_error = match info.as_ref().and_then(|i| i["level"].as_u64()) {
-        Some(l) if l > 0 => restore_sequence(&archive).err(),
-        _ => None,
-    };
+    let chain_error = restore_sequence(&archive).err();
     if let Some(i) = info.as_mut().filter(|_| is_root()) {
         i["verified"] = json!(stamp().iso);
         let _ = crate::write_root_file(&side, i.to_string().as_bytes());
@@ -1280,6 +1278,16 @@ fn verify_one(archive_v: &Value, key: Option<&Key>, low: bool) -> Value {
 fn restore_sequence(archive: &Path) -> Result<Vec<(PathBuf, bool)>, String> {
     let info = read_info(archive).unwrap_or(Value::Null);
     let level = info["level"].as_u64().unwrap_or(0);
+    let named_increment = archive.file_name().and_then(|name| name.to_str())
+        .and_then(|name| IMAGE_EXT.iter().find_map(|ext| name.strip_suffix(ext)))
+        .and_then(|stem| stem.rsplit_once("-i"))
+        .filter(|(base, _)| base.strip_prefix("backup-").is_some_and(is_stamp))
+        .filter(|(_, suffix)| !suffix.is_empty() && suffix.bytes().all(|c| c.is_ascii_digit()));
+    if let Some((_, suffix)) = named_increment {
+        if level == 0 || suffix.parse::<u64>().ok() != Some(level) {
+            return Err(format!("{}: missing or inconsistent increment metadata", archive.display()));
+        }
+    }
     if level == 0 { return Ok(vec![(archive.to_path_buf(), false)]); }
     if level > MAX_LEVEL { return Err(format!("{}: increment {level} is beyond the chain limit", archive.display())); }
     let chain = info["chain"].as_str().filter(|c| is_image_name(c))
@@ -1331,7 +1339,7 @@ fn restore_preflight(seq: &[(PathBuf, bool)], key: Option<&Key>) -> Result<(), S
         let comp = Comp::from_magic(&f);
         let inner = if comp == Comp::Age {
             tool("age").ok_or_else(|| at("age is not installed (needed to read an encrypted image)".into()))?;
-            let inner = inner_comp(file).map_err(&at)?;
+            let inner = inner_comp(file).map_err(at)?;
             let head = key.map(|k| age_head(file, k, 6)).unwrap_or_default();
             if head.is_empty() { return Err(at("this key or passphrase does not open the archive".into())); }
             // The name is the only record of what is inside the encryption: it must match the bytes.
@@ -1342,7 +1350,7 @@ fn restore_preflight(seq: &[(PathBuf, bool)], key: Option<&Key>) -> Result<(), S
             if comp == Comp::None && is_image_name(&named) { return Err(at("the archive is empty or not compressed the way its name says".into())); }
             comp
         };
-        if inner != Comp::None { inner.decompressor().map_err(&at)?; }
+        if inner != Comp::None { inner.decompressor().map_err(at)?; }
     }
     Ok(())
 }
@@ -2382,6 +2390,26 @@ mod tests {
     }
 
     #[test]
+    fn named_increment_requires_matching_metadata_before_restore() {
+        let dir = tmp("missing-increment-metadata");
+        let archive = dir.join("backup-2026-10-02_100000-i1.tar.gz");
+        let target = fs::canonicalize(&dir).unwrap().join("target");
+        fs::write(&archive, []).unwrap();
+        fs::create_dir(&target).unwrap();
+        let result = system_restore(&json!({"archive": archive, "target": target, "confirm": target}));
+        assert_eq!(result["ok"], false);
+        assert!(result["error"].as_str().unwrap().contains("increment metadata"));
+        assert!(fs::read_dir(&target).unwrap().next().is_none());
+        if !is_root() {
+            fs::write(sidecar(&archive), r#"{"level":0}"#).unwrap();
+            assert!(restore_sequence(&archive).unwrap_err().contains("increment metadata"));
+        }
+        let full = dir.join("backup-2026-10-01.tar.gz");
+        assert_eq!(restore_sequence(&full).unwrap(), vec![(full, false)]);
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
     fn restore_sequence_full_then_increments() {
         let dir = std::env::temp_dir().join(format!("centurion-seq-test-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
@@ -2660,10 +2688,11 @@ mod tests {
         fs::write(src.join("etc/a"), "1").unwrap();
         let snar = arch.join("chain.snar");
         let dump = |name: &str, filter: &str| {
-            std::thread::sleep(Duration::from_millis(1100));  // tar's change detection works in whole seconds
             sh(&format!("tar -C {} --xattrs --listed-incremental={} -cf - . | {} > {}", src.display(), snar.display(), filter, arch.join(name).display()));
         };
         dump(full.0, full.1);
+        // Ensure the write itself is newer than the full snapshot on coarse clocks.
+        std::thread::sleep(Duration::from_millis(1100));
         fs::write(src.join("etc/a"), "2").unwrap();
         fs::write(src.join("etc/b"), "new").unwrap();
         dump(inc.0, inc.1);

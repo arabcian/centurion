@@ -334,7 +334,7 @@ fn cmd_write(a: &Args, cfg: &Config) {
         let rollback = if landed {
             let before = vfcurve::parse_ct_entries(raw.bytes());
             let previous: vfcurve::PointDeltas = deltas.keys()
-                .filter_map(|&i| usize::try_from(i).ok().and_then(|i| before.get(i)).map(|&(d, _)| (i as i64, i64::from(d))))
+                .filter_map(|&i| usize::try_from(i).ok().and_then(|i| before.get(i)).map(|&(d, _)| (i, i64::from(d))))
                 .collect();
             Some(match vfcurve::restore_offsets_verified(g, &previous) {
                 Ok(()) => "previous offsets restored and verified".to_owned(),
