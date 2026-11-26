@@ -1459,7 +1459,7 @@ void SceneEngine::start(const Scene &s, const QString &expectedGeneration) {
             if (OptimizeTab::storeFresh(c.name, values)) { run(req); return; }
             // First use, or the preset changed since it was approved (a built-in updated with the
             // program): approve (store root-owned) once, then apply by name.
-            privileged::runUntilExit(privileged::helperPath("tune-admin-helper"),
+            privileged::runUntilExit(privileged::helperPath("tune-helper"),
                             QJsonObject{{"op", "preset_save"}, {"name", c.name}, {"values", values}}, this,
                             [run, req, done, name = c.name, values](const privileged::Result &r) {
                                 if (!r.ok()) { done(false, r.message()); return; }

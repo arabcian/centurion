@@ -117,10 +117,11 @@ const PRESET_DIR: &str = "/etc/centurion/presets";
 fn profile_role() -> bool { env!("CARGO_BIN_NAME") == "tune-profile-helper" }
 fn admin_role() -> bool { env!("CARGO_BIN_NAME") == "tune-admin-helper" }
 
-/// Ops that change what root applies at every boot, and the unlock PIN. Through pkexec only tune-admin-helper
-/// serves them (com.centurion.tune.admin: the administrator password every time); root callers without pkexec
-/// (centurion-calibrate, the boot service) still reach them through tune-helper.
-const ADMIN_OPS: &[&str] = &["set_boot", "preset_save", "preset_delete", "calibrate_on_boot", "wakeup_set", "set_wireless_pm_lock", "pin_set"];
+/// Only the unlock PIN itself needs the administrator password: through pkexec only tune-admin-helper serves it
+/// (com.centurion.tune.admin: the password every time). The boot preset, preset store, boot calibration, wake
+/// sources and wireless power lock go through tune-helper like every other new value: password-free in polkit,
+/// refused unless the window was unlocked with the PIN (see the gate below).
+const ADMIN_OPS: &[&str] = &["pin_set"];
 
 /// The unlock PIN's own ops (centurion_helpers::unlock), served by every role.
 const UNLOCK_OPS: &[&str] = &["pin_status", "unlock", "lock"];

@@ -751,8 +751,9 @@ came up during the sysfs review, as one tab backed by a Rust root helper.
     apply_preset (values from the root-owned store /etc/centurion/presets, by name) / restore / release /
     boost / boot / tools. Raw values and driver options stay in tune-helper, which accepts them through pkexec
     only from the Centurion window unlocked with the user's PIN (crates/centurion-helpers/src/unlock.rs).
-    It is also built as tune-admin-helper (polkit com.centurion.tune.admin, password every time): set_boot,
-    preset_save/delete, calibrate_on_boot, wakeup_set, set_wireless_pm_lock and pin_set.
+    It is also built as tune-admin-helper (polkit com.centurion.tune.admin, password every time): pin_set only.
+    set_boot, preset_save/delete, calibrate_on_boot, wakeup_set and set_wireless_pm_lock stay in tune-helper,
+    behind the same unlock PIN as every other new value.
     crates/centurion-helpers/src/bin/centurion-gamemode Lutris/Steam front end (user process)
     gui/src/optimizetab.{h,cpp}             the tab
     packaging/openrc/centurion-tune               boot preset service

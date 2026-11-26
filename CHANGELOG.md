@@ -21,9 +21,9 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions follo
   shortcut, D-Bus, drift watch) and anything while the window is closed reuse approved values only: an edited scene
   is refused until it is applied once from the unlocked window. After this update, apply each automatic scene once
   by hand.
-- New `tune-admin-helper` (polkit `com.centurion.tune.admin`, the administrator password every time): boot preset,
-  preset store, boot calibration, wake sources, wireless power lock and the PIN. tune-helper refuses these through
-  pkexec.
+- New `tune-admin-helper` (polkit `com.centurion.tune.admin`, the administrator password every time): only the
+  unlock PIN. Boot preset, preset store, boot calibration, wake sources and the wireless power lock stay in
+  `tune-helper`: no password, but refused unless the window is unlocked with the PIN, like every other new value.
 - `sysadmin-helper` split: configuration files, module load/unload and NVIDIA driver options moved to
   `sysadmin-config-helper` (polkit `com.centurion.sysadmin.config`, the password every time); runtime actions stay.
   Added lines may no longer use modprobe `install`/`remove` (except `/bin/false`/`/bin/true`), udev

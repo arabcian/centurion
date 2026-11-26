@@ -23,7 +23,7 @@ path = "src/bin/tune-helper.rs"
 name = "tune-profile-helper"
 path = "src/bin/tune-profile-helper.rs"
 
-#   tune-admin-helper    only what root applies at every boot, and the unlock PIN (password every time)
+#   tune-admin-helper    only the unlock PIN (password every time)
 [[bin]]
 name = "tune-admin-helper"
 path = "src/bin/tune-admin-helper.rs"

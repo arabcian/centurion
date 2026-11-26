@@ -164,7 +164,7 @@ SleepPage::SleepPage(QWidget *parent) : QWidget(parent) {
 }
 
 void SleepPage::setWake(const QString &dev, bool on) {
-    privileged::run(privileged::helperPath(QStringLiteral("tune-admin-helper")), QJsonObject{{"op", "wakeup_set"}, {"device", dev}, {"enabled", on}}, this,
+    privileged::run(privileged::helperPath(QStringLiteral("tune-helper")), QJsonObject{{"op", "wakeup_set"}, {"device", dev}, {"enabled", on}}, this,
                     [this, dev](const privileged::Result &r) {
                         if (!r.ok()) QMessageBox::warning(this, QStringLiteral("Wake sources"), dev + QStringLiteral(": ") + r.message());
                         refresh();
