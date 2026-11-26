@@ -69,7 +69,7 @@ private:
 };
 
 /// One row per key when `groupRepeats`, otherwise one per line. Rows keep the order of first occurrence.
-std::vector<Row> group(const std::vector<Line> &lines, bool groupRepeats);
+std::vector<Row> group(const std::deque<Line> &lines, bool groupRepeats);
 
 /// Key → boot tag of its first occurrence. `all` must be in file (time) order and unfiltered, so
 /// "first seen in this boot" is judged on the whole saved log.

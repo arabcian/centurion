@@ -33,7 +33,7 @@ int main(int argc, char **argv) {
     CHECK(stem(QStringLiteral("ACPI BIOS Error (bug): Could not resolve symbol")) == QLatin1String("ACPI BIOS Error (bug): Could not resolve symbol"));
 
     // Repeats differing only in numbers form one row; the other message stays its own row.
-    const std::vector<Line> lines{
+    const std::deque<Line> lines{
         at("2026-10-29 01:00:00  boot=aaaaaaaa seq=1  ERR    [1.0] nvme nvme0: timeout 5"),
         at("2026-10-29 01:00:01  boot=aaaaaaaa seq=2  ERR    [2.0] other event"),
         at("2026-10-29 01:00:02  boot=aaaaaaaa seq=3  ERR    [3.0] nvme nvme1: timeout 9"),

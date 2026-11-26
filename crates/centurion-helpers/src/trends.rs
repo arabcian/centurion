@@ -5,8 +5,8 @@
 //! stdin:  {"op":"battery_trend"}  stdout: {"ok": true, "status", "samples", "health", "months_to_80"}
 //! stdin:  {"op":"event_days"}     stdout: {"ok": true, "days": [{"d": "YYYY-MM-DD", "kinds": {…}}]}, oldest first
 
-use crate::overview::{local_clock, parse_local, read_json, read_tail, state_dir, ymd};
-use serde_json::{json, Map, Value};
+use crate::overview::{health_logs, local_clock, parse_local, read_json, state_dir, ymd};
+use serde_json::{json, Value};
 use std::collections::{BTreeMap, HashMap};
 
 const DAY: i64 = 86_400;
@@ -19,8 +19,6 @@ const TARGET_PCT: f64 = 80.0;
 const MONTH_DAYS: f64 = 30.44;
 /// Days on Monitor's event chart, today included.
 const EVENT_DAYS: i64 = 30;
-/// Bytes read from the end of each health.log (the Overview reads the same much).
-const TAIL_BYTES: u64 = 2 << 20;
 
 /// Local day number (days since 1970-01-01) of a "YYYY-MM-DD" date.
 fn day_number(date: &str) -> Option<i64> {
@@ -59,23 +57,29 @@ pub fn battery_request(_req: &Value) -> Value {
 }
 
 /// Kernel events per local day and kind over the EVENT_DAYS days up to `today` (local day number), oldest first.
-/// `log` is health.log text: "date time  boot=… seq=…  LEVEL    KIND    title  |  text" per line.
-pub fn event_days(log: &str, today: i64) -> Value {
+/// Each log contains health.log records: "date time  boot=… seq=…  LEVEL    KIND    title  |  text" per line.
+fn event_days(logs: impl IntoIterator<Item = impl AsRef<str>>, today: i64) -> Value {
     let first = today - (EVENT_DAYS - 1);
     let dates: Vec<String> = (first..=today).map(|d| ymd(d * DAY, 0)).collect();
     let index: HashMap<&str, usize> = dates.iter().enumerate().map(|(i, d)| (d.as_str(), i)).collect();
     let mut counts: Vec<BTreeMap<String, u64>> = vec![BTreeMap::new(); dates.len()];
-    for line in log.lines() {
-        let t: Vec<&str> = line.split_whitespace().take(6).collect();
-        if t.len() < 6 || !t[2].starts_with("boot=") || !t[3].starts_with("seq=") { continue; }
-        let Some(&i) = index.get(t[0]) else { continue };
-        *counts[i].entry(t[5].to_ascii_lowercase()).or_insert(0) += 1;
+    let mut kind = String::new();
+    for log in logs {
+        for line in log.as_ref().lines() {
+            let mut fields = line.split_whitespace();
+            let Some(i) = fields.next().and_then(|date| index.get(date)) else { continue };
+            let (Some(boot), Some(seq)) = (fields.nth(1), fields.next()) else { continue };
+            if !boot.starts_with("boot=") || !seq.starts_with("seq=") { continue; }
+            let Some(raw_kind) = fields.nth(1) else { continue };
+            kind.clear();
+            kind.push_str(raw_kind);
+            kind.make_ascii_lowercase();
+            let kinds = &mut counts[*i];
+            if let Some(n) = kinds.get_mut(&kind) { *n += 1; } else { kinds.insert(kind.clone(), 1); }
+        }
     }
-    let days: Vec<Value> = dates.iter().zip(counts).map(|(d, kinds)| {
-        let mut k = Map::new();
-        for (kind, n) in kinds { k.insert(kind, json!(n)); }
-        json!({"d": d, "kinds": k})
-    }).collect();
+    let days: Vec<Value> = dates.into_iter().zip(counts)
+        .map(|(d, kinds)| json!({"d": d, "kinds": kinds})).collect();
     json!({"ok": true, "days": days})
 }
 
@@ -83,11 +87,7 @@ pub fn event_days(log: &str, today: i64) -> Value {
 pub fn event_request(_req: &Value) -> Value {
     let (now, offset) = local_clock();
     let st = state_dir();
-    let mut log = String::new();
-    for name in ["health.log.1", "health.log"] {
-        if let Some(t) = read_tail(&st.join(name), TAIL_BYTES) { log.push_str(&t); log.push('\n'); }
-    }
-    event_days(&log, (now + offset).div_euclid(DAY))
+    event_days(health_logs(&st), (now + offset).div_euclid(DAY))
 }
 
 #[cfg(test)]
@@ -154,8 +154,9 @@ mod tests {
 
     #[test]
     fn event_days_counts_per_day_and_kind() {
-        let log = [line(0, "ERROR", "XID"), line(0, "CRITICAL", "XID"), line(0, "ERROR", "NVME"), line(1, "WARN", "OOM")].join("\n");
-        let v = event_days(&log, TODAY);
+        let rotated = [line(1, "WARN", "OOM"), line(0, "ERROR", "XID")].join("\n");
+        let current = [line(0, "CRITICAL", "xid"), line(0, "ERROR", "NVME")].join("\n");
+        let v = event_days([rotated, current], TODAY);
         let days = v["days"].as_array().unwrap();
         assert_eq!(days.len(), EVENT_DAYS as usize);
         assert_eq!(days.last().unwrap()["d"], date(0));
@@ -173,7 +174,7 @@ mod tests {
             format!("{} 10:00:00  seq=1 ERROR XID  x", date(0)),  // no boot= token
             "".to_string(),
         ].join("\n");
-        let v = event_days(&log, TODAY);
+        let v = event_days([&log], TODAY);
         assert!(v["days"].as_array().unwrap().iter().all(|d| d["kinds"].as_object().unwrap().is_empty()));
     }
 }
