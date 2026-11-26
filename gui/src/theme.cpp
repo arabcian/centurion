@@ -703,7 +703,7 @@ QLabel#expBrandVersion { color: @MUTED; font-size: 7pt; font-weight: 600; backgr
 QLabel#expBrandIcon { background: transparent; }
 QFrame#expRailDivider { background: @BORDER_SOFT; border: 0; }
 QLabel#expNavHeading { color: @MUTED; background: transparent;
-    padding: 12px 6px 4px 10px; font-size: 7pt; font-weight: 700; letter-spacing: 1.4px; }
+    padding: 12px 6px 4px 12px; font-size: 8pt; font-weight: 600; letter-spacing: 1px; }
 QPushButton#expNavButton { text-align: left; color: @FG_DIM; background: transparent;
     border: 1px solid transparent; border-left: 3px solid transparent; border-radius: 7px;
     font-weight: 500; padding: 3px 10px; min-height: 0; }
@@ -837,16 +837,19 @@ QLabel#expTopHint { color: @MUTED; font-size: 8pt; padding-bottom: 3px; }
 QFrame#expRail { background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 @SIDEBAR, stop:1 @BEZEL_BOT); }
 QPushButton#expNavButton { border-radius: 8px; border-top-left-radius: 3px; border-bottom-left-radius: 3px; }
 QPushButton#expNavButton:checked { color: @FG; border: 1px solid transparent; border-left: 3px solid @ACCENT;
-    background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 @ACCENT_TINT, stop:0.75 @ACCENT_FADE, stop:1 transparent); }
+    background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 @ACCENT_TINT, stop:1 @ACCENT_FADE); }
+QPushButton#expNavButton:focus, QPushButton#expRailToggle:focus, QPushButton#expRailAction:focus,
+QToolButton#lockButton:focus, QPushButton#expChip:focus { border-color: @ACCENT_SOFT; }
+QPushButton#expNavButton:checked:focus { border-left-color: @ACCENT; }
 /* Cards: a softer corner and a shaded foot, so they sit on the page rather than being drawn on it. */
 QGroupBox { border-radius: 12px; border-bottom-color: @BTN_SHADE;
-    background: qradialgradient(cx:0, cy:0, radius:1, fx:0, fy:0, stop:0 @GLOW_ACCENT, stop:0.5 @CARD_TOP, stop:1 @CARD_BOT); }
+    background: qradialgradient(cx:0, cy:0, radius:1, fx:0, fy:0, stop:0 @GLOW_ACCENT, stop:0.32 @CARD_TOP, stop:1 @CARD_BOT); }
 /* ...lit from the corner its title sits in, in the section's own colour. */
-QGroupBox#box_red { background: qradialgradient(cx:0, cy:0, radius:1, fx:0, fy:0, stop:0 @GLOW_DANGER, stop:0.5 @CARD_TOP, stop:1 @CARD_BOT); }
-QGroupBox#box_green { background: qradialgradient(cx:0, cy:0, radius:1, fx:0, fy:0, stop:0 @GLOW_OK, stop:0.5 @CARD_TOP, stop:1 @CARD_BOT); }
-QGroupBox#box_yellow { background: qradialgradient(cx:0, cy:0, radius:1, fx:0, fy:0, stop:0 @GLOW_WARN, stop:0.5 @CARD_TOP, stop:1 @CARD_BOT); }
-QGroupBox#box_blue { background: qradialgradient(cx:0, cy:0, radius:1, fx:0, fy:0, stop:0 @GLOW_INFO, stop:0.5 @CARD_TOP, stop:1 @CARD_BOT); }
-QGroupBox#box_purple { background: qradialgradient(cx:0, cy:0, radius:1, fx:0, fy:0, stop:0 @GLOW_PURPLE, stop:0.5 @CARD_TOP, stop:1 @CARD_BOT); }
+QGroupBox#box_red { background: qradialgradient(cx:0, cy:0, radius:1, fx:0, fy:0, stop:0 @GLOW_DANGER, stop:0.32 @CARD_TOP, stop:1 @CARD_BOT); }
+QGroupBox#box_green { background: qradialgradient(cx:0, cy:0, radius:1, fx:0, fy:0, stop:0 @GLOW_OK, stop:0.32 @CARD_TOP, stop:1 @CARD_BOT); }
+QGroupBox#box_yellow { background: qradialgradient(cx:0, cy:0, radius:1, fx:0, fy:0, stop:0 @GLOW_WARN, stop:0.32 @CARD_TOP, stop:1 @CARD_BOT); }
+QGroupBox#box_blue { background: qradialgradient(cx:0, cy:0, radius:1, fx:0, fy:0, stop:0 @GLOW_INFO, stop:0.32 @CARD_TOP, stop:1 @CARD_BOT); }
+QGroupBox#box_purple { background: qradialgradient(cx:0, cy:0, radius:1, fx:0, fy:0, stop:0 @GLOW_PURPLE, stop:0.32 @CARD_TOP, stop:1 @CARD_BOT); }
 QGroupBox#box_grey { background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 @CARD_TOP, stop:1 @CARD_BOT); }
 QFrame#homeDetailCard { border-radius: 12px; border-bottom-color: @BTN_SHADE; }
 /* Sub-tabs: segmented pills on the pane's hairline. */
@@ -863,8 +866,8 @@ QTreeWidget#healthNav::item:selected { color: @FG; border-left: 3px solid @ACCEN
 QHeaderView::section { font-size: 8pt; padding: 5px 8px; }
 QTreeView::item:hover:!selected, QTableView::item:hover:!selected { background: @HILITE; }
 /* Menus and the tooltip: one surface, a hairline, the accent only where it points. */
-QMenu::item { padding: 6px 24px 6px 10px; }
-QMenu::item:selected { background: @ACCENT_TINT; color: @FG; }
+QMenu::item { padding: 6px 24px 6px 10px; margin: 0 3px; border-left: 2px solid transparent; }
+QMenu::item:selected { background: @ACCENT_TINT; color: @FG; border-left-color: @ACCENT; }
 QToolTip { background: @BG2; border: 1px solid @EDGE; border-left: 3px solid @ACCENT; border-radius: 6px; padding: 6px 10px; }
 /* Scrollbars: slim, out of the way until hovered. */
 QScrollBar:vertical { width: 9px; margin: 4px 2px 4px 0; }
