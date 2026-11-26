@@ -16,6 +16,12 @@
 //!     "scene": true (the GUI's scene engine keeps working from the tray); anything typed needs the PIN again.
 //!   * Wrong PINs: from the 5th failure on, each further try waits 1, 2, 4 … minutes; after MAX_FAILURES the PIN
 //!     is disabled until it is set again with the administrator password. The counter survives a reboot.
+//!   * Scene steps ("scene": true) only write values the user approved. Scene and CPU-profile files live in the
+//!     user's home, so another program could edit one and wait for it to be applied automatically. Root keeps a
+//!     per-user list of approved payload digests (APPROVED_FILE): a step sent with "approve": true from the
+//!     unlocked window (the GUI does that only for an apply the user started: Scenes tab, tray) adds its digest;
+//!     every other scene step (power source, login, resume, D-Bus, shortcut, or any step while the window is
+//!     closed) is accepted only if its digest is already in the list.
 //!   * Not through pkexec (boot services, the daemon, root-run centurion-calibrate, sudo): nothing to gate.
 
 use serde_json::{json, Value};
@@ -29,6 +35,10 @@ const STATE_DIR: &str = "/var/lib/centurion";
 const UNLOCK_FILE: &str = "/run/centurion/unlock.json";
 const RUN_DIR: &str = "/run/centurion";
 const LOCK_NAME: &str = "unlock";
+/// Approved scene-step payload digests, per uid (root, 0600).
+const APPROVED_FILE: &str = "/etc/centurion/scene-approved.json";
+/// Newest digests kept per user (each scene has a handful of steps; edits add new ones).
+const MAX_APPROVED: usize = 512;
 const ROUNDS: u32 = 20_000;
 /// Free tries before the waits start.
 const FREE_FAILURES: u32 = 4;
@@ -138,9 +148,21 @@ fn locked_reply(why: &str) -> Value {
     json!({"ok": false, "locked": true, "pin_set": std::path::Path::new(PIN_FILE).exists(), "error": why})
 }
 
+/// Digest of a scene step's payload: the request without the routing flags ("scene", "approve", "hold"),
+/// serialised with sorted keys (serde_json's default map), as SHA-256 hex.
+pub fn payload_digest(req: &Value) -> String {
+    let mut v = req.clone();
+    if let Some(o) = v.as_object_mut() { for k in ["scene", "approve", "hold"] { o.remove(k); } }
+    hex(&crate::bootlogo::sha256(v.to_string().as_bytes()))
+}
+
+#[derive(Debug, PartialEq)]
+enum Verdict { Allow, Approve(String) }
+
 /// The decision itself, without the system: `grant` is UNLOCK_FILE's content, `chain(pid, start)` tells whether that
-/// process is the caller or one of its ancestors.
-fn decide(pin_set: bool, grant: Option<&Value>, uid: u32, chain: impl Fn(i32, u64) -> bool, req: &Value) -> Result<(), &'static str> {
+/// process is the caller or one of its ancestors, `approved(digest)` whether a scene step was approved before.
+fn decide(pin_set: bool, grant: Option<&Value>, uid: u32, chain: impl Fn(i32, u64) -> bool, req: &Value,
+          approved: impl Fn(&str) -> bool) -> Result<Verdict, &'static str> {
     if !pin_set { return Err("no unlock PIN is set: set one in Centurion (the lock button), then unlock to write new values"); }
     let Some(g) = grant else { return Err("Centurion is locked: unlock it with your PIN (the lock button) to write new values") };
     let (Some(gpid), Some(gstart), Some(guid)) = (g["pid"].as_i64(), g["start"].as_u64(), g["uid"].as_u64()) else {
@@ -149,18 +171,45 @@ fn decide(pin_set: bool, grant: Option<&Value>, uid: u32, chain: impl Fn(i32, u6
     if guid != u64::from(uid) || !chain(gpid as i32, gstart) {
         return Err("only the Centurion window that was unlocked with the PIN can write new values");
     }
-    if g["scenes_only"] == true && req["scene"] != true {
-        return Err("Centurion is locked (the window was closed): unlock it with your PIN to write new values");
+    let window_open = g["scenes_only"] != true;
+    if req["scene"] != true {
+        return if window_open { Ok(Verdict::Allow) }
+               else { Err("Centurion is locked (the window was closed): unlock it with your PIN to write new values") };
     }
-    Ok(())
+    let d = payload_digest(req);
+    if req["approve"] == true && window_open { return Ok(Verdict::Approve(d)); }
+    if approved(&d) { Ok(Verdict::Allow) }
+    else { Err("this scene step has values that were not approved yet: apply the scene (or profile) once from the unlocked Centurion window") }
 }
 
-/// The gate. Ok when not run through pkexec, or when the caller descends from the unlocked GUI (and, while
-/// the window is closed, the request is a scene's). Err carries the reply to send back.
+fn approved_list(uid: u32) -> Vec<String> {
+    read_private(APPROVED_FILE).and_then(|v| v[uid.to_string()].as_array().cloned()).unwrap_or_default()
+        .into_iter().filter_map(|x| x.as_str().map(str::to_owned)).collect()
+}
+
+fn approve(uid: u32, d: String) -> Result<(), String> {
+    let _l = crate::helper_lock(LOCK_NAME)?;
+    let mut all = read_private(APPROVED_FILE).filter(Value::is_object).unwrap_or_else(|| json!({}));
+    let mut list = approved_list(uid);
+    list.retain(|x| *x != d);
+    list.push(d);
+    if list.len() > MAX_APPROVED { list.drain(..list.len() - MAX_APPROVED); }
+    all[uid.to_string()] = json!(list);
+    crate::secure_dir(PIN_DIR)?;
+    write_private(APPROVED_FILE, all.to_string().as_bytes())
+}
+
+/// The gate. Ok when not run through pkexec, or when the caller descends from the unlocked GUI (scene steps: with
+/// values the user approved). Err carries the reply to send back.
 pub fn require(req: &Value) -> Result<(), Value> {
     let Some((ppid, uid)) = pkexec_caller() else { return Ok(()) };
     let pin_set = std::path::Path::new(PIN_FILE).exists();
-    decide(pin_set, grant().as_ref(), uid, |pid, start| on_chain(ppid, pid, start), req).map_err(locked_reply)
+    let list = if req["scene"] == true { approved_list(uid) } else { Vec::new() };
+    match decide(pin_set, grant().as_ref(), uid, |pid, start| on_chain(ppid, pid, start), req, |d| list.iter().any(|x| x == d)) {
+        Ok(Verdict::Allow) => Ok(()),
+        Ok(Verdict::Approve(d)) => approve(uid, d).map_err(|e| json!({"ok": false, "error": format!("could not record the approval: {e}")})),
+        Err(why) => Err(locked_reply(why)),
+    }
 }
 
 /// Shorthand for the helpers: Some(reply) when the request must be refused.
@@ -289,18 +338,48 @@ mod tests {
         let g = json!({"pid": 4242, "start": 99, "uid": 1000});
         let gui = |pid: i32, start: u64| pid == 4242 && start == 99;
         let other = |_: i32, _: u64| false;
+        let none = |_: &str| false;
         let apply = json!({"op": "apply"});
-        let scene = json!({"op": "apply", "scene": true});
-        assert!(decide(true, Some(&g), 1000, gui, &apply).is_ok());
-        assert!(decide(false, Some(&g), 1000, gui, &apply).is_err(), "no PIN set");
-        assert!(decide(true, None, 1000, gui, &apply).is_err(), "not unlocked");
-        assert!(decide(true, Some(&g), 1000, other, &apply).is_err(), "another program, same user");
-        assert!(decide(true, Some(&g), 1001, gui, &apply).is_err(), "another user");
-        assert!(decide(true, Some(&json!({"pid": 4242})), 1000, gui, &apply).is_err(), "malformed grant");
+        let ok = |r: Result<Verdict, &str>| r == Ok(Verdict::Allow);
+        assert!(ok(decide(true, Some(&g), 1000, gui, &apply, none)));
+        assert!(decide(false, Some(&g), 1000, gui, &apply, none).is_err(), "no PIN set");
+        assert!(decide(true, None, 1000, gui, &apply, none).is_err(), "not unlocked");
+        assert!(decide(true, Some(&g), 1000, other, &apply, none).is_err(), "another program, same user");
+        assert!(decide(true, Some(&g), 1001, gui, &apply, none).is_err(), "another user");
+        assert!(decide(true, Some(&json!({"pid": 4242})), 1000, gui, &apply, none).is_err(), "malformed grant");
         let closed = json!({"pid": 4242, "start": 99, "uid": 1000, "scenes_only": true});
-        assert!(decide(true, Some(&closed), 1000, gui, &apply).is_err(), "window closed: typed values refused");
-        assert!(decide(true, Some(&closed), 1000, gui, &scene).is_ok(), "window closed: scene steps go on");
-        assert!(decide(true, Some(&closed), 1000, other, &scene).is_err(), "a scene flag does not help another program");
+        assert!(decide(true, Some(&closed), 1000, gui, &apply, none).is_err(), "window closed: typed values refused");
+    }
+
+    #[test]
+    fn scene_steps_need_approved_values() {
+        let open = json!({"pid": 4242, "start": 99, "uid": 1000});
+        let closed = json!({"pid": 4242, "start": 99, "uid": 1000, "scenes_only": true});
+        let gui = |pid: i32, start: u64| pid == 4242 && start == 99;
+        let step = json!({"op": "apply", "profile": {"voltage": {"core": -80}}, "scene": true});
+        let user_started = json!({"op": "apply", "profile": {"voltage": {"core": -80}}, "scene": true, "approve": true, "hold": false});
+        let edited = json!({"op": "apply", "profile": {"voltage": {"core": -190}}, "scene": true});
+        let d = payload_digest(&step);
+        let known = |x: &str| x == d;
+        let none = |_: &str| false;
+        // The user applies it from the unlocked window: approved (same digest whatever the routing flags).
+        assert_eq!(decide(true, Some(&open), 1000, gui, &user_started, none), Ok(Verdict::Approve(d.clone())));
+        // Later, automatically or with the window closed: accepted because it was approved.
+        assert_eq!(decide(true, Some(&closed), 1000, gui, &step, known), Ok(Verdict::Allow));
+        assert_eq!(decide(true, Some(&open), 1000, gui, &step, known), Ok(Verdict::Allow));
+        // Someone edited the file: new values, not approved, refused even while the window is open.
+        assert!(decide(true, Some(&closed), 1000, gui, &edited, known).is_err());
+        assert!(decide(true, Some(&open), 1000, gui, &edited, known).is_err());
+        // "approve" counts only while the window is open.
+        let mut sneaky = edited.clone();
+        sneaky["approve"] = json!(true);
+        assert!(decide(true, Some(&closed), 1000, gui, &sneaky, known).is_err());
+        // Another program cannot use any of it.
+        assert!(decide(true, Some(&open), 1000, |_, _| false, &user_started, none).is_err());
+        // Key order does not change the digest.
+        let a: Value = serde_json::from_str(r#"{"op":"x","a":1,"b":[1,2]}"#).unwrap();
+        let b: Value = serde_json::from_str(r#"{"b":[1,2],"a":1,"op":"x","scene":true}"#).unwrap();
+        assert_eq!(payload_digest(&a), payload_digest(&b));
     }
 
     #[test]

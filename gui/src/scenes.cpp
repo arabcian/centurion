@@ -1036,9 +1036,11 @@ void SceneEngine::helper(const QString &name, const QJsonObject &req, Done done,
     };
     // A transaction cannot roll back or advance before the previous root process exits.
     // A CPU lease is supplied only by the scene step that actually owns it (never tray calls).
-    // "scene": the unlock grant keeps covering scene steps while the window is closed (unlock.rs).
+    // "scene": root accepts the step's values if they were approved before; "approve" (an apply the user started)
+    // approves them while the window is unlocked (unlock.rs).
     QJsonObject marked = req;
     marked.insert(QStringLiteral("scene"), true);
+    if (approveSteps_ && !marked.contains(QStringLiteral("approve"))) marked.insert(QStringLiteral("approve"), true);
     privileged::runUntilExit(privileged::helperPath(name), marked, this, callback, 120000, {}, cpuLease);
 }
 
@@ -1047,6 +1049,8 @@ void SceneEngine::helper(const QString &name, const QJsonObject &req, Done done,
 /// editor (unsaved values there stay as they are) and no dialog is ever opened.
 /// `fromScene`: Intel only -- the profile is recorded for centurion-intel-uv-daemon (see intel_uv_daemon).
 void SceneEngine::applyCpuProfile(const QString &name, bool fromScene, Done done, std::uint64_t cpuLease) {
+    // From the tray the user picked the profile: approve its values. From a scene: as the scene's apply does.
+    const bool approve = fromScene ? approveSteps_ : true;
     if (win_->ryzen()) {
         QFile f(ryzen::profilesDir() + '/' + name + ".json");
         if (!f.open(QIODevice::ReadOnly) || f.size() > 256 * 1024) { done(false, "profile '" + name + "' not found"); return; }
@@ -1062,14 +1066,14 @@ void SceneEngine::applyCpuProfile(const QString &name, bool fromScene, Done done
         }
         const QJsonValue coall = d.value("coall");
         if (!coall.isDouble() && entries.isEmpty()) { done(false, "profile '" + name + "' has no offsets"); return; }
-        auto perCore = [this, entries, done, name, cpuLease] {
+        auto perCore = [this, entries, done, name, cpuLease, approve] {
             if (entries.isEmpty()) { done(true, "'" + name + "'"); return; }
-            helper("ryzen-co-helper", {{"op", "set_coper_batch"}, {"params", QJsonObject{{"entries", entries}, {"profile", name}}}},
+            helper("ryzen-co-helper", {{"op", "set_coper_batch"}, {"approve", approve}, {"params", QJsonObject{{"entries", entries}, {"profile", name}}}},
                    [done, name](bool ok, const QString &m) { done(ok, ok ? "'" + name + "'" : m); }, {}, cpuLease);
         };
         // Per-core batch resets every core to 0 first, so all-core only without per-core values — as the tab.
         if (coall.isDouble() && entries.isEmpty())
-            helper("ryzen-co-helper", {{"op", "set_coall"}, {"params", QJsonObject{{"value", coall.toInt()}, {"profile", name}}}},
+            helper("ryzen-co-helper", {{"op", "set_coall"}, {"approve", approve}, {"params", QJsonObject{{"value", coall.toInt()}, {"profile", name}}}},
                    [perCore, done](bool ok, const QString &m) { if (ok) perCore(); else done(false, m); }, {}, cpuLease);
         else perCore();
         return;
@@ -1077,7 +1081,7 @@ void SceneEngine::applyCpuProfile(const QString &name, bool fromScene, Done done
     if (win_->intel()) {
         QFile f(inteluv::profilesDir() + '/' + name + ".json");
         if (!f.open(QIODevice::ReadOnly) || f.size() > 64 * 1024) { done(false, "profile '" + name + "' not found"); return; }
-        helper("intel-uv-helper", {{"op", "apply"}, {"hold", fromScene}, {"profile", QJsonDocument::fromJson(f.readAll()).object()}},
+        helper("intel-uv-helper", {{"op", "apply"}, {"hold", fromScene}, {"approve", approve}, {"profile", QJsonDocument::fromJson(f.readAll()).object()}},
                [done, name](bool ok, const QString &m) { done(ok, ok ? "'" + name + "'" : m); }, {}, cpuLease);
         return;
     }
@@ -1238,6 +1242,7 @@ void SceneEngine::start(const Scene &s, const QString &expectedGeneration) {
     autoApply_ = std::exchange(nextAuto_, false);
     trigger_ = std::exchange(nextTrigger_, QString());
     if (trigger_.isEmpty()) trigger_ = QStringLiteral("manual");
+    approveSteps_ = !autoApply_ && (trigger_ == QLatin1String("manual") || trigger_ == QLatin1String("tray"));
     summary_ = {};
     expectedProfile_ = s.platformProfile;
     verify_->stop();
@@ -1346,7 +1351,7 @@ void SceneEngine::start(const Scene &s, const QString &expectedGeneration) {
                 });
             };
             if (batch.isEmpty()) { afterSysfs(true, {}); return; }
-            privileged::runUntilExit(privileged::helperPath("fwattr-helper"), QJsonObject{{"scene", true}, {"batch", batch}}, this,
+            privileged::runUntilExit(privileged::helperPath("fwattr-helper"), QJsonObject{{"scene", true}, {"approve", approveSteps_}, {"batch", batch}}, this,
                                 [afterSysfs](const privileged::Result &r) {
                                     if (r.ok()) { afterSysfs(true, {}); return; }
                                     QStringList bad;
@@ -1590,6 +1595,7 @@ void SceneEngine::next() {
 }
 
 void SceneEngine::finish() {
+    approveSteps_ = false;
     // Keep busy through terminal signals: a synchronous listener must not overwrite
     // the current transaction or steal its tracked completion.
     const bool gameOwns = gameTookOver_ || ((autoApply_ || trackedDone_) && (gameSessions() > 0 || gameStarting() || gameSceneActive()));

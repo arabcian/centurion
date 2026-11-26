@@ -13,7 +13,14 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions follo
   Closing the window locks it again; scene steps keep running from the tray. The PIN is checked by root
   (salted, iterated SHA-256 in `/etc/centurion/pin.json`, 0600); from the 5th wrong PIN each try waits longer, the
   10th disables it until it is set again with the administrator password. Reads, stored presets, resets and the
-  boot services are not affected. D-Bus *ApplyScene* is refused while the window is locked.
+  boot services are not affected.
+- Approved scene values: scene and CPU-profile files live in the user's home, so the gated steps of a scene
+  (firmware limits, CPU curve / undervolt, fan table, GPU power) now write only values the user approved. Root keeps
+  a per-user list of approved step digests (`/etc/centurion/scene-approved.json`); applying a scene from the Scenes
+  tab or the tray with the window unlocked approves its values. Automatic applies (power source, login, resume,
+  shortcut, D-Bus, drift watch) and anything while the window is closed reuse approved values only: an edited scene
+  is refused until it is applied once from the unlocked window. After this update, apply each automatic scene once
+  by hand.
 - New `tune-admin-helper` (polkit `com.centurion.tune.admin`, the administrator password every time): boot preset,
   preset store, boot calibration, wake sources, wireless power lock and the PIN. tune-helper refuses these through
   pkexec.

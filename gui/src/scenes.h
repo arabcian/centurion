@@ -206,6 +206,9 @@ private:
     bool deferred_ = false;  // a power-source switch waiting for the game to end
     bool orphanPruneActive_ = false;
     bool calDeferred_ = false;  // a switch waiting for centurion-calibrate to release its hold
+    // The running apply was started by the user (Scenes tab, tray): its gated steps carry "approve", so root records
+    // their values as approved (crates/centurion-helpers/src/unlock.rs). Automatic applies only reuse approved values.
+    bool approveSteps_ = false;
     bool nextAuto_ = false, pendingAuto_ = false, autoApply_ = false;  // the apply being started / queued / running came from automatic switching
     QString expectedProfile_;   // platform profile of the scene that was just applied ("" = scene does not set one)
     int verifyTriesLeft_ = 0;
