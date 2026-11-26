@@ -392,6 +392,14 @@ pub fn handle(req: &Value) -> Value {
             from(write_sysfs(&path, control).map(|_| format!("{dev}: power/control = {control}")))
         }
         "sysfs_set" => from(sysfs_set(s("key"), s("value"))),
+        // NVIDIA modprobe options persist and change driver behaviour: password, never a silent grant.
+        "nvreg_set" => match req.get("values").and_then(Value::as_object) {
+            Some(v) => match crate::nvreg::set(v) {
+                Ok(n) => json!({"ok": true, "written": n, "file": crate::nvreg::CENTURION_FILE}),
+                Err(e) => fail(e),
+            },
+            None => fail("values must be an object"),
+        },
         "config_write" => match (conf(s("id")), req.get("content").and_then(Value::as_str)) {
             (Some(c), Some(text)) => from(config_write(c, text)),
             _ => fail("config_write needs a known id and content"),

@@ -35,6 +35,11 @@ fn path_shape_ok(p: &str) -> bool {
         && parts[3] == "current_value"
 }
 
+/// Only Lenovo firmware-attributes devices (e.g. lenovo-wmi-other-0) are ever written.
+fn lenovo_device(path: &str) -> bool {
+    path.strip_prefix(PREFIX).is_some_and(|r| r.starts_with("lenovo-"))
+}
+
 /// Accepts JSON integers and integer strings (the Python helper did int(value)).
 /// Refuses bools and fractional numbers rather than truncating them.
 fn parse_value(v: Option<&Value>) -> Option<i64> {
@@ -63,6 +68,9 @@ fn check_one(path_v: Option<&Value>, value_v: Option<&Value>) -> Result<Target, 
     let Some(path) = path_v.and_then(Value::as_str).filter(|p| path_shape_ok(p)) else {
         return err("path does not match the expected firmware-attributes shape".into());
     };
+    if !lenovo_device(path) {
+        return err("only Lenovo firmware-attributes devices (lenovo-*) are written".into());
+    }
     let Some(value) = parse_value(value_v) else {
         return err("value is not an integer".into());
     };
@@ -263,6 +271,12 @@ mod tests {
         assert!(!path_shape_ok("/sys/class/firmware-attributes/d/attributes/a/b/current_value"));
         assert!(!path_shape_ok("/sys/class/firmware-attributes/d/attributes/a/min_value"));
         assert_eq!(attr_of("/sys/class/firmware-attributes/lenovo-wmi-other-0/attributes/ppt_cpu_cl/current_value"), "ppt_cpu_cl");
+    }
+    #[test]
+    fn only_lenovo_devices() {
+        assert!(lenovo_device("/sys/class/firmware-attributes/lenovo-wmi-other-0/attributes/x/current_value"));
+        assert!(!lenovo_device("/sys/class/firmware-attributes/dell-wmi-sysman/attributes/x/current_value"));
+        assert!(!lenovo_device("/sys/class/firmware-attributes/thinklmi/attributes/x/current_value"));
     }
     #[test]
     fn values() {

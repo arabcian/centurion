@@ -20,14 +20,14 @@ BUDGET = 240  # seconds, whole run
 DENY_PREFIXES = [
     "/sys/kernel/debug/dri", "/sys/kernel/debug/tracing", "/sys/kernel/debug/regmap",
     "/sys/kernel/debug/i2c", "/sys/kernel/debug/kcov", "/sys/kernel/debug/usb",
-    "/sys/kernel/debug/gpio", "/sys/kernel/debug/pinctrl", "/sys/kernel/debug/mmc",
+    "/sys/kernel/debug/gpio", "/sys/kernel/debug/ieee80211", "/sys/kernel/debug/pinctrl", "/sys/kernel/debug/mmc",
     "/sys/kernel/tracing", "/sys/kernel/security", "/sys/kernel/slab",
     "/sys/kernel/config", "/sys/kernel/btf", "/sys/kernel/notes",
     "/sys/kernel/vmcoreinfo", "/sys/fs/cgroup", "/sys/fs/bpf", "/sys/fs/pstore",
     "/sys/fs/selinux", "/sys/firmware/efi/efivars", "/sys/firmware/acpi/tables",
     "/sys/firmware/dmi", "/sys/class/drm", "/sys/devices/virtual/powercap/intel-rapl-mmio",
 ]
-DENY_NAMES = re.compile(r"^(.*serial.*|uuid|sections|notes|uevent|modalias|vpd|rom|config|"
+DENY_NAMES = re.compile(r"^(.*serial.*|uuid|address|hostname|boot_id|sections|notes|uevent|modalias|vpd|rom|config|"
                         r"trace_pipe.*|raw_trace|snapshot|kmsg|kcore|mem)$", re.I)
 ADDR = re.compile(r"\b(?:0x)?ffff[0-9a-f]{12}\b", re.I)
 

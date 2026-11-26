@@ -1805,13 +1805,6 @@ fn run() -> Value {
             Err(e) => json!({"ok": false, "error": e}),
         },
         "tool" => centurion_helpers::tools::run(req["tool"].as_str().unwrap_or("")),
-        "nvreg_set" => match req["values"].as_object() {
-            Some(v) => match centurion_helpers::nvreg::set(v) {
-                Ok(n) => json!({"ok": true, "written": n, "file": centurion_helpers::nvreg::CENTURION_FILE}),
-                Err(e) => json!({"ok": false, "error": e}),
-            },
-            None => json!({"ok": false, "error": "values must be an object"}),
-        },
         "set_boot" => op_set_boot(&req),
         "wakeup_set" => match (req["device"].as_str(), req["enabled"].as_bool()) {
             (Some(d), Some(on)) => centurion_helpers::wakeup::set(d, on),
@@ -1928,7 +1921,7 @@ mod tests {
     }
     #[test]
     fn profile_role_cannot_take_values() {
-        for op in ["apply", "set_boot", "wakeup_set", "set_wireless_pm_lock", "nvreg_set", "guard_reset", "preset_save", "preset_delete", "calibrate_on_boot", "pstore_clear", "flight_interval"] {
+        for op in ["apply", "set_boot", "wakeup_set", "set_wireless_pm_lock", "guard_reset", "preset_save", "preset_delete", "calibrate_on_boot", "pstore_clear", "flight_interval"] {
             assert!(!PROFILE_OPS.contains(&op), "{op} must stay tune-helper only");
         }
     }
