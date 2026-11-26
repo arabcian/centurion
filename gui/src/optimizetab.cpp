@@ -3103,6 +3103,15 @@ void OptimizeTab::runAutotune(bool exploreOnly) {
         QStringList notLoaded;
         Fill f;
         loadPresetObject(d.value("preset").toObject(), &notLoaded, true, &f);
+        // Autotune never decides a radio (Wi-Fi / Bluetooth / WWAN are the user's choice): never leave one checked.
+        for (Row &r : rows_) {
+            if (!r.userSwitch || !r.include || !r.include->isChecked()) continue;
+            const QSignalBlocker b(r.include);
+            r.include->setChecked(false);
+            r.touched = false;
+            setEditorValue(r, r.current);
+            markRow(r);
+        }
         loadedPreset_ = d.value("name").toString();
         finishHistory(QStringLiteral("staged"),d,code,notLoaded);
         autoExploreBtn_->setEnabled(mode == QLatin1String("fast") && d.value("explore_available").toBool());

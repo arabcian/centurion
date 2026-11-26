@@ -529,6 +529,10 @@ HomeTab::HomeTab(QWidget *parent) : QWidget(parent), handler_(pp::primaryHandler
         startup->setToolTip(tr("Open navigation preferences (Ctrl+Shift+F)"));
         connect(startup, &QPushButton::clicked, this, [this] { Q_EMIT navigationPreferencesRequested(); });
         preferencesRow->addRow(startup);
+        auto *pinButton = new QPushButton(tr("Set or change unlock PIN…"));
+        pinButton->setToolTip(tr("The 4-digit PIN that unlocks Centurion for writing new values. Setting it asks for the administrator password once."));
+        connect(pinButton, &QPushButton::clicked, this, [this] { unlock::Manager::instance().changePin(this); });
+        preferencesRow->addRow(pinButton);
         auto *settingsButton = new QPushButton(tr("Preferences"));
         settingsButton->setObjectName(QStringLiteral("btnMini"));
         auto *popup = new QMenu(settingsButton);

@@ -2566,6 +2566,14 @@ Kernel uptime: %2
     </context>
     <context>
         <name>HomeTab</name>
+        <message>
+            <source>Set or change unlock PIN…</source>
+            <translation>Kilit PIN'ini belirle veya değiştir…</translation>
+        </message>
+        <message>
+            <source>The 4-digit PIN that unlocks Centurion for writing new values. Setting it asks for the administrator password once.</source>
+            <translation>Centurion'ı yeni değer yazmak için açan 4 haneli PIN. Belirlemek yönetici parolasını bir kez sorar.</translation>
+        </message>
         <message><source>Colour theme. Changes take effect immediately without restarting.</source><translation>Renk teması. Değişiklikler yeniden başlatmadan hemen uygulanır.</translation></message>
         <message><source>Edit opaque RGB colors. Saving applies the palette immediately. Contrast is checked for the main text and panel surfaces.</source><translation>Opak RGB renklerini düzenleyin. Kaydettiğinizde palet hemen uygulanır. Ana metin ve panel yüzeylerinin kontrastı denetlenir.</translation></message>
         <message><source>Theme applied.</source><translation>Tema uygulandı.</translation></message>
@@ -4362,6 +4370,10 @@ Centurion bunda test edilmedi; bazı donanım yazılımı özellikleri eksik ola
     <context>
         <name>MainWindow</name>
         <message>
+            <source>Set or change the PIN: the arrow next to this button.</source>
+            <translation>PIN'i belirlemek veya değiştirmek için: bu düğmenin yanındaki ok.</translation>
+        </message>
+        <message>
             <source>Unsaved changes</source>
             <translation>Kaydedilmemiş değişiklikler</translation>
         </message>
@@ -4684,8 +4696,8 @@ Centurion bunda test edilmedi; bazı donanım yazılımı özellikleri eksik ola
             <translation>Kullanılamayan favori: %1</translation>
         </message>
         <message>
-            <source>Change unlock PIN…</source>
-            <translation>Kilit PIN'ini değiştir…</translation>
+            <source>Set or change unlock PIN…</source>
+            <translation>Kilit PIN'ini belirle veya değiştir…</translation>
         </message>
         <message>
             <source>Unlocked</source>
@@ -25729,6 +25741,14 @@ Satırlar sıralamadan bağımsız karşılaştırılır; değişen satırlar si
     </context>
     <context>
         <name>PipewireConfigDialog</name>
+        <message>
+            <source>Centurion is locked: the settings below are read-only. Unlock it with your PIN to change them.</source>
+            <translation>Centurion kilitli: aşağıdaki ayarlar salt okunur. Değiştirmek için PIN'inizle kilidi açın.</translation>
+        </message>
+        <message>
+            <source>Unlock…</source>
+            <translation>Kilidi aç…</translation>
+        </message>
         <message>
             <location filename="../src/pipewireconfig.cpp" line="202"/>
             <source>PipeWire Settings</source>

@@ -110,13 +110,14 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
     lockButton_->setCursor(Qt::PointingHandCursor);
     lockButton_->setPopupMode(QToolButton::MenuButtonPopup);
     auto *lockMenu = new QMenu(lockButton_);
-    lockMenu->addAction(tr("Change unlock PIN…"), this, [this] { unlock::Manager::instance().changePin(this); });
+    lockMenu->addAction(tr("Set or change unlock PIN…"), this, [this] { unlock::Manager::instance().changePin(this); });
     lockButton_->setMenu(lockMenu);
     auto showLock = [this](bool on) {
         lockButton_->setIcon(sessionLockIcon(on));
         lockButton_->setText(on ? tr("Unlocked") : tr("Locked"));
-        lockButton_->setToolTip(on ? tr("New values can be written. Click to lock. The window locks when closed or after 10 minutes without input.")
-                                   : tr("Writing new values (undervolt, curves, power limits, kernel tunables) needs the PIN. Click to unlock."));
+        lockButton_->setToolTip((on ? tr("New values can be written. Click to lock. The window locks when closed or after 10 minutes without input.")
+                                    : tr("Writing new values (undervolt, curves, power limits, kernel tunables) needs the PIN. Click to unlock."))
+                                + QStringLiteral("\n") + tr("Set or change the PIN: the arrow next to this button."));
     };
     showLock(false);
     connect(&unlock::Manager::instance(), &unlock::Manager::changed, lockButton_, showLock);

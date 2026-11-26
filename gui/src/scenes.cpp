@@ -1417,7 +1417,12 @@ void SceneEngine::start(const Scene &s, const QString &expectedGeneration) {
                 privileged::runUntilExit(privileged::helperPath("tune-profile-helper"), rq, this, [this, done, c](const privileged::Result &r) {
                     if (r.reached && r.json.value("game_active").toBool()) { done(true, "left alone (game session active)"); return; }
                     QString msg = c.kind == Choice::Reset ? QStringLiteral("originals restored") : "'" + c.name + "'";
-                    QStringList exceptions;
+                    // IRQ steering (irq.affinity, irq.nvme, ...) often cannot be applied (managed IRQs, a driver that
+                    // refuses a mask): it is listed, but never makes the scene partial or failed.
+                    QStringList exceptions, irqNotes;
+                    auto note = [&exceptions, &irqNotes](const QString &key, const QString &why) {
+                        (key.startsWith(QLatin1String("irq.")) ? irqNotes : exceptions) << key + QStringLiteral(": ") + why;
+                    };
                     for (const QJsonValue &v : r.json.value("results").toArray()) {
                         const auto row=v.toObject(); const QString key=row.value("key").toString(); QStringList reasons;
                         if (row.value("controlled_by").toString().isEmpty() && !row.value("skipped").toString().isEmpty()) reasons << row.value("skipped").toString();
@@ -1428,12 +1433,12 @@ void SceneEngine::start(const Scene &s, const QString &expectedGeneration) {
                         const auto mismatches=row.value("mismatch").toArray();
                         for(const auto &m:mismatches) reasons << m.toString();
                         if(row.value("mismatch_count").toInt()>mismatches.size()) reasons << QStringLiteral("%1 additional mismatch details not included by helper").arg(row.value("mismatch_count").toInt()-mismatches.size());
-                        if(!reasons.isEmpty()) exceptions << key + QStringLiteral(": ") + reasons.join(QStringLiteral("; "));
+                        if(!reasons.isEmpty()) note(key, reasons.join(QStringLiteral("; ")));
                     }
                     const auto restore = r.json.value("restored").toObject();
                     for (const QJsonValue &v : restore.value("errors").toArray()) {
                         const auto row = v.toObject();
-                        exceptions << row.value("key").toString() + QStringLiteral(": ") + row.value("error").toString();
+                        note(row.value("key").toString(), row.value("error").toString());
                     }
                     if (const int n = restore.value("deferred").toInt(); n > 0)
                         exceptions << QStringLiteral("%1 obsolete settings could not be restored yet").arg(n);
@@ -1442,9 +1447,11 @@ void SceneEngine::start(const Scene &s, const QString &expectedGeneration) {
                         stepDisposition_ = QStringLiteral("partial");
                         msg += QStringLiteral("\n") + exceptions.join(QLatin1Char('\n'));
                     }
+                    if (!irqNotes.isEmpty()) msg += QStringLiteral("\nIRQ steering not applied (not counted as a failure):\n") + irqNotes.join(QLatin1Char('\n'));
                     // The helper attempted the preset (per-key results) but some knobs did not stick: that is a partial
-                    // scene, already listed above — not a failed one (not every optimization knob matters).
-                    if (!r.ok() && !(r.reached && r.json.value("results").isArray() && !exceptions.isEmpty())) {
+                    // scene, already listed above — not a failed one (not every optimization knob matters). IRQ steering
+                    // alone never fails it either.
+                    if (!r.ok() && !(r.reached && r.json.value("results").isArray() && !(exceptions.isEmpty() && irqNotes.isEmpty()))) {
                         done(false, r.message() + QStringLiteral("\n") + msg);
                         return;
                     }
