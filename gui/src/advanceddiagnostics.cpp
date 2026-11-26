@@ -639,6 +639,7 @@ Report sleepMatrix(const SleepInputs &in, const QJsonArray &boots) {
         t.title = tr("Sleeps per Boot");
         t.headers = {tr("Boot"), tr("Started"), tr("Boot ended"), tr("Sleeps"), tr("Median length"), tr("dGPU awake on entry"),
                      tr("No HW sleep"), tr("Unexpected wakes"), tr("Failed attempts")};
+        t.privateColumns = {0};
         int dgpuTotal = 0;
         for (const QString &id : order) {
             Row &row = per[id];

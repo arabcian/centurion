@@ -206,13 +206,11 @@ pub fn reset_everything(gpu_index: usize) -> (Vec<String>, Vec<String>) {
         Ok(v) => done.extend(v),
         Err(e) => errs.push(format!("clock offsets: {e}")),
     }
-    for (what, r) in [("memory clock lock", limits::reset_mem_locked_clocks(idx))] {
-        match r {
-            Ok(()) => done.push(format!("{what} released")),
-            // "not supported" on a GPU without locks is not a failed reset
-            Err(e) if e.contains("Not Supported") || e.contains("not found") => {}
-            Err(e) => errs.push(format!("{what}: {e}")),
-        }
+    match limits::reset_mem_locked_clocks(idx) {
+        Ok(()) => done.push("memory clock lock released".into()),
+        // "not supported" on a GPU without locks is not a failed reset
+        Err(e) if e.contains("Not Supported") || e.contains("not found") => {}
+        Err(e) => errs.push(format!("memory clock lock: {e}")),
     }
     let pl = limits::get_power_limit(idx);
     if let (Some(cur), Some(def)) = (pl.power_limit_w, pl.default_power_limit_w) {

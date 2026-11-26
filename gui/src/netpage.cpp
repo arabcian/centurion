@@ -231,16 +231,28 @@ static std::optional<wifiage::Ranges> wifiRange(const QJsonObject &network) {
         const auto first = split.value(QStringLiteral("primary_center_mhz"));
         const auto second = split.value(QStringLiteral("secondary_center_mhz"));
         if (!op.isEmpty() || !first.isDouble() || !second.isDouble()) return {};
-        return wifiage::split80Ranges(primary.toDouble(), first.toDouble(), second.toDouble());
+        const auto source = str(split, "source");
+        const bool he = source == QStringLiteral("HE operation");
+        if ((!source.isEmpty() && !he && source != QStringLiteral("VHT operation"))
+            || (!he && wifiage::band(primary.toDouble()) != 1)) return {};
+        return wifiage::split80Ranges(primary.toDouble(), first.toDouble(), second.toDouble(), he);
     }
     const auto source = str(op,"source");
-    if (source != QStringLiteral("HT operation") && source != QStringLiteral("VHT operation")) return {};
+    const bool he = source == QStringLiteral("HE operation"), eht = source == QStringLiteral("EHT operation");
+    if (!he && !eht && source != QStringLiteral("HT operation") && source != QStringLiteral("VHT operation")) return {};
     const auto c = op.value(QStringLiteral("center_mhz")), w = op.value(QStringLiteral("width_mhz"));
     if (!c.isDouble() || !w.isDouble()) return {};
     if ((source == QStringLiteral("HT operation") && w.toDouble() > 40) ||
         (source == QStringLiteral("VHT operation") && w.toDouble() < 80)) return {};
-    const auto range = wifiage::channelRange(primary.toDouble(),c.toDouble(),w.toDouble());
+    if (he && (wifiage::band(primary.toDouble()) == 0 || w.toDouble() > 160)) return {};
+    auto range = wifiage::channelRange(primary.toDouble(), c.toDouble(), w.toDouble(), he || eht);
     if (!range) return {};
+    const auto reportedMask = op.value(QStringLiteral("disabled_subchannels"));
+    if (eht && !reportedMask.isDouble()) return {};
+    const auto mask = reportedMask.isUndefined() ? 0 : reportedMask.toInteger(-1);
+    if (mask < 0 || mask > 0xffff || (!eht && mask != 0)
+        || !wifiage::validDisabledMask(*range, primary.toInt(), unsigned(mask))) return {};
+    range->disabled = unsigned(mask);
     return wifiage::Ranges{*range, std::nullopt};
 }
 
@@ -597,6 +609,12 @@ NetPage::NetPage(QWidget *parent) : QWidget(parent) {
                             ? tr("Advertised 80 + 80 MHz (%1–%2 and %3–%4 MHz)")
                                 .arg(a.low).arg(a.high).arg(range->second->low).arg(range->second->high)
                             : tr("Advertised %1 MHz (%2–%3 MHz)").arg(a.width).arg(a.low).arg(a.high);
+                        if (a.disabled) {
+                            QStringList frequencies;
+                            for (int i = 0; i < a.width / 20; ++i)
+                                if (a.disabled & (1u << i)) frequencies << QString::number(a.low + 10 + i * 20);
+                            rangeText += QStringLiteral(" · ") + tr("Disabled 20 MHz subchannels (centers): %1 MHz").arg(frequencies.join(QStringLiteral(", ")));
+                        }
                     }
                     const auto tip = QStringLiteral("%1 · %2 · %3 MHz · %4 dBm · %5 · %6")
                         .arg(str(o,"ssid"),str(o,"bssid")).arg(f.toInt()).arg(signal.toDouble())
@@ -604,9 +622,11 @@ NetPage::NetPage(QWidget *parent) : QWidget(parent) {
                     if (range) {
                         QPen span{QColor(theme::ACCENT)}; span.setWidthF(2.0); if (!recent) span.setStyle(Qt::DashLine);
                         const auto addSegment = [&](const wifiage::Range &segment) {
-                            const double lo = left+190.0*(segment.low-lower)/(upper-lower);
-                            const double hi = left+190.0*(segment.high-lower)/(upper-lower);
-                            scene->addLine(lo,y,hi,y,span)->setToolTip(tip.toHtmlEscaped());
+                            wifiage::forEachActiveSpan(segment, [&](int low, int high) {
+                                const double lo = left+190.0*(low-lower)/(upper-lower);
+                                const double hi = left+190.0*(high-lower)/(upper-lower);
+                                scene->addLine(lo,y,hi,y,span)->setToolTip(tip.toHtmlEscaped());
+                            });
                         };
                         addSegment(range->first);
                         if (range->second) addSegment(*range->second);
@@ -628,8 +648,19 @@ NetPage::NetPage(QWidget *parent) : QWidget(parent) {
                     width = range->second ? QStringLiteral("80 + 80 MHz") : QStringLiteral("%1 MHz").arg(range->first.width);
                     centers = QString::number(range->first.center);
                     if (range->second) centers += QStringLiteral(" / %1").arg(range->second->center);
-                    source = range->second ? QStringLiteral("VHT operation") : str(o.value(QStringLiteral("channel_range")).toObject(),"source");
+                    if (range->second) {
+                        source = str(o.value(QStringLiteral("channel_80p80")).toObject(), "source");
+                        if (source.isEmpty()) source = QStringLiteral("VHT operation");
+                    } else {
+                        source = str(o.value(QStringLiteral("channel_range")).toObject(), "source");
+                        if (range->first.disabled)
+                            width = tr("%1 (%2 disabled)").arg(width).arg(std::popcount(range->first.disabled));
+                    }
                 }
+                if (source == QStringLiteral("HT operation")) source = tr("HT operation");
+                else if (source == QStringLiteral("VHT operation")) source = tr("VHT operation");
+                else if (source == QStringLiteral("HE operation")) source = tr("HE operation");
+                else if (source == QStringLiteral("EHT operation")) source = tr("EHT operation");
                 auto *item = new SortItem({str(o,"ssid").isEmpty() ? tr("(hidden network)") : str(o,"ssid"), str(o,"bssid"), validFreq ? str(o,"band") : tr("Unknown"),
                     channel > 0 ? QString::number(channel) : tr("Unknown"),
                     validFreq ? QString::number(f.toInt()) : tr("Unknown"), signalValid ? QString::number(sig.toDouble()) + QStringLiteral(" dBm") : tr("Unknown"),

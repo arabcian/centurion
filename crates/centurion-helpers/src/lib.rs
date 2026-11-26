@@ -217,13 +217,17 @@ pub fn secure_dir(p: &str) -> Result<(), String> {
 /// at most `max` bytes. The checks run on the opened descriptor, so the file
 /// cannot be swapped between the check and the read.
 pub fn read_root_file(p: &str, max: u64) -> Option<String> {
+    String::from_utf8(read_root_bytes(p, max)?).ok()
+}
+
+pub(crate) fn read_root_bytes(p: &str, max: u64) -> Option<Vec<u8>> {
     let f = std::fs::OpenOptions::new().read(true)
         .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC | libc::O_NONBLOCK).open(p).ok()?;
     let m = f.metadata().ok()?;
     if !m.is_file() || m.uid() != 0 || m.mode() & 0o022 != 0 || m.len() > max { return None; }
-    let mut s = String::new();
-    (&f).take(max + 1).read_to_string(&mut s).ok()?;
-    (s.len() as u64 <= max).then_some(s)
+    let mut bytes = Vec::new();
+    (&f).take(max + 1).read_to_end(&mut bytes).ok()?;
+    (bytes.len() as u64 <= max).then_some(bytes)
 }
 
 /// Atomic root-owned write: tmp (O_EXCL, no symlink, 0644) + fsync + rename

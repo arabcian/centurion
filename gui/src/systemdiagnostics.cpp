@@ -939,6 +939,7 @@ Report firmware(const QString &root, const QList<diagsrc::LogLine> &kernel) {
     Table events;
     events.title = tr("ACPI / WMI Kernel Evidence");
     events.headers = {tr("Time"), tr("Boot ID"), tr("Sequence"), tr("Evidence type"), tr("Candidate devices"), tr("Candidates in inventory"), tr("Kernel message"), tr("Currently observed drivers")};
+    events.privateColumns = {1};
     events.note = tr("Exact identifier mentions and driver-prefix candidates refer to the current inventory, not proof of the historical binding or cause. Only full matching boot IDs are used; legacy prefixes are excluded. Saved kernel logs are incomplete and no new scan is started.");
     const acpievidence::Index index(objects);
     int matching = 0;

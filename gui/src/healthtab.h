@@ -10,6 +10,7 @@
 // the kernel log is restricted (dmesg_restrict=1) it falls back to a slow
 // pkexec poll. New critical events reach the tray as a notification.
 // Above the list, a 30-day chart of the saved events per day and kind; a click shows that day only.
+#include <QDateTime>
 #include <QHash>
 #include <QStringList>
 #include <QJsonArray>
@@ -141,7 +142,7 @@ protected:
 private:
 
     /// The newest row of one event that repeats: same boot, kind, code and title, within GROUP_US.
-    struct Group { QTreeWidgetItem *row = nullptr; QString base; double firstUs = 0, lastUs = 0; int n = 0; };
+    struct Group { QTreeWidgetItem *row = nullptr; QString base; QDateTime firstTime; double lastUs = 0; int n = 0; };
 
     QLabel *summary_, *source_, *aer_, *logInfo_, *dayInfo_, *scanWarning_ = nullptr;
     DayBars *days_ = nullptr;

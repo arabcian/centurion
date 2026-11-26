@@ -1588,6 +1588,10 @@ Bir adım geri alınamadı; "Lenovo logosuna dön" varsayılanı geri getirir.</
             <translation>Kayıtlı günlüğe yazılamadı.</translation>
         </message>
         <message>
+            <source>Could not determine the event time.</source>
+            <translation>Olay saati belirlenemedi.</translation>
+        </message>
+        <message>
             <source>Saved log requires a full boot identity.</source>
             <translation>Günlüğe yazmak için tam açılış kimliği gerekiyor.</translation>
         </message>
@@ -2550,6 +2554,14 @@ Kernel uptime: %2
         <message>
             <source>Clear search and filters</source>
             <translation>Aramayı ve filtreleri temizle</translation>
+        </message>
+        <message>
+            <source>Kernel monitor returned invalid event data.</source>
+            <translation>Çekirdek izleyicisi geçersiz olay verisi döndürdü.</translation>
+        </message>
+        <message>
+            <source>Kernel monitor stopped or returned an invalid reply.</source>
+            <translation>Çekirdek izleyicisi durdu veya geçersiz yanıt döndürdü.</translation>
         </message>
     </context>
     <context>
@@ -5758,6 +5770,94 @@ Bir yorumlayıcıyla (python, node, bash) çalışan betik o yorumlayıcı olara
                 <numerusform>, %n Linux programı engelli</numerusform>
             </translation>
         </message>
+        <message>
+            <source>Disabled 20 MHz subchannels (centers): %1 MHz</source>
+            <translation>Devre dışı 20 MHz alt kanalların merkezleri: %1 MHz</translation>
+        </message>
+        <message>
+            <source>%1 (%2 disabled)</source>
+            <translation>%1 (%2 alt kanal devre dışı)</translation>
+        </message>
+        <message>
+            <source>HT operation</source>
+            <translation>HT işlem bilgisi</translation>
+        </message>
+        <message>
+            <source>VHT operation</source>
+            <translation>VHT işlem bilgisi</translation>
+        </message>
+        <message>
+            <source>HE operation</source>
+            <translation>HE işlem bilgisi</translation>
+        </message>
+        <message>
+            <source>EHT operation</source>
+            <translation>EHT işlem bilgisi</translation>
+        </message>
+        <message>
+            <source> · Snapshot expired or age unknown</source>
+            <translation> · Anlık görüntünün süresi doldu veya yaşı bilinmiyor</translation>
+        </message>
+        <message>
+            <source> · most connections by program path: %1</source>
+            <translation> · Program yoluna göre en çok bağlantı: %1</translation>
+        </message>
+        <message>
+            <source>Connection snapshot expired. Refresh before changing rules.</source>
+            <translation>Bağlantı anlık görüntüsünün süresi doldu. Kuralları değiştirmeden önce yenileyin.</translation>
+        </message>
+        <message>
+            <source>Current parent chain (not historical ownership):</source>
+            <translation>Geçerli üst süreç zinciri (geçmiş sahiplik bilgisi içermez):</translation>
+        </message>
+        <message>
+            <source>PID %1: current process lifetime cannot be verified; live details withheld.</source>
+            <translation>PID %1: Sürecin ömrü doğrulanamadığı için canlı ayrıntılar gösterilmiyor.</translation>
+        </message>
+        <message>
+            <source>Process changed while reading; live details discarded.</source>
+            <translation>Okuma sırasında süreç değiştiği için canlı ayrıntılar atıldı.</translation>
+        </message>
+        <message>
+            <source>Process lifetime unknown</source>
+            <translation>Süreç ömrü bilinmiyor</translation>
+        </message>
+        <message>
+            <source>Program Today</source>
+            <translation>Programın bugünkü kullanımı</translation>
+        </message>
+        <message>
+            <source>Recorded bytes for the program path, not this process or socket. Missing data is unknown.</source>
+            <translation>Kaydedilen baytlar program yoluna aittir. Bu süreç veya soket için ayrı ölçüm yok. Eksik veri bilinmiyor olarak gösterilir.</translation>
+        </message>
+        <message>
+            <source>Recorded daily totals, not instantaneous bandwidth. Missing days are not measured zeros. Chart coordinates are approximate; ≥ marks a counter at the INT64_MAX saturation limit. Totals are per program path, not per process lifetime.</source>
+            <translation>Grafik, kaydedilen günlük toplamları gösterir. Veri olmayan günlerde sıfır varsayılmaz. Grafik koordinatları yaklaşık değerlerdir. ≥ işareti, sayacın INT64_MAX üst sınırına ulaştığını gösterir. Toplamlar program yoluna göre hesaplanır.</translation>
+        </message>
+        <message>
+            <source>Recorded process start ticks: %1</source>
+            <translation>Kaydedilen süreç başlangıç tik değeri: %1</translation>
+        </message>
+        <message>
+            <source>Recorded socket cookie: %1</source>
+            <translation>Kaydedilen soket kimliği: %1</translation>
+        </message>
+        <message>
+            <source>Signal unavailable</source>
+            <translation>Sinyal bilgisi kullanılamıyor</translation>
+        </message>
+        <message>
+            <source>Socket cookie unavailable</source>
+            <translation>Soket kimliği kullanılamıyor</translation>
+        </message>
+        <message>
+            <source>Station counters unavailable for this access point.</source>
+            <translation>Bu erişim noktası için istasyon sayaçları kullanılamıyor.</translation>
+        </message>
+        <message>
+            <source>The wireless adapter changed during capture.</source>
+            <translation>Veri alınırken kablosuz bağdaştırıcı değişti.</translation>
+        </message>
 </context>
     <context>
         <name>NotifyDialog</name>
@@ -6475,6 +6575,26 @@ Seçilen dosyalar önizlemeyle eşleşti. Otomatik anonimleştirme kesin sonuç 
         <source> (partial preview; full file if selected)</source>
         <translation> (kısmi önizleme; seçilirse dosyanın tamamı)</translation>
     </message>
+        <message>
+            <source>%1 selected · %2 include text you have not opened</source>
+            <translation>%1 dosya seçili · %2 dosyada henüz açmadığınız metin var</translation>
+        </message>
+        <message>
+            <source>Could not read page %1.</source>
+            <translation>%1. sayfa okunamadı.</translation>
+        </message>
+        <message>
+            <source>Could not read page %1: %2</source>
+            <translation>%1. sayfa okunamadı: %2</translation>
+        </message>
+        <message>
+            <source>Next unopened page</source>
+            <translation>Sonraki açılmamış sayfa</translation>
+        </message>
+        <message>
+            <source>Retry page</source>
+            <translation>Sayfayı yeniden yükle</translation>
+        </message>
 </context>
     <context>
         <name>ScenesTab</name>
@@ -19361,6 +19481,10 @@ Günlük okunamıyor, bu yüzden onu tutmak hiçbir şeyi korumaz ve yalnızca b
         <source>Kernel sequence</source>
         <translation>Kernel sıra numarası</translation>
     </message>
+    <message>
+        <source>The table lists verified base, CTA and supported DisplayID detailed timings. The plot shows progressive timings and the explicit VRR range.</source>
+        <translation>Tablo, doğrulanan temel EDID, CTA ve desteklenen DisplayID ayrıntılı zamanlamalarını listeler. Grafik, aşamalı tarama zamanlamalarını ve açıkça bildirilen VRR aralığını gösterir.</translation>
+    </message>
 </context>
     <context>
         <name>diagsrc</name>
@@ -24356,6 +24480,62 @@ Günlük okunamıyor, bu yüzden onu tutmak hiçbir şeyi korumaz ve yalnızca b
             <source>loaded (version not recorded)</source>
             <translation>yüklü (sürüm kaydedilmemiş)</translation>
         </message>
+        <message>
+            <source>EDID base block</source>
+            <translation>EDID temel bloğu</translation>
+        </message>
+        <message>
+            <source>DisplayID Type I</source>
+            <translation>DisplayID Tip I</translation>
+        </message>
+        <message>
+            <source>DisplayID Type VII</source>
+            <translation>DisplayID Tip VII</translation>
+        </message>
+        <message>
+            <source>Listed resolution</source>
+            <translation>Listelenen çözünürlük</translation>
+        </message>
+        <message>
+            <source>A resolution match does not verify refresh rate or timing. Linux DRM sysfs lists mode names only.</source>
+            <translation>Çözünürlük eşleşmesi yenileme hızını veya zamanlamayı doğrulamaz. Linux DRM sysfs yalnızca mod adlarını listeler.</translation>
+        </message>
+        <message>
+            <source>Modes Listed by Linux DRM</source>
+            <translation>Linux DRM tarafından listelenen modlar</translation>
+        </message>
+        <message>
+            <source>Mode name</source>
+            <translation>Mod adı</translation>
+        </message>
+        <message>
+            <source>Multiple modes can share the same name. Refresh rates are unavailable in this source.</source>
+            <translation>Birden fazla mod aynı adı taşıyabilir. Bu kaynakta yenileme hızları bulunmaz.</translation>
+        </message>
+        <message>
+            <source>Listed</source>
+            <translation>Listeleniyor</translation>
+        </message>
+        <message>
+            <source>Not listed</source>
+            <translation>Listelenmiyor</translation>
+        </message>
+        <message>
+            <source>Block not declared</source>
+            <translation>Blok bildirilmemiş</translation>
+        </message>
+        <message>
+            <source>DisplayID data block</source>
+            <translation>DisplayID veri bloğu</translation>
+        </message>
+        <message>
+            <source>DisplayID section checksum</source>
+            <translation>DisplayID bölüm sağlama toplamı</translation>
+        </message>
+        <message>
+            <source>Invalid block structure</source>
+            <translation>Geçersiz blok yapısı</translation>
+        </message>
 </context>
     <context>
         <name>DiagReportView</name>
@@ -24737,6 +24917,46 @@ Satırlar sıralamadan bağımsız karşılaştırılır; değişen satırlar si
         <message>
             <source>Export preview, snapshots, history and evidence relationships of this report.</source>
             <translation>Bu raporun dışa aktarma önizlemesi, anlık görüntüleri, geçmişi ve kanıt ilişkileri.</translation>
+        </message>
+        <message>
+            <source>Expand a table row to select its individual cells.</source>
+            <translation>Hücreleri tek tek seçmek için tablo satırını genişletin.</translation>
+        </message>
+        <message>
+            <source>Excluded table cells: %1.</source>
+            <translation>Paylaşım dışı bırakılan tablo hücreleri: %1.</translation>
+        </message>
+        <message>
+            <source>Live ACPI notifications…</source>
+            <translation>Canlı ACPI bildirimleri…</translation>
+        </message>
+        <message>
+            <source>This note changed while you were editing it.</source>
+            <translation>Bu not, siz düzenlerken değişti.</translation>
+        </message>
+        <message>
+            <source>Could not save diagnostic history.</source>
+            <translation>Tanılama geçmişi kaydedilemedi.</translation>
+        </message>
+        <message>
+            <source>Local, manually saved snapshots. Raw text and executable fixes are omitted; redaction is best effort. Up to 20 entries and 1 MiB per report, with 128 reports and 32 MiB overall. When full, existing snapshots are kept.</source>
+            <translation>Elle kaydedilen yerel raporlar. Ham metin ve çalıştırılabilir düzeltmeler çıkarılır. Maskeleme tüm özel bilgileri yakalamayabilir. Sınır rapor başına 20 kayıt ve 1 MiB, arşivin tamamında 128 rapor ve 32 MiB. Arşiv dolduğunda mevcut kayıtlar korunur.</translation>
+        </message>
+        <message>
+            <source>Export report archive…</source>
+            <translation>Rapor arşivini dışa aktar…</translation>
+        </message>
+        <message>
+            <source>Export report archive</source>
+            <translation>Rapor arşivini dışa aktar</translation>
+        </message>
+        <message>
+            <source>JSON files (*.json)</source>
+            <translation>JSON dosyaları (*.json)</translation>
+        </message>
+        <message>
+            <source>Choose a location outside the diagnostic archive.</source>
+            <translation>Tanılama arşivinin dışında bir konum seçin.</translation>
         </message>
     </context>
     <context>
@@ -27587,6 +27807,73 @@ Kayıt kimliği: %6
         <message><source>Unlinked saved event</source><translation>Bağlantısız kayıtlı olay</translation></message>
         <message><source>Unresolved event boots (not one session)</source><translation>Çözümlenemeyen olay açılışları (tek oturum değil)</translation></message>
         <message><source>Unsupported record format</source><translation>Desteklenmeyen kayıt biçimi</translation></message>
+    <message><source>Unknown time</source><translation>Saat bilinmiyor</translation></message>
+    <message><source>%1 (time unverified)</source><translation>%1 (saat doğrulanamadı)</translation></message>
+    <message><source>%1 (UTC offset unknown)</source><translation>%1 (UTC farkı bilinmiyor)</translation></message>
+        <message>
+            <source>Local and imported report snapshots, and bounded saved kernel and health logs. Capture boot and event boot are different types of provenance. Sharing a boot does not prove a common device or cause. Wall-clock ordering is descriptive only.</source>
+            <translation>Yerel ve içe aktarılan raporlar ile sınırlı sayıda kayıtlı çekirdek ve Sağlık günlüğü. Raporun alındığı açılış ve olayın gerçekleştiği açılış ayrı kaynak bilgileridir. Aynı açılış, aygıtın veya nedenin ortak olduğunu kanıtlamaz. Saat sırası yalnızca gösterim amaçlıdır.</translation>
+        </message>
+        <message>
+            <source>Source: Imported report archive</source>
+            <translation>Kaynak: İçe aktarılan rapor arşivi</translation>
+        </message>
+        <message>
+            <source>Source: Local report archive</source>
+            <translation>Kaynak: Yerel rapor arşivi</translation>
+        </message>
+        <message>
+            <source>Imported report (capture boot)</source>
+            <translation>İçe aktarılan rapor (raporun alındığı açılış)</translation>
+        </message>
+        <message>
+            <source>Import report archive…</source>
+            <translation>Rapor arşivini içe aktar…</translation>
+        </message>
+        <message>
+            <source>Import report archive</source>
+            <translation>Rapor arşivini içe aktar</translation>
+        </message>
+        <message>
+            <source>JSON files (*.json)</source>
+            <translation>JSON dosyaları (*.json)</translation>
+        </message>
+        <message>
+            <source>These snapshots are already in the archive.</source>
+            <translation>Bu kayıtlar zaten arşivde.</translation>
+        </message>
+        <message>
+            <source>Choose a valid version 1 report archive containing snapshots of one report.</source>
+            <translation>Tek bir rapora ait kayıtlar içeren geçerli bir sürüm 1 arşivi seçin.</translation>
+        </message>
+        <message>
+            <source>The import conflicts with a saved snapshot or a damaged archive.</source>
+            <translation>İçe aktarma bir kayıtla çakışıyor veya hedef arşiv bozuk.</translation>
+        </message>
+        <message>
+            <source>Archive full. Import leaves saved snapshots in place.</source>
+            <translation>Arşiv dolu. Mevcut kayıtlar korundu.</translation>
+        </message>
+        <message>
+            <source>The archive is currently in use.</source>
+            <translation>Arşiv şu anda kullanılıyor.</translation>
+        </message>
+        <message>
+            <source>Could not save the imported archive.</source>
+            <translation>İçe aktarılan arşiv kaydedilemedi.</translation>
+        </message>
+        <message>
+            <source>Delete imported snapshot…</source>
+            <translation>İçe aktarılan kaydı sil…</translation>
+        </message>
+        <message>
+            <source>Delete this imported snapshot from the local archive?</source>
+            <translation>Bu içe aktarılan kayıt yerel arşivden silinsin mi?</translation>
+        </message>
+        <message>
+            <source>Could not delete the imported snapshot.</source>
+            <translation>İçe aktarılan kayıt silinemedi.</translation>
+        </message>
 </context>
 <context>
     <name>ChartData</name>

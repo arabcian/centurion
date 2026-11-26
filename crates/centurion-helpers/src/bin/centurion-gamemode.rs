@@ -515,7 +515,7 @@ fn launcher_pid() -> i32 {
 }
 
 fn enter_game_scene(scene: &str, cpu: bool, gpu: bool) {
-    let ok = apply_scene(scene, SceneParts { cpu, gpu, tuning: false }, true);
+    let ok = apply_scene(scene, SceneParts { cpu, gpu, tuning: false }, true, None);
     if !ok { log!("centurion-gamemode: game scene \"{scene}\" was applied only partly — see the lines above"); }
 }
 
@@ -523,18 +523,27 @@ fn scenes_paused() -> bool {
     read_json(&config_dir().join("scenes.json")).is_some_and(|v| v["paused"] == true)
 }
 
+fn game_scene_generation(st: &Value) -> Option<&str> {
+    st["game_scene_generation"].as_str()
+        .filter(|id| !id.is_empty() && st["scene_generation"].as_str() == Some(*id))
+}
+
 fn leave_game_scene() {
     let paused = scenes_paused();
     // Claim the switch back under the lock: the GUI's orphan clean-up does the same, so only one of the
     // two leaves the scene.
     let mut before = None;
+    let mut generation = None;
     if !edit_scene_state(|st| {
         if st["game_scene"].is_null() { return false; }
         before = st["before_game"].as_str().map(str::to_owned);
+        generation = game_scene_generation(st).map(str::to_owned);
         st["game_scene"] = Value::Null;
+        st["game_scene_generation"] = Value::Null;
         st["before_game"] = Value::Null;
         true
     }) { return; }
+    let Some(generation) = generation else { return };
     if paused {
         log!("centurion-gamemode: last game closed — scenes are paused, no scene change");
         return;
@@ -549,7 +558,7 @@ fn leave_game_scene() {
     match target {
         Some(t) => {
             log!("centurion-gamemode: last game closed — back to scene \"{t}\"");
-            apply_scene(&t, SceneParts { cpu: true, gpu: true, tuning: true }, false);
+            apply_scene(&t, SceneParts { cpu: true, gpu: true, tuning: true }, false, Some(&generation));
         }
         None => log!("centurion-gamemode: last game closed — no earlier scene to return to (the game scene stays)"),
     }
@@ -623,7 +632,7 @@ fn scene_choice(v: &Value) -> Option<Result<String, ()>> {
 
 /// Applies a saved scene in dependency order, printing one line per part.
 /// A failing part is reported and the rest still runs. Returns overall ok.
-fn apply_scene(name: &str, parts: SceneParts, entering_game: bool) -> bool {
+fn apply_scene(name: &str, parts: SceneParts, entering_game: bool, restore_generation: Option<&str>) -> bool {
     if !valid_name(name) { log!("centurion-gamemode: invalid scene name '{name}'"); return false; }
     let Some(s) = read_json(&scenes_dir().join(format!("{name}.json"))).filter(Value::is_object) else {
         log!("centurion-gamemode: scene \"{name}\" not found ({})", scenes_dir().display());
@@ -633,6 +642,11 @@ fn apply_scene(name: &str, parts: SceneParts, entering_game: bool) -> bool {
     let nanos = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_nanos());
     let id = format!("{}-{nanos}-{}", std::process::id(), NEXT_SCENE.fetch_add(1, Ordering::Relaxed));
     let owns_state = edit_scene_state(|st| {
+        if let Some(expected) = restore_generation {
+            if st["scene_generation"].as_str() != Some(expected) || !st["game_scene"].is_null() {
+                return false;
+            }
+        }
         st["scene_generation"] = json!(id);
         st["gpu_pending"] = Value::Null;
         st["gpu_running"] = Value::Null;
@@ -641,18 +655,23 @@ fn apply_scene(name: &str, parts: SceneParts, entering_game: bool) -> bool {
                 st["before_game"] = st["active"].clone();
             }
             st["game_scene"] = json!(name);
+            st["game_scene_generation"] = json!(id);
             // Publish the game scene before its first step so an interrupted PRE can be recovered.
             st["active"] = json!(name);
             st["partial"] = json!(true);
         }
         true
     });
+    if !owns_state && restore_generation.is_some() { return false; }
+    let superseded = || restore_generation.is_some()
+        && read_scene_state()["scene_generation"].as_str() != Some(id.as_str());
     let mut ok = true;
     let mut line = |what: &str, r: Result<String, String>| match r {
         Ok(m) => log!("centurion-gamemode: scene {name}: {what}: {m}"),
         Err(e) => { ok = false; log!("centurion-gamemode: scene {name}: ✗ {what}: {e}"); }
     };
 
+    if superseded() { return false; }
     // 0. EC fan boost (Full Speed flag) FIRST: switching it off before the profile change means
     //    the fans never spin up for the new profile and then drop again.
     let fan_want = s["fan_fullspeed"].as_bool();
@@ -664,6 +683,7 @@ fn apply_scene(name: &str, parts: SceneParts, entering_game: bool) -> bool {
                           else { Err(v["error"].as_str().unwrap_or("failed").to_owned()) });
     }
 
+    if superseded() { return false; }
     // 1. power profile (firmware limits below need Custom)
     if let Some(p) = s["platform_profile"].as_str().filter(|p| !p.is_empty() && p.len() <= 32) {
         let r = pkexec_helper(&format!("{HELPER_DIR}/legion-profile-helper"),
@@ -673,6 +693,7 @@ fn apply_scene(name: &str, parts: SceneParts, entering_game: bool) -> bool {
         line("power profile", r);
     }
 
+    if superseded() { return false; }
     // The EC may reset the flag when the profile changes: re-assert only if it no longer matches.
     if let (Some(on), Some(_)) = (fan_want, s["platform_profile"].as_str().filter(|p| !p.is_empty())) {
         let h = format!("{HELPER_DIR}/legion-profile-helper");
@@ -692,6 +713,7 @@ fn apply_scene(name: &str, parts: SceneParts, entering_game: bool) -> bool {
         line("Fan boost check", checked);
     }
 
+    if superseded() { return false; }
     // 2. firmware limits
     if let Some(fw) = s["firmware"].as_object().filter(|m| !m.is_empty()) {
         let r = (|| -> Result<String, String> {
@@ -747,6 +769,7 @@ fn apply_scene(name: &str, parts: SceneParts, entering_game: bool) -> bool {
         line("firmware limits", r);
     }
 
+    if superseded() { return false; }
     // 3. CPU curve, 4. GPU curve — CPU first, GPU a moment later, as for undervolt
     let mut did_cpu = false;
     if parts.cpu {
@@ -782,6 +805,7 @@ fn apply_scene(name: &str, parts: SceneParts, entering_game: bool) -> bool {
         }
     }
 
+    if superseded() { return false; }
     // 5. Optimizations preset — switched, not stacked ("replace"); a preset
     //    is applied by name from the approved store (tune-profile-helper).
     if parts.tuning {
@@ -814,6 +838,7 @@ fn apply_scene(name: &str, parts: SceneParts, entering_game: bool) -> bool {
         }
     }
 
+    if superseded() { return false; }
     // 5a. Custom-mode fan curve: only while the Custom profile is active (the EC follows the table there only).
     if let Some(lv) = s["fan_table"].as_array().filter(|a| a.len() == 10 && a.iter().all(|x| x.as_u64().is_some_and(|n| (1..=10).contains(&n)))) {
         if current_platform_profile().as_deref() != Some("custom") {
@@ -825,6 +850,7 @@ fn apply_scene(name: &str, parts: SceneParts, entering_game: bool) -> bool {
         }
     }
 
+    if superseded() { return false; }
     // 6. keyboard lighting — in-process as the user (udev uaccess on the
     //    hidraw node); lighting-helper through pkexec only if that is denied.
     // A machine without the keyboard skips the step (as the GUI does); it is not a failed scene.
@@ -844,6 +870,7 @@ fn apply_scene(name: &str, parts: SceneParts, entering_game: bool) -> bool {
         });
     }
 
+    if superseded() { return false; }
     // 6a. 4-zone RGB keyboard (same request as the Lighting tab's Apply).
     if let Some(z) = s["zone4"].as_object().filter(|z| !z.is_empty()) {
         let mut req = Value::Object(z.clone());
@@ -860,6 +887,7 @@ fn apply_scene(name: &str, parts: SceneParts, entering_game: bool) -> bool {
         }
     }
 
+    if superseded() { return false; }
     // 6b. white keyboard backlight level (ideapad LED) and 6c. panel Over Drive.
     if let Some(n) = s["kbd_backlight"].as_u64().filter(|n| *n <= 10) {
         let v = pkexec_helper(&format!("{HELPER_DIR}/legion-profile-helper"), &json!({"device": "kbd_backlight", "value": n.to_string()}))
@@ -873,11 +901,13 @@ fn apply_scene(name: &str, parts: SceneParts, entering_game: bool) -> bool {
                                  else { Err(v["error"].as_str().unwrap_or("failed").to_owned()) });
     }
 
+    if superseded() { return false; }
     // 6d. internal panel refresh rate — as the user, through the desktop's own tool.
     if let Some(hz) = s["display"]["refresh"].as_f64().filter(|h| *h > 0.0) {
         line("display", centurion_helpers::display::set_refresh(hz));
     }
 
+    if superseded() { return false; }
     // 7. user command — as the user, no shell, detached
     if let Some(cmd) = s["command"].as_str().map(str::trim).filter(|c| !c.is_empty()) {
         // Same quoting rules as the GUI (QProcess::splitCommand).
@@ -890,6 +920,7 @@ fn apply_scene(name: &str, parts: SceneParts, entering_game: bool) -> bool {
         }
     }
 
+    if superseded() { return false; }
     // 8. screen brightness — after the command (it may switch display mode / GPU and reset the backlight).
     if let Some(pct) = s["display"]["brightness"].as_u64().filter(|p| (1..=100).contains(p)) {
         line("brightness", centurion_helpers::display::set_brightness(pct as u32));
@@ -1509,7 +1540,7 @@ fn main() {
         Some("RESTORE") => pkexec(&json!({"op": "restore"})).map_or_else(fail, |v| (!report("RESTORE", &v)) as i32),
         Some("UNDERVOLT") => (!undervolt(true)) as i32,
         Some("SCENE") if args.len() == 2 =>
-            (!apply_scene(&args[1], SceneParts { cpu: true, gpu: true, tuning: true }, false)) as i32,
+            (!apply_scene(&args[1], SceneParts { cpu: true, gpu: true, tuning: true }, false, None)) as i32,
         Some("STATUS") => status(),
         Some("OVERLAY") => {
             println!("{}", overlay_line(read_scene_state()["active"].as_str(), current_platform_profile().as_deref()));
@@ -1527,6 +1558,16 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn post_restores_only_the_scene_owned_by_the_game() {
+        let mut state = json!({"game_scene": "gaming", "game_scene_generation": "game", "scene_generation": "game"});
+        assert_eq!(game_scene_generation(&state), Some("game"));
+        state["scene_generation"] = json!("manual");
+        assert_eq!(game_scene_generation(&state), None);
+        state["game_scene_generation"] = Value::Null;
+        assert_eq!(game_scene_generation(&state), None);
+    }
+
     #[test]
     fn names() {
         assert!(valid_name("Gaming X3D"));

@@ -7,7 +7,9 @@ def src(name): return (ROOT/'gui/src'/name).read_text()
 class Contract(unittest.TestCase):
     def test_scene_correlation(self):
         s=src('scenes.cpp')
-        self.assertIn('transactionId_ = QUuid::createUuid()',s)
+        self.assertIn('const auto id = QUuid::createUuid()',s)
+        self.assertIn('transactionId_ = id',s)
+        self.assertIn('beginScene(id, previous, expectedGeneration)',s)
         self.assertIn('gpuDeferTransactionId_ = transactionId_',s)
         self.assertIn('std::exchange(gpuDeferTransactionId_',s)
         self.assertIn('if (transactionId_ != id || !published) return;',s)

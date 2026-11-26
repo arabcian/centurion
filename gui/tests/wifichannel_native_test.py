@@ -21,6 +21,18 @@ int main() {
  assert(!channelRange(5180,5190,80));
  assert(!channelRange(2412,2402,40)); assert(!channelRange(5180,5210.5,80));
  assert(!channelRange(NAN,5210,80)); assert(!channelRange(5180,INFINITY,80));
+ auto modern=channelRange(5955,6105,320,true); assert(modern && modern->width==320);
+ assert(!channelRange(5955,6125,320,true)); assert(!channelRange(5180,5250,320,true));
+ assert(split80Ranges(5955,5985,6145,true));
+ assert(!split80Ranges(5955,5985,6065,true));
+ assert(validDisabledMask(*modern,5955,0x000c));
+ assert(validDisabledMask(*modern,5955,0xc000));
+ assert(!validDisabledMask(*modern,5955,0x0003));
+ assert(!validDisabledMask(*modern,5955,0x0010));
+ modern->disabled=0x000c;
+ const auto disabled=channelRange(5995,5995,20,true), active=channelRange(6035,6035,20,true);
+ assert(disabled && active && overlapMHz(*modern,*disabled)==0 && overlapMHz(*modern,*active)==20);
+ assert(overlapMHz(*modern,*modern)==280);
  auto exact=ageFromSnapshot(5,1234,1400,1500,1800); assert(exact.observed && exact.ms==566);
  auto fallback=ageFromSnapshot(100,{},1400,1500,1800); assert(!fallback.observed && fallback.ms==500);
  assert(ageFromSnapshot(100,{}, {},1500,1800).ms==400);

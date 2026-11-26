@@ -1,7 +1,8 @@
-#include "../src/diagnostichistorydata.h"
+#include "../src/diagnostichistorystore.h"
 #include "../src/diagsources.h"
 #include <QCoreApplication>
 #include <QTemporaryDir>
+#include <QUuid>
 #include <cstdlib>
 #include <iostream>
 #include <unistd.h>
@@ -39,6 +40,76 @@ int main(int argc,char **argv) {
     oversized.close();
     archive = load(dir.path());
     CHECK(archive.entries.size() == 2 && archive.rejected == 4);
+    QTemporaryDir imported;
+    CHECK(imported.isValid());
+    const auto source = dir.filePath(QStringLiteral("export.archive"));
+    c.insert("time", "2026-01-01T10:00:00");
+    CHECK(diagsrc::saveJson(source, archiveObject({a,c})).isEmpty());
+    CHECK(importArchive(imported.path(), source) == ImportArchive::Imported);
+    CHECK(importArchive(imported.path(), source) == ImportArchive::AlreadyPresent);
+    const auto initial = readArchive(imported.path(), report.code);
+    CHECK(initial && initial->size() == 2);
+    const auto loaded = load(imported.path());
+    CHECK(loaded.entries.size() == 2 && loaded.entries.at(0).imported);
+    CHECK(loaded.entries.at(0).boot == bootA && loaded.entries.at(0).capturedAt.isValid());
+    CHECK(loaded.entries.at(1).boot.isEmpty() && !loaded.entries.at(1).capturedAt.isValid());
+    auto conflicting = a;
+    conflicting.insert("boot", bootB);
+    CHECK(diagsrc::saveJson(source, archiveObject({b,conflicting})).isEmpty());
+    CHECK(importArchive(imported.path(), source) == ImportArchive::Conflict);
+    CHECK(readArchive(imported.path(), report.code) == initial);
+
+    CHECK(removeImported(imported.path(), report.code, full(c.value("id").toString())));
+    CHECK(readArchive(imported.path(), report.code)->size() == 1);
+
+    auto other = a;
+    auto otherSnapshot = snapshot; otherSnapshot.insert("code", "S02");
+    other.insert("snapshot", otherSnapshot);
+    CHECK(diagsrc::saveJson(source, archiveObject({other})).isEmpty());
+    CHECK(importArchive(imported.path(), source) == ImportArchive::Conflict);
+    CHECK(diagsrc::saveJson(source, archiveObject({a,other})).isEmpty());
+    CHECK(importArchive(imported.path(), source) == ImportArchive::Invalid);
+    CHECK(diagsrc::saveJson(source, archiveObject({a,a})).isEmpty());
+    CHECK(importArchive(imported.path(), source) == ImportArchive::Invalid);
+    CHECK(diagsrc::saveJson(source, archiveObject({b})).isEmpty());
+    QJsonArray fullBucket;
+    for (int i = 0; i < ArchiveEntriesPerReport; ++i) {
+        auto item = a;
+        item.insert("id", QUuid::createUuid().toString(QUuid::WithoutBraces));
+        fullBucket.append(item);
+    }
+    {
+        QLockFile lock(archiveLockPath(imported.path()));
+        CHECK(lock.tryLock(0));
+        CHECK(writeArchive(imported.path(), report.code, fullBucket) == SaveArchive::Saved);
+        CHECK(importArchive(imported.path(), source) == ImportArchive::Busy);
+    }
+    CHECK(!removeImported(imported.path(), report.code, full(fullBucket.first().toObject().value("id").toString())));
+    CHECK(importArchive(imported.path(), source) == ImportArchive::Full);
+    CHECK(readArchive(imported.path(), report.code) == std::optional<QJsonArray>(fullBucket));
+    QTemporaryDir atCapacity;
+    CHECK(atCapacity.isValid());
+    for (int i = 0; i < ArchiveFiles; ++i) {
+        QFile file(atCapacity.filePath(QStringLiteral("existing-%1.json").arg(i)));
+        CHECK(file.open(QIODevice::WriteOnly));
+    }
+    CHECK(importArchive(atCapacity.path(), source) == ImportArchive::Full);
+    CHECK(!QFileInfo::exists(atCapacity.filePath(archiveFileName(report.code))));
+    {
+        QLockFile lock(archiveLockPath(imported.path()));
+        CHECK(lock.tryLock(0));
+        CHECK(writeArchive(imported.path(), report.code, {}) == SaveArchive::Saved);
+    }
+    CHECK(!QFileInfo::exists(imported.filePath(archiveFileName(report.code))));
+    QTemporaryDir atByteLimit;
+    CHECK(atByteLimit.isValid());
+    for (int i = 0; i < ArchiveBytes / ArchiveFileBytes; ++i) {
+        QFile filler(atByteLimit.filePath(QStringLiteral("filler-%1.json").arg(i)));
+        CHECK(filler.open(QIODevice::WriteOnly) && filler.resize(ArchiveFileBytes));
+    }
+    QLockFile byteLock(archiveLockPath(atByteLimit.path()));
+    CHECK(byteLock.tryLock(0));
+    CHECK(writeArchive(atByteLimit.path(), report.code, {a}) == SaveArchive::Full);
     qputenv("XDG_STATE_HOME", dir.path().toUtf8());
     CHECK(QDir().mkpath(diagsrc::stateDir()));
     const QByteArray event = "2026-01-01 10:00:00 boot=example seq=42 warn [1.2] complete line\n";

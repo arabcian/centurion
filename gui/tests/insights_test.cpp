@@ -2,6 +2,7 @@
 #include "../src/insights.h"
 #include <QApplication>
 #include <QJsonDocument>
+#include <QDateTime>
 #include <QByteArray>
 #include <cstdio>
 
@@ -44,6 +45,11 @@ int main(int argc, char **argv) {
     const QString inc = joined(insights::incident(QJsonObject{{"kind", "xid"}, {"title", "GPU fault"}}, QString()));
     CHECK(inc.contains("Boot ID absent"));
     CHECK(inc.contains("Time proximity"));
+    const qint64 capturedWallMs = 1700000000000;
+    const auto captured = joined(insights::incident(
+        QJsonObject{{"ts_us", 10}, {"wall_ms", capturedWallMs}},
+        QStringLiteral("00000000-0000-0000-0000-000000000001")));
+    CHECK(captured.contains(QDateTime::fromMSecsSinceEpoch(capturedWallMs).toString(Qt::ISODate)));
     if (failures) std::fprintf(stderr, "%d regression failure(s)\n", failures);
     else std::puts("insights: ok");
     return failures ? 1 : 0;

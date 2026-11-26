@@ -1,4 +1,5 @@
 #include "diagreport.h"
+#include <algorithm>
 
 #include <QCoreApplication>
 #include <QJsonArray>
@@ -143,9 +144,23 @@ void redactPrivateFields(Report &report) {
         QStringLiteral("session token"), QStringLiteral("access token"), QStringLiteral("client secret")};
     for (auto &table : report.tables)
         for (qsizetype i=0; i<table.headers.size(); ++i)
-            if (privateHeaders.contains(table.headers[i].simplified().toLower()))
+            if (table.privateColumns.contains(int(i)) || privateHeaders.contains(table.headers[i].simplified().toLower()))
                 for (auto &row : table.rows)
                     if (i<row.size() && !row[i].isEmpty()) row[i]=QStringLiteral("[redacted]");
+    auto paths = report.privatePaths;
+    paths.removeDuplicates();
+    std::sort(paths.begin(), paths.end(), [](const QString &a, const QString &b) { return a.size() > b.size(); });
+    for (const auto &path : paths) {
+        if (path.size() <= 1 || !path.startsWith(QLatin1Char('/'))) continue;
+        const auto maskPath = [&](QString &text) { text.replace(path, QStringLiteral("[redacted]")); };
+        maskPath(report.raw);
+        for (auto &finding : report.findings) {
+            maskPath(finding.title); maskPath(finding.detail); maskPath(finding.action);
+        }
+        for (auto &table : report.tables)
+            for (auto &row : table.rows)
+                for (auto &cell : row) maskPath(cell);
+    }
 }
 
 QJsonObject archiveSnapshot(const Report &source) {

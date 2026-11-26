@@ -15,6 +15,7 @@
 
 use serde_json::{json, Map, Value};
 use std::fs::File;
+use std::io::Read;
 use std::os::unix::fs::{FileExt, OpenOptionsExt};
 use std::path::{Path, PathBuf};
 
@@ -118,19 +119,51 @@ fn slot_line(mut v: Map<String, Value>) -> Vec<u8> {
     b
 }
 
-/// {"boot", "interval", "samples": [oldest first]} from a ring file's text (Null: no header).
-/// Unwritten slots (NUL bytes) and damaged lines are skipped.
-pub fn parse(text: &str) -> Value {
-    let mut head = Value::Null;
-    let mut samples: Vec<Value> = Vec::new();
-    for l in text.split('\n') {
-        let Ok(v) = serde_json::from_str::<Value>(l.trim_matches(|c| c == ' ' || c == '\0')) else { continue };
-        if v["boot"].is_string() { head = v; } else if v["s"].is_u64() { samples.push(v); }
+fn full_boot(id: &str) -> Option<String> {
+    (id.len() == 36 && id.bytes().enumerate().all(|(i, b)|
+        if [8, 13, 18, 23].contains(&i) { b == b'-' } else { b.is_ascii_hexdigit() })
+        && id.bytes().any(|b| b.is_ascii_hexdigit() && b != b'0')).then(|| id.to_ascii_lowercase())
+}
+
+// Keep numeric fields exactly representable in both JSON readers.
+fn integer(v: &Value, min: u64, max: u64) -> Option<u64> {
+    let n = v.as_f64()?;
+    (n >= min as f64 && n <= max as f64 && n.fract() == 0.0).then_some(n as u64)
+}
+
+fn parse_slot(slot: &[u8]) -> Option<Map<String, Value>> {
+    let body = slot.strip_suffix(b"\n")?;
+    match serde_json::from_slice(body).ok()? {
+        Value::Object(v) => Some(v),
+        _ => None,
     }
-    if head.is_null() { return Value::Null; }
-    samples.sort_by_key(|v| v["s"].as_u64());
-    head["samples"] = json!(samples);
-    head
+}
+
+/// The first complete slot supplies the only boot ID. Ignore holes and incomplete slots.
+pub fn parse(text: &str) -> Value { parse_ring(text.as_bytes()) }
+
+fn parse_ring(bytes: &[u8]) -> Value {
+    if bytes.len() as u64 > RING_BYTES { return Value::Null; }
+    let mut slots = bytes.chunks_exact(SLOT);
+    let Some(head) = slots.next().and_then(parse_slot) else { return Value::Null };
+    let Some(boot) = head.get("boot").and_then(Value::as_str).and_then(full_boot) else { return Value::Null };
+    let Some(interval) = head.get("interval").and_then(|v| integer(v, 1, i32::MAX as u64))
+        else { return Value::Null };
+    if head.contains_key("s") { return Value::Null; }
+    let mut samples = Vec::new();
+    for (index, slot) in slots.take(SLOTS as usize).enumerate() {
+        let Some(mut sample) = parse_slot(slot) else { continue };
+        if sample.contains_key("boot") { continue; }
+        let Some(seq) = sample.get("s").and_then(|s| integer(s, 0, (1 << 53) - 1)) else { continue };
+        if seq % SLOTS != index as u64 { continue; }
+        let Some(time) = sample.get("t").and_then(|t| integer(t, 1, 253402300799)) else { continue };
+        sample.insert("s".into(), json!(seq));
+        sample.insert("t".into(), json!(time));
+        samples.push((seq, Value::Object(sample)));
+    }
+    samples.sort_by_key(|(seq, _)| *seq);
+    json!({"boot": boot, "interval": interval,
+           "samples": samples.into_iter().map(|(_, sample)| sample).collect::<Vec<_>>()})
 }
 
 /// `ec`: consecutive EC read failures; None = given up for this boot (no Legion WMI / acpi_call).
@@ -147,12 +180,20 @@ impl Recorder {
 
     /// The ring of another boot is moved to `prev`; this boot's (service restarted) is continued.
     pub fn open_at(ring: &Path, prev: &Path, boot: &str, sensors: Sensors, ec: bool, interval_s: u64) -> Result<Recorder, String> {
+        let boot = full_boot(boot).ok_or_else(|| "invalid flight recorder boot ID".to_owned())?;
+        if interval_s == 0 || interval_s > i32::MAX as u64 {
+            return Err("invalid flight recorder interval".into());
+        }
         let mut seq = 0;
-        if let Ok(old) = std::fs::read(ring) {
-            let old = parse(&String::from_utf8_lossy(&old[..old.len().min(RING_BYTES as usize)]));
-            if old["boot"].as_str() == Some(boot) {
+        if let Ok(old) = std::fs::OpenOptions::new().read(true)
+            .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC | libc::O_NONBLOCK).open(ring)
+        {
+            let mut bytes = Vec::new();
+            old.take(RING_BYTES + 1).read_to_end(&mut bytes).map_err(|e| e.to_string())?;
+            let old = parse_ring(&bytes);
+            if old["boot"].as_str() == Some(boot.as_str()) {
                 seq = old["samples"].as_array().and_then(|a| a.last()).and_then(|v| v["s"].as_u64()).map_or(0, |s| s + 1);
-            } else {
+            } else if !old.is_null() {
                 std::fs::rename(ring, prev).map_err(|e| format!("{}: {e}", prev.display()))?;
             }
         }
@@ -209,8 +250,8 @@ pub fn interval_op(seconds: Option<u64>) -> Value {
 
 /// The previous boot's recording (Null: none), its last `keep` samples.
 pub fn load_prev(keep: usize) -> Value {
-    let Some(text) = crate::read_root_file(PREV, RING_BYTES) else { return Value::Null };
-    let mut v = parse(&text);
+    let Some(bytes) = crate::read_root_bytes(PREV, RING_BYTES) else { return Value::Null };
+    let mut v = parse_ring(&bytes);
     if let Some(a) = v["samples"].as_array_mut() { let drop = a.len().saturating_sub(keep); a.drain(..drop); }
     v
 }

@@ -1,5 +1,6 @@
 #include "insights.h"
 #include "healthtab.h"
+#include "kernelwalltime.h"
 #include "backuppage.h"
 #include "batterypage.h"
 #include "notifydialog.h"
@@ -111,14 +112,6 @@ static QSettings guiSettings() {
 static QString uptime(quint64 us) {
     const quint64 s = us / 1000000;
     return QStringLiteral("%1:%2:%3").arg(s / 3600).arg(s / 60 % 60, 2, 10, QLatin1Char('0')).arg(s % 60, 2, 10, QLatin1Char('0'));
-}
-
-/// Wall-clock time (ms since the epoch) of a kernel timestamp (µs since boot).
-static qint64 wallMs(double tsUs) {
-    timespec now{};
-    ::clock_gettime(CLOCK_MONOTONIC, &now);
-    const qint64 bootMs = QDateTime::currentMSecsSinceEpoch() - (qint64(now.tv_sec) * 1000 + now.tv_nsec / 1000000);
-    return bootMs + qint64(tsUs / 1000);
 }
 
 // A System tool's tooltip: what it shows, then its badges.
@@ -913,7 +906,8 @@ void HealthTab::onReply(const QJsonObject &r, bool viaRoot) {
         reject();
         return;
     }
-    const auto ev = events.toArray();
+    auto ev = events.toArray();
+    const auto clock = kernelwalltime::Anchor::capture();
     static const QRegularExpression token(QStringLiteral("\\A[A-Za-z0-9_-]+\\z"));
     qint64 previous = qint64(savedCaptureSeq_);
     for (const auto &v : ev) {
@@ -927,6 +921,11 @@ void HealthTab::onReply(const QJsonObject &r, bool viaRoot) {
             return;
         }
         previous = sequence;
+    }
+    for (qsizetype i = 0; i < ev.size(); ++i) {
+        auto e = ev.at(i).toObject();
+        e.insert(QStringLiteral("wall_ms"), clock ? clock->toWallMs(e.value("ts_us").toInteger(-1)) : 0);
+        ev.replace(i, e);
     }
     const bool saved = persist(ev, bootId);
     if (saved) {
@@ -1020,7 +1019,9 @@ void HealthTab::addEvent(const QJsonObject &e, const QString &bootId) {
     else if (kind == QLatin1String("thermal")) counter = &thermal_;
     else if (kind == QLatin1String("oom")) counter = &oom_;
     else if (kind == QLatin1String("oops")) counter = &oops_;
-    if (wallMs(tsUs) > seenMs_) ++*counter;  // only what is not marked seen counts
+    const auto eventMs = e.value(QStringLiteral("wall_ms")).toInteger();
+    const auto eventTime = eventMs ? QDateTime::fromMSecsSinceEpoch(eventMs) : QDateTime{};
+    if (eventMs > seenMs_) ++*counter;  // only what is not marked seen counts
 
     // The same event again (same boot, kind, code and raw title) within GROUP_US: one row, with a count.
     const QString key = bootId + QLatin1Char('|') + kind + QLatin1Char('|') + QString::number(code) + QLatin1Char('|') + rawTitle;
@@ -1029,14 +1030,14 @@ void HealthTab::addEvent(const QJsonObject &e, const QString &bootId) {
         g->lastUs = tsUs;
         ++g->n;
         list_->insertTopLevelItem(0, list_->takeTopLevelItem(list_->indexOfTopLevelItem(g->row)));  // newest first
-        g->row->setText(0, QDateTime::fromMSecsSinceEpoch(wallMs(g->firstUs)).toString(QStringLiteral("yyyy-MM-dd HH:mm")) +
-                           QStringLiteral(" – ") + QDateTime::fromMSecsSinceEpoch(wallMs(tsUs)).toString(QStringLiteral("HH:mm")));
+        g->row->setText(0, g->firstTime.toString(QStringLiteral("yyyy-MM-dd HH:mm")) +
+                           QStringLiteral(" – ") + eventTime.toString(QStringLiteral("HH:mm")));
         g->row->setText(3, (technicalEvents_->isChecked() ? g->base : friendlyEvent(e)) + tr("  ×%1").arg(g->n));
         return;
     }
 
     const QString level = e.value(QStringLiteral("level")).toString();
-    auto *it = new QTreeWidgetItem({QDateTime::fromMSecsSinceEpoch(wallMs(tsUs)).toString(QStringLiteral("yyyy-MM-dd HH:mm")),
+    auto *it = new QTreeWidgetItem({eventTime.toString(QStringLiteral("yyyy-MM-dd HH:mm")),
                                     level == QLatin1String("critical") ? tr("Critical") :
                                     level == QLatin1String("error") ? tr("Error") : tr("Notice"),
                                     kind.toUpper(), technicalEvents_->isChecked() ? title : friendlyEvent(e)});
@@ -1048,12 +1049,12 @@ void HealthTab::addEvent(const QJsonObject &e, const QString &bootId) {
     stored.insert(QStringLiteral("boot_id"), bootId);
     it->setData(0, Qt::UserRole, QJsonDocument(stored).toJson(QJsonDocument::Compact));
     it->setData(0, Qt::UserRole + 1, key);  // its group, so a row dropped below forgets it
-    it->setData(0, Qt::UserRole + 2, QDateTime::fromMSecsSinceEpoch(wallMs(tsUs)).date().toString(Qt::ISODate));  // its day, for the day chart
+    it->setData(0, Qt::UserRole + 2, eventTime.date().toString(Qt::ISODate));  // its day, for the day chart
     const QColor c(levelColor(e.value(QStringLiteral("level")).toString()));
     for (int i = 0; i < 4; ++i) it->setForeground(i, c);
     list_->insertTopLevelItem(0, it);  // newest first
     applyDayFilter();
-    groups_[key] = Group{it, title, tsUs, tsUs, 1};
+    groups_[key] = Group{it, title, eventTime, tsUs, 1};
     while (list_->topLevelItemCount() - historyRows_.size() > MAX_ROWS) {
         int lastLive = list_->topLevelItemCount() - 1;
         while (lastLive >= 0 && list_->topLevelItem(lastLive)->data(0, Qt::UserRole + 3).toBool()) --lastLive;
@@ -1909,18 +1910,17 @@ QString HealthTab::logPath() {
 bool HealthTab::persist(const QJsonArray &ev, const QString &bootId) {
     savedBoot_ = bootId;
     QStringList lines;
-    // Kernel timestamps count from boot; wall time = now - uptime + ts.
-    timespec now{};
-    ::clock_gettime(CLOCK_MONOTONIC, &now);
-    const qint64 bootMs = QDateTime::currentMSecsSinceEpoch() - (qint64(now.tv_sec) * 1000 + now.tv_nsec / 1000000);
     quint64 top = savedSeq_;
     for (const QJsonValue &v : ev) {
         const QJsonObject e = v.toObject();
         const auto seq = quint64(e.value(QStringLiteral("seq")).toInteger());
-        const auto timestamp = e.value(QStringLiteral("ts_us")).toInteger();
         if (seq <= savedSeq_) continue;
         top = std::max(top, seq);
-        const qint64 tsMs = timestamp / 1000;
+        const auto eventMs = e.value(QStringLiteral("wall_ms")).toInteger();
+        if (!eventMs) {
+            logInfo_->setText(tr("Could not determine the event time."));
+            return false;
+        }
         auto title = e.value(QStringLiteral("title")).toString();
         auto message = e.value(QStringLiteral("text")).toString();
         for (QString *field : {&title, &message}) {
@@ -1928,7 +1928,7 @@ bool HealthTab::persist(const QJsonArray &ev, const QString &bootId) {
             field->replace(QLatin1Char('\r'), QStringLiteral(" ⏎ "));
         }
         lines << QStringLiteral("%1  boot=%2 seq=%3  %4 %5  %6  |  %7")
-                     .arg(QDateTime::fromMSecsSinceEpoch(bootMs + tsMs).toString(QStringLiteral("yyyy-MM-dd HH:mm:ss")))
+                     .arg(QDateTime::fromMSecsSinceEpoch(eventMs).toString(QStringLiteral("yyyy-MM-dd HH:mm:ss")))
                      .arg(savedBoot_).arg(seq)
                      .arg(e.value(QStringLiteral("level")).toString().toUpper(), -8)
                      .arg(e.value(QStringLiteral("kind")).toString().toUpper(), -6)

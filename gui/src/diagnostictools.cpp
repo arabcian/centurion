@@ -276,8 +276,11 @@ Edid decodeEdid(const QByteArray &d) {
         }
     }
     const auto timingData = std::span(reinterpret_cast<const std::uint8_t *>(d.constData()), std::size_t(d.size()));
-    for (const auto &timing : edidfields::progressiveTimings(timingData))
-        e.timings << QStringLiteral("%1×%2 @ %3 Hz").arg(timing.hActive).arg(timing.vActive).arg(timing.refreshHz(), 0, 'f', 2);
+    for (const auto &timing : edidfields::progressiveTimings(timingData)) {
+        const QString display = QStringLiteral("%1×%2 @ %3 Hz").arg(timing.hActive).arg(timing.vActive).arg(timing.refreshHz(), 0, 'f', 2);
+        e.timings << display;
+        if (e.preferredMode.isEmpty() && timing.preferred) e.preferredMode = display;
+    }
     if (!e.structuralValid || e.rangeMin <= 0 || e.rangeMax < e.rangeMin) e.rangeMin = e.rangeMax = 0;
     // Multiple explicit ranges must agree before reporting one as verified evidence.
     bool conflictingVrr = false;
@@ -335,6 +338,17 @@ Edid decodeEdid(const QByteArray &d) {
     return e;
 }
 
+QString edidTimingSource(edidfields::TimingSource source) {
+    using S = edidfields::TimingSource;
+    switch (source) {
+    case S::Base: return tr("EDID base block");
+    case S::Cta: return QStringLiteral("CTA-861");
+    case S::DisplayIdTypeI: return tr("DisplayID Type I");
+    case S::DisplayIdTypeVII: return tr("DisplayID Type VII");
+    }
+    return {};
+}
+
 QString edidFieldName(edidfields::Kind kind) {
     using K = edidfields::Kind;
     switch (kind) {
@@ -372,8 +386,12 @@ Report displays(const QString &root) {
     blocks.note = tr("Only complete blocks read from the kernel are listed. A zero checksum sum is necessary but does not prove all EDID fields are correct.");
     Table modesTable;
     modesTable.title = tr("Decoded Detailed Timings");
-    modesTable.headers = {tr("Connector"), tr("Timing")};
-    modesTable.note = tr("Verified progressive base/CTA detailed timings only; not a complete list of modes offered by the driver.");
+    modesTable.headers = {tr("Connector"), tr("Timing"), tr("Source"), tr("Listed resolution")};
+    modesTable.note = tr("A resolution match does not verify refresh rate or timing. Linux DRM sysfs lists mode names only.");
+    Table kernelModes;
+    kernelModes.title = tr("Modes Listed by Linux DRM");
+    kernelModes.headers = {tr("Connector"), tr("Mode name"), tr("Source")};
+    kernelModes.note = tr("Multiple modes can share the same name. Refresh rates are unavailable in this source.");
     Table bytes;
     bytes.title = tr("EDID Binary Inspector");
     bytes.privateBinary = true;
@@ -383,7 +401,7 @@ Report displays(const QString &root) {
     Table timingDetails;
     timingDetails.title = tr("Progressive Timing Details");
     timingDetails.viewKind = QStringLiteral("edid-timings");
-    timingDetails.headers = {tr("Connector"), tr("Offset"), tr("Active H/V"), tr("Blanking H/V"), tr("Total H/V"), tr("Pixel Clock (MHz)"), tr("Refresh (Hz)")};
+    timingDetails.headers = {tr("Connector"), tr("Offset"), tr("Active H/V"), tr("Blanking H/V"), tr("Total H/V"), tr("Pixel Clock (MHz)"), tr("Refresh (Hz)"), tr("Source")};
     Table fields;
     fields.title = tr("EDID Field Map");
     fields.viewKind = QStringLiteral("edid-fields");
@@ -402,6 +420,13 @@ Report displays(const QString &root) {
         QFile f(b + QStringLiteral("edid"));
         constexpr qint64 edidLimit = 32 * 128 + 1;
         const QByteArray raw = f.open(QIODevice::ReadOnly) ? f.read(edidLimit) : QByteArray();
+        QFile modeFile(b + QStringLiteral("modes"));
+        constexpr qint64 modeLimit = 65536;
+        QByteArray modeBytes = modeFile.open(QIODevice::ReadOnly) ? modeFile.read(modeLimit + 1) : QByteArray{};
+        if (modeBytes.size() > modeLimit || !modeBytes.endsWith('\n') || modeFile.error() != QFileDevice::NoError)
+            modeBytes.clear();
+        auto modeNames = QString::fromUtf8(modeBytes).split(QLatin1Char('\n'), Qt::SkipEmptyParts);
+        modeNames.removeDuplicates();
 
         // A connector name and a "connected" status can both survive a
         // monitor swap. Reopen the attribute and compare the bounded capture
@@ -424,6 +449,8 @@ Report displays(const QString &root) {
             r.add(Level::Unknown, tr("%1 returned inconsistent EDID data during capture").arg(port));
             continue;
         }
+        for (const auto &name : modeNames)
+            kernelModes.add({conn, name, QStringLiteral("sysfs DRM modes")});
         for (int off = 0; off < std::min<qsizetype>(raw.size(), 4096); off += 16) {
             const auto chunk = raw.mid(off, std::min(16, 4096 - off));
             QString ascii;
@@ -441,9 +468,14 @@ Report displays(const QString &root) {
         for (const auto &f : inspection.fields) fields.add({conn, QStringLiteral("0x%1").arg(qulonglong(f.offset),4,16,QLatin1Char('0')), QString::number(qulonglong(f.length)), edidFieldName(f.kind), f.tag < 0 ? QStringLiteral("—") : QStringLiteral("0x%1").arg(f.tag,2,16,QLatin1Char('0'))});
         for (const auto &timing : edidfields::progressiveTimings({reinterpret_cast<const std::uint8_t *>(raw.constData()), std::size_t(raw.size())})) {
             auto pair = [](unsigned h,unsigned v) { return QStringLiteral("%1 / %2").arg(h).arg(v); };
+            const auto resolution = QStringLiteral("%1x%2").arg(timing.hActive).arg(timing.vActive);
+            const auto source = edidTimingSource(timing.source);
+            const auto timingText = QStringLiteral("%1×%2 @ %3 Hz").arg(timing.hActive).arg(timing.vActive).arg(timing.refreshHz(), 0, 'f', 2);
+            modesTable.add({conn, timingText, source, modeNames.isEmpty() ? tr("Unknown") :
+                modeNames.contains(resolution) ? tr("Listed") : tr("Not listed")});
             timingDetails.add({conn, QStringLiteral("0x%1").arg(qulonglong(timing.offset), 4, 16, QLatin1Char('0')),
                 pair(timing.hActive,timing.vActive), pair(timing.hBlank,timing.vBlank), pair(timing.hActive+timing.hBlank,timing.vActive+timing.vBlank),
-                QString::number(timing.pixelClock10kHz/100.0,'f',2), QString::number(timing.refreshHz(),'f',2)});
+                QString::number(timing.pixelClockKHz/1000.0,'f',3), QString::number(timing.refreshHz(),'f',2), source});
         }
         for (int block = 0; block < std::min(e.readable, 32); ++block) {
             int sum = 0;
@@ -459,7 +491,6 @@ Report displays(const QString &root) {
                         QString::number(remainder), status},
                        blockInfo.checksum && blockInfo.structure && blockInfo.declared ? Level::Info : Level::Review);
         }
-        for (const QString &timing : e.timings) modesTable.add({conn, timing});
         {
             const QString dash = QStringLiteral("—");
             QStringList fmt{QStringLiteral("RGB")};
@@ -467,18 +498,18 @@ Report displays(const QString &root) {
             if (e.ycc422) fmt << QStringLiteral("YCbCr 4:2:2");
             QString hdr = e.hdr.isEmpty() ? dash : e.hdr.join(QStringLiteral(", "));
             if (e.maxNits > 0) hdr += QStringLiteral(" · %1 nits peak").arg(qRound(e.maxNits)) + (e.minNits > 0 ? QStringLiteral(", %1 black").arg(e.minNits, 0, 'g', 2) : QString());
-            const int modes = diagsrc::read(b + QStringLiteral("modes"), 65536).split(QLatin1Char('\n'), Qt::SkipEmptyParts).size();
+
             const QString state = QStringLiteral("%1, dpms %2").arg(diagsrc::read(b + QStringLiteral("enabled")), diagsrc::read(b + QStringLiteral("dpms")));
             det.add({port,
                      e.widthCm && e.heightCm ? tr("%1 × %2 cm (%3″)").arg(e.widthCm).arg(e.heightCm).arg(std::hypot(e.widthCm, e.heightCm) / 2.54, 0, 'f', 1) : dash,
                      e.bitDepth ? tr("%1 bit").arg(e.bitDepth) : dash, fmt.join(QStringLiteral(", ")), hdr,
                      e.colorimetry.isEmpty() ? dash : e.colorimetry.join(QStringLiteral(", ")),
                      e.audio ? (e.hdmi ? tr("HDMI audio") : tr("yes")) : dash,
-                     e.year ? QStringLiteral("%1 w%2").arg(e.year).arg(e.week) : dash, QString::number(modes), state});
+                     e.year ? QStringLiteral("%1 w%2").arg(e.year).arg(e.week) : dash, modeNames.isEmpty() ? dash : QString::number(modeNames.size()), state});
         }
         const bool bad = !e.structuralValid;
         t.add({port, QStringLiteral("%1 %2").arg(e.maker, e.name).trimmed(), e.year ? QString::number(e.year) : QStringLiteral("—"),
-               e.timings.value(0, QStringLiteral("—")), e.rangeMax ? QStringLiteral("%1–%2 Hz").arg(e.rangeMin).arg(e.rangeMax) : QStringLiteral("—"),
+               e.preferredMode.isEmpty() ? QStringLiteral("—") : e.preferredMode, e.rangeMax ? QStringLiteral("%1–%2 Hz").arg(e.rangeMin).arg(e.rangeMax) : QStringLiteral("—"),
                e.vrrMax ? QStringLiteral("%1–%2 Hz · %3").arg(e.vrrMin).arg(e.vrrMax).arg(e.vrrSource) : QStringLiteral("—"),
                bad ? tr("damaged") : tr("valid, %1 block(s)").arg(e.readable)}, bad ? Level::Review : Level::Ok);
         if (bad)
@@ -493,12 +524,13 @@ Report displays(const QString &root) {
         else if (e.rangeMax > e.rangeMin && e.rangeMin > 0)
             r.add(Level::Info, tr("%1 declares a %2–%3 Hz refresh range").arg(port).arg(e.rangeMin).arg(e.rangeMax),
                   tr("A general refresh range is not proof of VRR support. Check explicit Adaptive-Sync capability and the compositor or driver."));
-        r.raw += QStringLiteral("== %1 ==\n%2\n%3\n").arg(conn, e.timings.join(QLatin1Char('\n')), diagsrc::read(b + QStringLiteral("modes"), 8192));
+        r.raw += QStringLiteral("== %1 ==\n%2\n%3\n").arg(conn, e.timings.join(QLatin1Char('\n')), QString::fromUtf8(modeBytes.left(8192)).trimmed());
     }
     r.tables << t;
     if (!det.rows.isEmpty()) r.tables << det;
     if (!blocks.rows.isEmpty()) r.tables << blocks;
     if (!modesTable.rows.isEmpty()) r.tables << modesTable;
+    if (!kernelModes.rows.isEmpty()) r.tables << kernelModes;
     // The backlight devices (read here; Scenes changes the brightness).
     Table bl;
     bl.title = tr("Backlight");

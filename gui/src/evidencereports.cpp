@@ -316,7 +316,10 @@ Report f2fsGuard(const QJsonObject &scan, const QList<F2fsVolume> &volumes, cons
     Table t;
     t.title = tr("Mounted F2FS Volumes");
     t.headers = {tr("Volume"), tr("Mounted at"), tr("Needs fsck"), tr("Checkpoint"), tr("On-disk errors"), tr("Written (lifetime)")};
+    t.privateColumns = {1};
     for (const F2fsVolume &v : volumes) {
+        r.privatePaths << v.mount;
+        if (v.source.startsWith(QStringLiteral("/dev/disk/by-"))) r.privatePaths << v.source;
         quint64 sb = 0, cp = 0, err = 0;
         const bool hasSb = hexFlags(v.sys.value(QStringLiteral("sb_status")), &sb), hasCp = hexFlags(v.sys.value(QStringLiteral("cp_status")), &cp);
         const bool hasErr = hexValue(v.sys.value(QStringLiteral("errors")), &err);
@@ -351,6 +354,7 @@ Report f2fsGuard(const QJsonObject &scan, const QList<F2fsVolume> &volumes, cons
     Table e;
     e.title = tr("F2FS Errors in the Kernel Log");
     e.headers = {tr("Boot"), tr("When"), tr("Message")};
+    e.privateColumns = {0};
     const QString boot = scan.value(QStringLiteral("boot_id")).toString().left(8);
     QSet<QString> seen;
     for (const QJsonValue &v : scan.value(QStringLiteral("f2fs_events")).toArray()) {

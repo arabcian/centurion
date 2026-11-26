@@ -75,16 +75,18 @@ pub struct Bss {
 
 /// Nominal advertised contiguous channel, not observed spectral occupancy.
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub struct ChannelRange { pub center_mhz: u32, pub width_mhz: u32, pub source: &'static str }
+pub struct ChannelRange { pub center_mhz: u32, pub width_mhz: u32, pub source: &'static str, pub disabled: u16 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub struct SplitChannel { pub primary_center_mhz: u32, pub secondary_center_mhz: u32 }
+pub struct SplitChannel { pub primary_center_mhz: u32, pub secondary_center_mhz: u32, pub source: &'static str }
 
 #[derive(Default)]
 struct Operation {
     primary: Option<u32>, secondary: Option<String>, ht_width: Option<String>,
     ht: bool, vht: bool, width: Option<u32>, seg1: Option<u32>, seg2: Option<u32>,
-    unsupported: bool, invalid: bool, section: u8,
+    he: bool, eht: bool, he_flags: Option<[u8; 3]>, eht_flags: Option<[u8; 1]>,
+    he_6ghz: Option<[u8; 5]>, he_vht: Option<[u8; 3]>, eht_info: Option<([u8; 3], Option<u16>)>,
+    invalid: bool, section: u8,
 }
 
 // Duplicate information elements/fields can be inconsistent (e.g. beacon vs probe).
@@ -92,6 +94,35 @@ struct Operation {
 fn unique<T>(slot: &mut Option<T>, value: Option<T>, invalid: &mut bool) {
     if slot.is_some() || value.is_none() { *invalid = true; }
     else { *slot = value; }
+}
+
+fn hex_bytes<const N: usize>(text: &str) -> Option<[u8; N]> {
+    let text = text.strip_prefix("0x")?;
+    if text.len() != 2 * N || !text.bytes().all(|b| b.is_ascii_hexdigit()) { return None; }
+    let mut bytes = [0; N];
+    for (i, b) in bytes.iter_mut().enumerate() {
+        *b = u8::from_str_radix(&text[2 * i..2 * i + 2], 16).ok()?;
+    }
+    Some(bytes)
+}
+
+fn operation_flags<const N: usize>(text: &str) -> Option<[u8; N]> {
+    hex_bytes(text.strip_prefix('(')?.strip_suffix(')')?)
+}
+
+fn valid_disabled_mask(mask: u16, width: u32) -> bool {
+    if mask == 0 { return true; }
+    let bits = mask.count_ones();
+    let pair = |m: u16| m.count_ones() == 2 && m.trailing_zeros() % 2 == 0 && m >> m.trailing_zeros() == 3;
+    match width {
+        80 => mask < 16 && bits == 1,
+        160 => mask < 256 && (bits == 1 || pair(mask)),
+        320 => pair(mask)
+            || (bits == 4 && mask.trailing_zeros() % 4 == 0 && (mask >> mask.trailing_zeros()) == 15)
+            || (mask & 0x000f == 0x000f && pair(mask & 0xfff0))
+            || (mask & 0xf000 == 0xf000 && pair(mask & 0x0fff)),
+        _ => false,
+    }
 }
 
 impl Operation {
@@ -104,11 +135,15 @@ impl Operation {
             self.section = 0;
             if t.starts_with("HT operation:") { self.invalid |= self.ht; self.ht = true; self.section = 1; }
             else if t.starts_with("VHT operation:") { self.invalid |= self.vht; self.section = 2; self.vht = true; }
-            else if t.starts_with("HE operation:") || t.starts_with("EHT operation:") || t.starts_with("HE Operation:") || t.starts_with("EHT Operation:") { self.unsupported = true; }
+            else if t.starts_with("HE Operation:") || t.starts_with("HE operation:") {
+                self.invalid |= self.he; self.he = true; self.section = 3;
+            } else if t.starts_with("EHT Operation:") || t.starts_with("EHT operation:") {
+                self.invalid |= self.eht; self.eht = true; self.section = 4;
+            }
             return;
         }
         if !line.starts_with("\t\t") { return; }
-        let Some((key, val)) = t.strip_prefix("* ").and_then(|x| x.split_once(':')) else { return; };
+        let Some((key, val)) = t.strip_prefix("* ").unwrap_or(t).split_once(':') else { return; };
         let val = val.trim();
         match (self.section, key) {
             (1, "primary channel") => unique(&mut self.primary, val.parse().ok(), &mut self.invalid),
@@ -117,11 +152,123 @@ impl Operation {
             (2, "channel width") => unique(&mut self.width, first(val), &mut self.invalid),
             (2, "center freq segment 1") => unique(&mut self.seg1, val.parse().ok(), &mut self.invalid),
             (2, "center freq segment 2") => unique(&mut self.seg2, val.parse().ok(), &mut self.invalid),
+            (3, "HE Operation Parameters") => unique(&mut self.he_flags, operation_flags(val), &mut self.invalid),
+            (3, "6 GHz Operation Information") => unique(&mut self.he_6ghz, hex_bytes(val), &mut self.invalid),
+            (3, "6 GHz Operation Info") => self.invalid = true,
+            (3, "VHT Operation Info") => unique(&mut self.he_vht, hex_bytes(val), &mut self.invalid),
+            (4, "EHT Operation Parameters") => unique(&mut self.eht_flags, operation_flags(val), &mut self.invalid),
+            (4, "EHT Operation Info") => {
+                let info = hex_bytes::<3>(val).map(|b| (b, None)).or_else(|| {
+                    let [control, a, b, low, high] = hex_bytes(val)?;
+                    Some(([control, a, b], Some(u16::from_le_bytes([low, high]))))
+                });
+                unique(&mut self.eht_info, info, &mut self.invalid);
+            }
             _ => {}
         }
     }
+
+    fn modern_range(freq: u32, center: u32, width: u32, source: &'static str, disabled: u16) -> Option<ChannelRange> {
+        let primary = channel(freq)?;
+        let center_mhz = match band(freq) {
+            "6" if primary % 4 == 1 && (1..=233).contains(&primary) => {
+                let first = width / 10 - 1;
+                let step = if width == 320 { 32 } else { width / 5 };
+                if center < first || (center-first) % step != 0 { return None; }
+                5950 + 5 * center
+            }
+            "6" if freq == 5935 && width == 20 && center == 2 => 5935,
+            "5" if width != 320 => {
+                if !(((36..=64).contains(&primary) || (100..=144).contains(&primary)) && primary % 4 == 0
+                    || (149..=177).contains(&primary) && primary % 4 == 1) { return None; }
+                if width == 80 && !Self::VHT_80_CENTERS.contains(&center) { return None; }
+                if width == 160 && !Self::VHT_160_CENTERS.contains(&center) { return None; }
+                5000 + 5 * center
+            }
+            "2.4" if width <= 40 && (1..=13).contains(&primary) => 2407 + 5 * center,
+            _ => return None,
+        };
+        let low = center_mhz.checked_sub(width / 2)?;
+        let high = center_mhz + width / 2;
+        if band(low) != band(freq) || band(high) != band(freq)
+            || freq < low + 10 || freq > high - 10 || (freq-low-10) % 20 != 0
+            || !valid_disabled_mask(disabled, width) || disabled & (1 << ((freq-low-10)/20)) != 0 {
+            return None;
+        }
+        Some(ChannelRange { center_mhz, width_mhz: width, source, disabled })
+    }
+
+    fn layout(&self, freq: u32) -> Option<(Option<ChannelRange>, Option<SplitChannel>)> {
+        if self.invalid { return None; }
+        let vht = if self.vht { Some((self.width?, self.seg1?, self.seg2?)) } else { None };
+        let mut he_layout = (self.range(freq, vht, "VHT operation"), self.split_range(freq, vht, "VHT operation"));
+        if self.he {
+            let [hi, mid, _] = self.he_flags?;
+            if (hi & 2 != 0) != self.he_6ghz.is_some() || (mid & 0x40 != 0) != self.he_vht.is_some() { return None; }
+            if let Some([b, a, width]) = self.he_vht {
+                if band(freq) != "5" { return None; }
+                let embedded = (u32::from(width), u32::from(a), u32::from(b));
+                if vht.is_some_and(|v| v != embedded) { return None; }
+                he_layout = (self.range(freq, Some(embedded), "HE operation"),
+                    self.split_range(freq, Some(embedded), "HE operation"));
+                if he_layout == (None, None) { return None; }
+            }
+            if let Some([primary, control, a, b, _]) = self.he_6ghz {
+                if band(freq) != "6" || channel(freq)? != u32::from(primary) { return None; }
+                let (a,b) = (u32::from(a), u32::from(b));
+                let source = "HE operation";
+                let op = |center, width| Self::modern_range(freq, center, width, source, 0);
+                he_layout = match (control & 3, b) {
+                    (code @ 0..=2, 0) => (Some(op(a, 20 << code)?), None),
+                    (3, 0) => (Some(op(a, 80)?), None),
+                    (3, b) if a.abs_diff(b) == 8 => { op(a, 80)?; (Some(op(b, 160)?), None) }
+                    (3, b) if a.abs_diff(b) > 16 && b >= 7 => {
+                        let first = op(a, 80)?;
+                        let second = Self::modern_range(5950 + 5 * (b - 6), b, 80, source, 0)?;
+                        (None, Some(SplitChannel { primary_center_mhz: first.center_mhz,
+                            secondary_center_mhz: second.center_mhz, source }))
+                    }
+                    _ => return None,
+                };
+            } else if band(freq) == "6" { return None; }
+        }
+        if !self.eht { return Some(he_layout); }
+        let [flags] = self.eht_flags?;
+        if flags & 1 == 0 {
+            if flags & 2 != 0 || self.eht_info.is_some() { return None; }
+            return Some(he_layout);
+        }
+        let ([control, a, b], disabled) = self.eht_info?;
+        if (flags & 2 != 0) != disabled.is_some() || (control & 7) > 4 { return None; }
+        if band(freq) == "6" && self.he_6ghz.is_none() { return None; }
+        if self.primary.is_some() && self.primary_channel(freq).is_none() { return None; }
+        let (a,b) = (u32::from(a), u32::from(b));
+        let width = 20 << (control & 7);
+        let source = "EHT operation";
+        let center = if width >= 160 {
+            if a.abs_diff(b) != width / 20 { return None; }
+            Self::modern_range(freq, a, width / 2, source, 0)?;
+            b
+        } else {
+            if b != 0 { return None; }
+            a
+        };
+        let layout = Self::modern_range(freq, center, width, source, disabled.unwrap_or(0))?;
+        if he_layout.1.is_some() { return None; }
+        if let Some(other) = he_layout.0 {
+            let same = other.center_mhz == layout.center_mhz && other.width_mhz == width;
+            let (primary_center, primary_width) = if width >= 160 {
+                (Self::modern_range(freq, a, width / 2, source, 0)?.center_mhz, width / 2)
+            } else { (layout.center_mhz, width) };
+            let nested = other.width_mhz < width && other.width_mhz <= primary_width
+                && other.center_mhz.abs_diff(primary_center) <= (primary_width - other.width_mhz) / 2;
+            if !same && !nested { return None; }
+        }
+        Some((Some(layout), None))
+    }
+
     fn primary_channel(&self, freq: u32) -> Option<u32> {
-        if self.invalid || self.unsupported || !matches!(band(freq), "2.4" | "5") { return None; }
+        if self.invalid || !matches!(band(freq), "2.4" | "5") { return None; }
         let ch = self.primary?;
         let primary = if band(freq) == "2.4" && (1..=13).contains(&ch) { 2407 + 5*ch }
             else if band(freq) == "5" && (((36..=64).contains(&ch) || (100..=144).contains(&ch)) && ch % 4 == 0 || (149..=177).contains(&ch) && ch % 4 == 1) { 5000 + 5*ch }
@@ -129,22 +276,20 @@ impl Operation {
         (primary == freq).then_some(ch)
     }
 
-    fn split_range(&self, freq: u32) -> Option<SplitChannel> {
+    fn split_range(&self, freq: u32, vht: Option<(u32, u32, u32)>, source: &'static str) -> Option<SplitChannel> {
         let primary = self.primary_channel(freq)?;
-        if band(freq) != "5" || !self.vht || !matches!(self.width?, 1 | 3) { return None; }
-        let first = self.seg1?;
-        let second = self.seg2?;
+        let (width, first, second) = vht?;
+        if band(freq) != "5" || !matches!(width, 1 | 3) { return None; }
         if !Self::VHT_80_CENTERS.contains(&first) || !Self::VHT_80_CENTERS.contains(&second) || first.abs_diff(second) <= 16
             || !matches!(primary.abs_diff(first), 2 | 6) { return None; }
-        Some(SplitChannel { primary_center_mhz: 5000 + 5 * first, secondary_center_mhz: 5000 + 5 * second })
+        Some(SplitChannel { primary_center_mhz: 5000 + 5 * first, secondary_center_mhz: 5000 + 5 * second, source })
     }
 
-    fn range(&self, freq: u32) -> Option<ChannelRange> {
+    fn range(&self, freq: u32, vht: Option<(u32, u32, u32)>, vht_source: &'static str) -> Option<ChannelRange> {
         let ch = self.primary_channel(freq)?;
-        let (center, width, source) = if self.vht && self.width? != 0 {
+        let (center, width, source) = if let Some((code, a, b)) = vht.filter(|v| v.0 != 0) {
             if band(freq) != "5" { return None; }
-            let a = self.seg1?; let b = self.seg2?;
-            let (c, w) = match (self.width?, b) {
+            let (c, w) = match (code, b) {
                 (1, 0) if Self::VHT_80_CENTERS.contains(&a) => (a, 80),
                 (1, b) if Self::VHT_80_CENTERS.contains(&a) && Self::VHT_160_CENTERS.contains(&b)
                     && a.abs_diff(b) == 8 && matches!(ch.abs_diff(a), 2 | 6) => (b, 160),
@@ -152,10 +297,10 @@ impl Operation {
                 _ => return None, // 80+80 and unknown encodings are not contiguous
             };
             if !matches!((w, ch.abs_diff(c)), (80, 2 | 6) | (160, 2 | 6 | 10 | 14)) { return None; }
-            (5000 + 5*c, w, "VHT operation")
+            (5000 + 5*c, w, vht_source)
         } else {
             // Width=0 VHT delegates to HT. No channel inferred from capability bits alone.
-            if self.vht && (self.seg1? != 0 || self.seg2? != 0) { return None; }
+            if vht.is_some_and(|(_, a, b)| a != 0 || b != 0) { return None; }
             match (self.secondary.as_deref()?, self.ht_width.as_deref()?) {
                 ("no secondary", "20 MHz") | ("no secondary", "any") => (freq, 20, "HT operation"),
                 ("above", "any") => (freq + 10, 40, "HT operation"),
@@ -165,7 +310,7 @@ impl Operation {
         };
         let (lo, hi) = if band(freq) == "2.4" { (2400,2500) } else { (5150,5895) };
         if center-width/2 < lo || center+width/2 > hi { return None; }
-        Some(ChannelRange { center_mhz: center, width_mhz: width, source })
+        Some(ChannelRange { center_mhz: center, width_mhz: width, source, disabled: 0 })
     }
 }
 
@@ -360,11 +505,9 @@ fn security(auth: Option<&str>, wpa: bool, privacy: bool) -> &'static str {
 /// authentication suites; everything else is a plain `key: value` line one tab deep.
 pub fn parse_scan(text: &str) -> Vec<Bss> {
     struct Raw { bss: Bss, auth: Option<String>, wpa: bool, privacy: bool, operation: Operation }
-    let done = |r: Raw| Bss {
-        security: security(r.auth.as_deref(), r.wpa, r.privacy),
-        channel_range: r.operation.range(r.bss.freq),
-        channel_80p80: r.operation.split_range(r.bss.freq),
-        ..r.bss
+    let done = |r: Raw| {
+        let (channel_range, channel_80p80) = r.operation.layout(r.bss.freq).unwrap_or_default();
+        Bss { security: security(r.auth.as_deref(), r.wpa, r.privacy), channel_range, channel_80p80, ..r.bss }
     };
     let mut out: Vec<Bss> = Vec::new();
     let mut cur: Option<Raw> = None;
@@ -708,9 +851,9 @@ pub fn scan(req: &Value) -> Value {
         "bssid": b.bssid, "ssid": b.ssid, "freq": b.freq, "channel": channel(b.freq), "band": band(b.freq),
         "signal_dbm": b.signal_dbm, "security": b.security, "seen_ms": b.seen_ms, "associated": b.associated,
         "seen_boottime_ms": b.seen_boottime_ms,
-        "channel_range": b.channel_range.map(|r| json!({"center_mhz": r.center_mhz, "width_mhz": r.width_mhz, "source": r.source})),
+        "channel_range": b.channel_range.map(|r| json!({"center_mhz": r.center_mhz, "width_mhz": r.width_mhz, "source": r.source, "disabled_subchannels": r.disabled})),
         "channel_80p80": b.channel_80p80.map(|r| json!({"primary_center_mhz": r.primary_center_mhz,
-            "secondary_center_mhz": r.secondary_center_mhz}))})).collect();
+            "secondary_center_mhz": r.secondary_center_mhz, "source": r.source}))})).collect();
     json!({"ok": true, "present": true, "iw": true, "iface": iface, "adapter_stamp": before, "networks": nets, "total": list.len(), "load": load, "dump_completed_boottime_ms": dump_completed_boottime_ms,
            "can_rescan": tool("nmcli").is_some()})
 }
@@ -840,7 +983,7 @@ mod tests {
         let vht = "\tVHT operation:\n\t\t * channel width: 1 (80 MHz)\n\t\t * center freq segment 1: 42\n\t\t * center freq segment 2: 0\n";
         let b = scan(5180,ht);
         assert_eq!(b.seen_boottime_ms, Some(1234500)); assert!(b.ssid.is_empty());
-        assert_eq!(b.channel_range, Some(ChannelRange {center_mhz:5190,width_mhz:40,source:"HT operation"}));
+        assert_eq!(b.channel_range, Some(ChannelRange {center_mhz:5190,width_mhz:40,source:"HT operation",disabled:0}));
         assert_eq!(scan(5180,&format!("{ht}{vht}")).channel_range.unwrap().center_mhz,5210);
         assert!(scan(5180, &format!("{ht}{}", vht.replace("segment 1: 42", "segment 1: 38"))).channel_range.is_none());
         assert_eq!(scan(5180,&format!("{ht}{}",vht.replace("segment 2: 0","segment 2: 50"))).channel_range.unwrap().width_mhz,160);
@@ -852,6 +995,49 @@ mod tests {
         assert_eq!(seen_boottime("0.001s [boottime]"),Some(1));
         assert_eq!(seen_boottime("1.999999999 s [boottime]"),Some(1999));
         for bad in ["-1s [boottime]","NaNs [boottime]","18446744073709551615s [boottime]","1e3s [boottime]","1 ms ago"] { assert!(seen_boottime(bad).is_none()); }
+    }
+
+    #[test]
+    fn he_and_eht_advertised_layouts() {
+        let scan = |freq, op: &str| {
+            parse_scan(&format!("BSS aa:bb:cc:dd:ee:ff(on wlan0)\n\tfreq: {freq}\n{op}")).remove(0)
+        };
+        let he = "\tHE Operation:\n\t\tHE Operation Parameters: (0x020000)\n\t\t6 GHz Operation Information: 0x0103070f00\n";
+        let eht = "\tEHT Operation:\n\t\tEHT Operation Parameters: (0x03)\n\t\tEHT Operation Info: 0x040f1f0c00\n";
+        assert_eq!(scan(5955, he).channel_range, Some(ChannelRange {
+            center_mhz: 6025, width_mhz: 160, source: "HE operation", disabled: 0,
+        }));
+        assert_eq!(scan(5955, &format!("{he}{eht}")).channel_range, Some(ChannelRange {
+            center_mhz: 6105, width_mhz: 320, source: "EHT operation", disabled: 12,
+        }));
+        assert_eq!(scan(5955, &format!("{he}{eht}", eht=eht.replace("0c00", "00c0")))
+            .channel_range.unwrap().disabled, 0xc000);
+        let split = he.replace("0103070f00", "0103072700");
+        assert_eq!(scan(5955, &split).channel_80p80, Some(SplitChannel {
+            primary_center_mhz: 5985, secondary_center_mhz: 6145, source: "HE operation",
+        }));
+        for bad in [
+            eht.to_owned(),
+            format!("{he}{eht}{eht}"),
+            format!("{he}{}", eht.replace("0c00", "0300")),
+            format!("{he}{}", eht.replace("0c00", "0100")),
+            format!("{he}{}", eht.replace("0c00", "")),
+            format!("{he}{}", eht.replace("0f1f", "2f1f")),
+            format!("{}{eht}", he.replace("0103070f00", "0503070f00")),
+            format!("{}{eht}", he.replace("0103070f00", "01020b0000")),
+        ] {
+            let b = scan(5955, &bad);
+            assert!(b.channel_range.is_none() && b.channel_80p80.is_none(), "{bad}");
+        }
+        let five = "\tEHT Operation:\n\t\tEHT Operation Parameters: (0x01)\n\t\tEHT Operation Info: 0x022a00\n";
+        assert_eq!(scan(5180, five).channel_range.unwrap().center_mhz, 5210);
+        let ht = "\tHT operation:\n\t\t * primary channel: 36\n";
+        let he_vht = "\tHE Operation:\n\t\tHE Operation Parameters: (0x004000)\n\t\tVHT Operation Info: 0x002a01\n";
+        assert_eq!(scan(5180, &format!("{ht}{he_vht}")).channel_range, Some(ChannelRange {
+            center_mhz: 5210, width_mhz: 80, source: "HE operation", disabled: 0,
+        }));
+
+        assert!(scan(5180, eht).channel_range.is_none());
     }
 
     #[test]

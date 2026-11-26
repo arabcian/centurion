@@ -5,6 +5,8 @@
 #include "autotunereport.h"
 #include "diagnostichistory.h"
 #include "diagsources.h"
+#include "flightrec.h"
+#include "kernelwalltime.h"
 #include <QDateTime>
 #include <QMap>
 #include <QDialog>
@@ -235,7 +237,7 @@ QStringList incident(const QJsonObject &event, const QString &bootId) {
     const auto identity = canonicalBoot(b);
     const QString kind = event.value("kind").toString();
     const QString title = event.value("title").toString();
-    const double ts = event.value("ts_us").toDouble();
+    const qint64 ts = event.value("ts_us").toInteger(-1);
     out << QStringLiteral("Event: %1 · %2 · boot %3").arg(kind, title, b.left(8));
     const auto validTime = [](double seconds) -> qint64 {
         // Limit to a representable, plausible calendar range; malformed JSON is unknown.
@@ -251,19 +253,17 @@ QStringList incident(const QJsonObject &event, const QString &bootId) {
         });
         for (qsizetype i = 0; i < qMin(limit, entries.size()); ++i) timeline.append(entries.at(i));
     };
-    // Current boot kernel timestamps are monotonic-since-boot; translate only if boot IDs match.
-    const QString curBoot = firstLine("/proc/sys/kernel/random/boot_id");
-    if (!when && !b.isEmpty() && b == curBoot && ts > 0) {
-        const QByteArray up = readFile("/proc/uptime", 256);
-        bool ok = false;
-        const double uptime = QString::fromLatin1(up).section(' ', 0, 0).toDouble(&ok);
-        if (ok && std::isfinite(uptime) && uptime >= 0 && ts / 1000000.0 <= uptime + 1) when = validTime(double(QDateTime::currentSecsSinceEpoch()) - uptime + ts / 1000000.0);
+    const QString curBoot = canonicalBoot(firstLine("/proc/sys/kernel/random/boot_id"));
+    const bool currentBoot = !identity.isEmpty() && identity == curBoot;
+    if (!when && currentBoot) {
+        if (const auto clock = kernelwalltime::Anchor::capture())
+            when = clock->toWallMs(ts) / 1000;
     }
     if (when) { out << QStringLiteral("Event wall time: %1").arg(QDateTime::fromSecsSinceEpoch(when).toString(Qt::ISODate)); append(when, QStringLiteral("SELECTED EVENT"), kind + QStringLiteral(" · ") + title); }
-    if (!when && b != curBoot) out << QStringLiteral("Historical event: wall clock timestamp missing; temporal correlation unavailable.");
+    if (!when && !currentBoot) out << QStringLiteral("Historical event: wall clock timestamp missing; temporal correlation unavailable.");
     if (!b.isEmpty() && b.size() < 32)
         out << QStringLiteral("Archived log retained only a boot-ID prefix. Full-boot flight/curve/scene attribution is deliberately unavailable.");
-    if (b == curBoot) {
+    if (currentBoot) {
         out << QStringLiteral("Current kernel: %1").arg(firstLine("/proc/sys/kernel/osrelease"));
         out << QStringLiteral("Current BIOS: %1 · NVIDIA driver: %2")
                    .arg(firstLine("/sys/class/dmi/id/bios_version"), firstLine("/proc/driver/nvidia/version").section('\n', 0, 0));
@@ -279,23 +279,17 @@ QStringList incident(const QJsonObject &event, const QString &bootId) {
         if (when && t && t <= when && when - t <= 7200)
             append(t, QStringLiteral("CURVE"), QStringLiteral("%1 = %2").arg(j.value("kind").toString(), j.value("state").toString()));
     }
-    const QString ring = (b == curBoot) ? QStringLiteral("/var/lib/centurion/flight.ring") : QStringLiteral("/var/lib/centurion/flight-prev.ring");
-    const auto bytes = diagsrc::readRecord(ring, 4 * 1024 * 1024).value_or(QByteArray{});
+    const QString ring = currentBoot ? QStringLiteral("/var/lib/centurion/flight.ring") : QStringLiteral("/var/lib/centurion/flight-prev.ring");
+    const auto bytes = diagsrc::readRecord(ring, flightrec::RING_BYTES).value_or(QByteArray{});
     QList<QJsonObject> samples;
-    auto lines = bytes.split('\n');
-    if (!lines.isEmpty()) lines.removeLast();  // final empty or interrupted slot
-    const auto header = lines.isEmpty() ? QJsonObject{} : QJsonDocument::fromJson(lines.takeFirst().trimmed()).object();
-    if (identity.isEmpty() || canonicalBoot(header.value("boot").toString()) != identity
-        || header.value("interval").toInteger() <= 0) {
+    const auto flight = flightrec::parseRing(bytes);
+    if (identity.isEmpty() || flight.value("boot").toString() != identity) {
         out << QStringLiteral("No matching flight ring for this boot; no cross-boot sample mixing.");
     } else if (!when) {
         out << QStringLiteral("Event time unavailable; flight samples cannot be aligned.");
     } else {
-        for (const auto &slot : lines) {
-            const auto sample = QJsonDocument::fromJson(slot.trimmed()).object();
-            if (!sample.contains("boot") && sample.value("s").toInteger(-1) >= 0 && sample.value("t").isDouble())
-                samples.append(sample);
-        }
+        for (const auto &sample : flight.value("samples").toArray())
+            samples.append(sample.toObject());
         std::sort(samples.begin(), samples.end(), [](const QJsonObject &a, const QJsonObject &b) { return a.value("t").toDouble() < b.value("t").toDouble(); });
         int count = 0;
         for (const auto &s : samples) {

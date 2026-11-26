@@ -1,11 +1,41 @@
 #include "flightrec.h"
+#include "diagnostichistory.h"
+#include <QJsonDocument>
+#include <QMap>
+#include <limits>
 
 #include <QCoreApplication>
 #include <QDateTime>
-#include <QJsonObject>
 #include <QStringList>
 
 namespace flightrec {
+
+QJsonObject parseRing(const QByteArray &bytes) {
+    if (bytes.size() < SLOT_BYTES || bytes.size() > RING_BYTES) return {};
+    const auto slot = [&bytes](qsizetype index) {
+        const qsizetype end = (index + 1) * SLOT_BYTES;
+        if (end > bytes.size() || bytes.at(end - 1) != '\n') return QJsonObject{};
+        return QJsonDocument::fromJson(bytes.mid(end - SLOT_BYTES, SLOT_BYTES - 1)).object();
+    };
+    const auto header = slot(0);
+    const auto boot = diagnostichistory::fullBoot(header.value("boot").toString().toStdString());
+    const auto interval = header.value("interval").toInteger();
+    if (boot.empty() || header.contains("s") || interval <= 0 || interval > std::numeric_limits<int>::max()) return {};
+    QMap<qint64, QJsonObject> ordered;
+    const auto count = bytes.size() / SLOT_BYTES - 1;
+    for (qsizetype i = 0; i < count; ++i) {
+        const auto sample = slot(i + 1);
+        if (sample.contains("boot")) continue;
+        const auto seq = sample.value("s").toInteger(-1);
+        if (seq < 0 || seq >= (1LL << 53) || seq % SAMPLE_SLOTS != i) continue;
+        const auto time = sample.value("t").toInteger();
+        if (time <= 0 || time >= 253402300800LL) continue;
+        ordered.insert(seq, sample);
+    }
+    QJsonArray samples;
+    for (const auto &sample : ordered) samples.append(sample);
+    return {{"boot", QString::fromStdString(boot)}, {"interval", interval}, {"samples", samples}};
+}
 
 // The flight recorder's samples (crates/centurion-helpers/src/flight.rs): the peaks of the whole
 // stretch, then the last ROWS rows. A missing reading is shown as "—".

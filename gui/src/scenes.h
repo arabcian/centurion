@@ -159,7 +159,8 @@ private:
     using Done = std::function<void(bool ok, const QString &msg)>;
     using Step = std::function<void(Done)>;
 
-    void start(const scenes::Scene &s);
+    void applyScene(const QString &name, const QString &trigger, const QString &expectedGeneration = {});
+    void start(const scenes::Scene &s, const QString &expectedGeneration = {});
     void addStep(const QString &what, Step step);
     void emitStep(const QString &step, const QString &state, const QString &detail = {});
     void next();
@@ -177,7 +178,7 @@ private:
     void resumeTick();
     bool armResumeFd();
     void resumePass();
-    void applyForSource(bool onAc, const QString &why = QStringLiteral("power"));
+    void applyForSource(bool onAc, const QString &why = QStringLiteral("power"), const QString &expectedGeneration = {});
     void startupApply();
     void gpuDeferredFire();
     void helper(const QString &name, const QJsonObject &req, Done done,
@@ -200,6 +201,8 @@ private:
     int deferredInFlight_ = 0;
     bool startupPending_ = false;  // login scene waiting for the first readable power source
     bool loginAfterCalibration_ = false;
+    QString deferredGeneration_;
+    bool recoveringGame_ = false;
     bool deferred_ = false;  // a power-source switch waiting for the game to end
     bool orphanPruneActive_ = false;
     bool calDeferred_ = false;  // a switch waiting for centurion-calibrate to release its hold

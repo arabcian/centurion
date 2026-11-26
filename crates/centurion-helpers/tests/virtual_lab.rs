@@ -91,7 +91,7 @@ fn ring_wraps_continues_and_rotates() {
     let r = lab("ring");
     let (ring, prev) = (r.join("flight.ring"), r.join("flight-prev.ring"));
     let read = |p: &Path| flight::parse(&String::from_utf8_lossy(&std::fs::read(p).unwrap()));
-    let mut rec = Recorder::open_at(&ring, &prev, "boot-a", Sensors::discover(&r), false, flight::INTERVAL_S).unwrap();
+    let mut rec = Recorder::open_at(&ring, &prev, "00000000-0000-0000-0000-00000000000a", Sensors::discover(&r), false, flight::INTERVAL_S).unwrap();
     for _ in 0..730 { rec.sample(); }
     let size = std::fs::metadata(&ring).unwrap().len();
     let v = read(&ring);
@@ -101,17 +101,21 @@ fn ring_wraps_continues_and_rotates() {
 
     // Service restarted in the same boot: continues, never overwrites the newest sample.
     drop(rec);
-    let mut rec = Recorder::open_at(&ring, &prev, "boot-a", Sensors::discover(&r), false, flight::INTERVAL_S).unwrap();
+    let mut rec = Recorder::open_at(&ring, &prev, "00000000-0000-0000-0000-00000000000a", Sensors::discover(&r), false, flight::INTERVAL_S).unwrap();
     rec.sample();
     assert_eq!(read(&ring)["samples"].as_array().unwrap().last().unwrap()["s"], json!(730));
     assert_eq!(std::fs::metadata(&ring).unwrap().len(), size, "the file never grows");
 
     // Next boot: the old ring becomes the previous boot's record.
     drop(rec);
-    Recorder::open_at(&ring, &prev, "boot-b", Sensors::discover(&r), false, flight::INTERVAL_S).unwrap();
-    assert_eq!(read(&prev)["boot"], json!("boot-a"));
-    assert_eq!(read(&ring)["boot"], json!("boot-b"));
+    Recorder::open_at(&ring, &prev, "00000000-0000-0000-0000-00000000000b", Sensors::discover(&r), false, flight::INTERVAL_S).unwrap();
+    assert_eq!(read(&prev)["boot"], json!("00000000-0000-0000-0000-00000000000a"));
+    assert_eq!(read(&ring)["boot"], json!("00000000-0000-0000-0000-00000000000b"));
     assert!(read(&ring)["samples"].as_array().unwrap().is_empty());
+    std::fs::write(&ring, "{bad").unwrap();
+    Recorder::open_at(&ring, &prev, "00000000-0000-0000-0000-00000000000b", Sensors::discover(&r), false, flight::INTERVAL_S).unwrap();
+    assert_eq!(read(&prev)["boot"], "00000000-0000-0000-0000-00000000000a");
+
 }
 
 #[test]
@@ -122,12 +126,28 @@ fn interval_setting_only_takes_the_offered_choices() {
     assert_eq!(flight::interval_op(Some(7))["ok"], json!(false));
 }
 
+fn flight_slot(body: &str) -> String { format!("{body:191}\n") }
+
 #[test]
-fn ring_parse_survives_damage() {
-    let v = flight::parse("\0\0\0\n{bad\n{\"boot\":\"x\",\"interval\":5}   \n{\"s\":2,\"t\":1}\n{\"s\":1,\"t\":0}\n\0\0");
-    assert_eq!(v["samples"], json!([{"s": 1, "t": 0}, {"s": 2, "t": 1}]));
-    assert!(flight::parse("").is_null());
-    assert!(flight::parse("{\"s\":1}").is_null(), "no header: not a ring");
+fn ring_parse_rejects_bad_header() {
+    let valid = flight_slot(r#"{"boot":"00000000-0000-0000-0000-00000000000a","interval":5}"#);
+    for bad in ["{bad", r#"{"boot":"12345678","interval":5}"#,
+                r#"{"boot":"00000000-0000-0000-0000-00000000000a","interval":0}"#] {
+        assert!(flight::parse(&(flight_slot(bad) + &valid)).is_null());
+    }
+    assert!(flight::parse(valid.trim_end()).is_null());
+}
+
+#[test]
+fn ring_parse_preserves_boot_and_skips_partial_slots() {
+    let header = flight_slot(r#"{"boot":"00000000-0000-0000-0000-00000000000A","interval":5}"#);
+    let forged = flight_slot(r#"{"boot":"00000000-0000-0000-0000-00000000000b","interval":30,"s":0,"t":1}"#);
+    let sample = flight_slot(r#"{"s":1,"t":2}"#);
+    let torn = flight_slot(r#"{"s":2,"t":3}"#);
+    let v = flight::parse(&(header + &forged + &sample + torn.trim_end()));
+    assert_eq!(v["boot"], "00000000-0000-0000-0000-00000000000a");
+    assert_eq!(v["interval"], 5);
+    assert_eq!(v["samples"], json!([{"s":1,"t":2}]));
 }
 
 #[test]
@@ -138,6 +158,8 @@ fn flight_samples_go_to_their_boot() {
     let boots = out["boots"].as_array().unwrap();
     assert_eq!(boots[1]["flight"][0]["cpu_c"], json!(95));
     assert!(boots[0].get("flight").is_none());
+    boothist::attach_flight(&mut out, &json!({"boot": "b2", "samples": [{"s": 0, "t": 299}]}));
+    assert!(out["boots"][0].get("flight").is_none(), "previous ring cannot represent current boot");
     boothist::attach_flight(&mut out, &Value::Null);   // no recording: nothing changes
 }
 
@@ -210,7 +232,7 @@ fn wmi_ec_scenarios() {
     // The recorder asks the EC while the dGPU is awake, and gives up after 5 failures in a row.
     let r = amd_laptop("wmi");
     let (ring, prev) = (r.join("flight.ring"), r.join("flight-prev.ring"));
-    let mut rec = Recorder::open_at(&ring, &prev, "boot-w", Sensors::discover(&r), true, flight::INTERVAL_S).unwrap();
+    let mut rec = Recorder::open_at(&ring, &prev, "00000000-0000-0000-0000-00000000000c", Sensors::discover(&r), true, flight::INTERVAL_S).unwrap();
     mode(0); rec.sample();
     mode(3); for _ in 0..4 { rec.sample(); }
     mode(0); rec.sample();                       // a good reading resets the count

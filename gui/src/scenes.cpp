@@ -298,10 +298,13 @@ QString activeScene() {
 
 bool activeScenePartial() { return readObject(stateFile()).value("partial").toBool(); }
 
-static bool beginScene(const QString &id, QString &previous) {
+static bool beginScene(const QString &id, QString &previous, const QString &expectedGeneration) {
     const StateLock lock;
     if (lock.fd < 0) return false;
     QJsonObject o = readObject(stateFile());
+    if (!expectedGeneration.isNull()
+        && (o.value("scene_generation").toString(QStringLiteral("")) != expectedGeneration
+            || !o.value("game_scene").toString().isEmpty())) return false;
     const auto active = o.value("active").toString();
     previous = validName(active) ? active : QString();
     o["scene_generation"] = id;
@@ -875,7 +878,7 @@ void SceneEngine::checkGameEnd() {
         if (gameGoneReads_ < STABLE_READS) return;
         gameGoneReads_ = 0;
         deferred_ = false;
-        if (auto_.enabled && ac_) applyForSource(*ac_, QStringLiteral("game ended"));
+        if (auto_.enabled && ac_) applyForSource(*ac_, QStringLiteral("game ended"), deferredGeneration_);
         return;
     }
     // Game scene still set with no game left: give a normal POST time to
@@ -884,6 +887,7 @@ void SceneEngine::checkGameEnd() {
     gameGoneReads_ = 0;
     deferred_ = sawGameScene_ = false;
     QString before, generation;
+    bool gameOwnsScene = false;
     {
         // Claim the clean-up under the lock: a POST that got there first has already left the scene.
         const StateLock lock;
@@ -892,7 +896,9 @@ void SceneEngine::checkGameEnd() {
         if (const QJsonValue g = st.value("game_scene"); !g.isString() || g.toString().isEmpty()) return;
         before = st.value("before_game").toString();
         generation = st.value("scene_generation").toString();
+        gameOwnsScene = !generation.isEmpty() && st.value("game_scene_generation").toString() == generation;
         st["game_scene"] = QJsonValue::Null;
+        st["game_scene_generation"] = QJsonValue::Null;
         st["before_game"] = QJsonValue::Null;
         st["ab_a"] = QJsonValue::Null;     // a dead A launch (gameSessions() no longer counts it)
         st["ab_owner"] = QJsonValue::Null;
@@ -903,28 +909,29 @@ void SceneEngine::checkGameEnd() {
     Q_EMIT finished(QString(), true, {QStringLiteral("the game launcher exited without its POST hook — leaving the game scene")});
     // Ends the dead session and restores the game tuning (tune-helper prune).
     privileged::run(privileged::helperPath("tune-profile-helper"), QJsonObject{{"op", "prune"}}, this,
-        [this, before, generation, localTransaction](const privileged::Result &) {
+        [this, before, generation, localTransaction, gameOwnsScene](const privileged::Result &) {
             orphanPruneActive_ = false;
             if (!pending_.isEmpty() && !pendingAuto_) {
                 apply(std::exchange(pending_, QString()), std::exchange(pendingTrigger_, QString()));
                 return;
             }
-            if (busy_ || auto_.paused || transactionId_ != localTransaction || gameSessions() > 0 || gameStarting()) return;
+            if (!gameOwnsScene || busy_ || auto_.paused || transactionId_ != localTransaction || gameSessions() > 0 || gameStarting()) return;
             const auto state = readObject(stateFile());
             if (state.value("scene_generation").toString() != generation || !state.value("game_scene").toString().isEmpty()) return;
             if (auto_.enabled) {
                 const auto source = onAc();
-                if (source || ac_) applyForSource(source.value_or(ac_.value_or(false)) && !flapHold_, QStringLiteral("game ended"));
+                if (source || ac_) applyForSource(source.value_or(ac_.value_or(false)) && !flapHold_, QStringLiteral("game ended"), generation);
             } else if (validName(before)) {
-                apply(before);
+                applyScene(before, QStringLiteral("game ended"), generation);
             }
         }, 120000);
 }
 
-void SceneEngine::applyForSource(bool onAc, const QString &why) {
+void SceneEngine::applyForSource(bool onAc, const QString &why, const QString &expectedGeneration) {
     if (loginAfterCalibration_ || orphanPruneActive_) return;
     if (sceneplan::sourceAction(auto_.paused,false,false,true,false,false)==sceneplan::SourceAction::Paused) { deferred_ = false; return; }
     if (sceneplan::sourceAction(false,calibrationHold(),false,true,false,false)==sceneplan::SourceAction::CalibrationDeferred) {
+        if (!expectedGeneration.isNull()) return;
         if (!calDeferred_) Q_EMIT finished(QString(), true, {QStringLiteral("a calibration is measuring — scene switch deferred until it ends")});
         calDeferred_ = true;
         retunePoll();
@@ -937,6 +944,9 @@ void SceneEngine::applyForSource(bool onAc, const QString &why) {
     // PRE only half done) a charger flap used to drop straight to the daily scene under the running game.
     // checkGameEnd() clears an orphaned game scene after ~15 s and applies the right scene itself.
     if (sceneplan::sourceAction(false,false,gameSessions() > 0 || gameStarting() || gameSceneActive(),true,false,false)==sceneplan::SourceAction::GameDeferred) {
+        if (expectedGeneration.isNull() && !deferred_)
+            deferredGeneration_ = readObject(stateFile()).value("scene_generation").toString(QStringLiteral(""));
+        if (!expectedGeneration.isNull()) return;
         if (!deferred_) Q_EMIT finished(QString(), true, {QStringLiteral("power source changed — scene switch deferred until the game exits")});
         deferred_ = true;
         return;
@@ -956,12 +966,17 @@ void SceneEngine::applyForSource(bool onAc, const QString &why) {
         return;
     }
     nextAuto_ = true;
-    apply(n, QString::fromStdString(sceneapplysummary::trigger(why.toStdString(), onAc ? "on AC" : "on battery")));
+    applyScene(n, QString::fromStdString(sceneapplysummary::trigger(why.toStdString(), onAc ? "on AC" : "on battery")), expectedGeneration);
 }
 
 void SceneEngine::apply(const QString &name, const QString &trigger) {
+    applyScene(name, trigger);
+}
+
+void SceneEngine::applyScene(const QString &name, const QString &trigger, const QString &expectedGeneration) {
     if (busy_ || orphanPruneActive_) {
         const bool automatic = std::exchange(nextAuto_, false);
+        if (!expectedGeneration.isNull()) return;
         if (automatic && !pending_.isEmpty() && !pendingAuto_) return;
         pending_ = name;
         pendingTrigger_ = trigger;
@@ -977,7 +992,7 @@ void SceneEngine::apply(const QString &name, const QString &trigger) {
         Q_EMIT finished(name, false, {QStringLiteral("✗ scene '%1' not found").arg(name)});
         return;
     }
-    start(*s);
+    start(*s, expectedGeneration);
 }
 
 bool SceneEngine::applyTracked(const QString &name, std::uint64_t cpuLease, std::function<void(const QString &)> done) {
@@ -1201,12 +1216,21 @@ void SceneEngine::emitStep(const QString &step, const QString &state, const QStr
     Q_EMIT stepState(step, state, detail);
 }
 
-void SceneEngine::start(const Scene &s) {
+void SceneEngine::start(const Scene &s, const QString &expectedGeneration) {
+    const auto id = QUuid::createUuid().toString(QUuid::WithoutBraces);
+    QString previous;
+    const bool ownsScene = beginScene(id, previous, expectedGeneration);
+    if (!ownsScene && !expectedGeneration.isNull()) {
+        nextAuto_ = false;
+        nextTrigger_.clear();
+        return;
+    }
+    recoveringGame_ = !expectedGeneration.isNull();
     busy_ = true;
     ok_ = true;
     log_.clear();
     steps_.clear();
-    priorScene_.clear();
+    priorScene_ = previous;
     current_ = s.name;
     autoApply_ = std::exchange(nextAuto_, false);
     trigger_ = std::exchange(nextTrigger_, QString());
@@ -1219,11 +1243,11 @@ void SceneEngine::start(const Scene &s) {
         Q_EMIT transactionState(gpuDeferTransactionId_, gpuDeferScene_, QStringLiteral("GPU curve"), QStringLiteral("deferred_superseded"), {});
     gpuDefer_->stop();
     gpuDeferTransactionId_.clear();
-    transactionId_ = QUuid::createUuid().toString(QUuid::WithoutBraces);
+    transactionId_ = id;
     lastOutcome_.clear();
     incomplete_ = false;
     deferGpu_.clear();
-    if (!beginScene(transactionId_, priorScene_)) {
+    if (!ownsScene) {
         incomplete_ = true;
         log_ << QStringLiteral("Could not record scene ownership");
     }
@@ -1531,6 +1555,13 @@ void SceneEngine::start(const Scene &s) {
 }
 
 void SceneEngine::next() {
+    if (recoveringGame_ && !steps_.isEmpty()
+        && readObject(stateFile()).value("scene_generation").toString() != transactionId_) {
+        for (const auto &pending : steps_) emitStep(pending.name, QStringLiteral("skipped"));
+        steps_.clear();
+        incomplete_ = true;
+    }
+
     // A game owns the machine if it starts during an automatic scene switch.
     // Never undo power/firmware settings under the game's new tuning ownership.
     if ((autoApply_ || trackedDone_) && !steps_.isEmpty() && (gameSessions() > 0 || gameStarting() || gameSceneActive())) {
@@ -1610,6 +1641,7 @@ void SceneEngine::finish() {
         pending_.clear();
         pendingTrigger_.clear();
         pendingAuto_ = false;
+        if (!deferred_) deferredGeneration_ = transactionId_;
         deferred_ = true;
         return;
     }
@@ -1682,5 +1714,5 @@ void SceneEngine::verifyPass() {
                                           .arg(HomeTab::profileLabel(*cur), target)});
     if (busy_ || transactionId_ != generation) return;
     nextAuto_ = false;  // one retry only: it is not verified again
-    apply(target, QStringLiteral("verify: firmware changed the power profile"));
+    applyScene(target, QStringLiteral("verify: firmware changed the power profile"), recoveringGame_ ? generation : QString());
 }

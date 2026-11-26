@@ -17,7 +17,7 @@
 #include <QItemSelectionModel>
 #include "diagreportview.h"
 #include "diagnostichistoryview.h"
-#include "diagnostichistorydata.h"
+#include "diagnostichistorystore.h"
 #include <QInputDialog>
 #include "workspacestate.h"
 #include "diagsources.h"
@@ -487,7 +487,7 @@ protected:
         }
         for (const auto &t : timings_) {
             const auto hz = x(t.refreshHz());
-            const bool selected = selected_ >= int(t.offset) && selected_ < int(t.offset+18);
+            const bool selected = selected_ >= int(t.offset) && selected_ < int(t.offset + t.length);
             p.setPen(QPen(selected ? accent : fg, selected ? 3 : 1));
             p.drawLine(QPointF(hz,axis-4),QPointF(hz,axis+(selected?15:8)));
         }
@@ -542,7 +542,7 @@ void inspectEdid(QWidget *parent, const diag::Table &bytes, const QString &conne
     auto *plot = new EdidTimingPlot; layout->addWidget(plot);
     auto *timingTree = new QTreeWidget; timingTree->setRootIsDecorated(false);
     timingTree->setHeaderLabels({tr("Offset"), tr("Scan mode"), tr("Active"), tr("Total"), tr("Pixel Clock (MHz)"),
-        tr("Frame rate (Hz)"), tr("Field rate (Hz)")});
+        tr("Frame rate (Hz)"), tr("Field rate (Hz)"), tr("Source")});
     timingTree->header()->setSectionResizeMode(QHeaderView::ResizeToContents);
     auto *split = new QSplitter(Qt::Vertical); split->addWidget(timingTree); layout->addWidget(split, 1);
     auto *bytePanel = new QWidget; auto *byteLayout = new QVBoxLayout(bytePanel); byteLayout->setContentsMargins(0,0,0,0);
@@ -583,7 +583,7 @@ void inspectEdid(QWidget *parent, const diag::Table &bytes, const QString &conne
         timingTree->clearSelection();
         for (int i=0; i<timingTree->topLevelItemCount(); ++i) {
             auto *item=timingTree->topLevelItem(i); const int start=item->data(0,Qt::UserRole).toInt();
-            if (pos>=start && pos-start<18) { timingTree->setCurrentItem(item); break; }
+            if (pos>=start && pos-start<item->data(0,Qt::UserRole + 1).toInt()) { timingTree->setCurrentItem(item); break; }
         }
     };
     auto switchConnector = [&] {
@@ -602,7 +602,7 @@ void inspectEdid(QWidget *parent, const diag::Table &bytes, const QString &conne
         if (capture.size()>=4096 || !decoded.structuralValid) { timings.clear(); decoded.vrrMin=decoded.vrrMax=0; }
         QString status=decoded.vrrMax>0 ? tr("Explicit VRR: %1–%2 Hz (%3)").arg(decoded.vrrMin).arg(decoded.vrrMax).arg(decoded.vrrSource)
             : tr("Explicit VRR range unavailable; a general refresh range is not VRR evidence.");
-        status+=QStringLiteral("\n")+tr("The table lists verified base and CTA detailed timings. The plot shows progressive timings and the explicit VRR range.");
+        status+=QStringLiteral("\n")+tr("The table lists verified base, CTA and supported DisplayID detailed timings. The plot shows progressive timings and the explicit VRR range.");
         summary->setText(status); plot->setAccessibleName(status);
         timingTree->clear();
         for (const auto &t: timings) {
@@ -610,9 +610,10 @@ void inspectEdid(QWidget *parent, const diag::Table &bytes, const QString &conne
                 t.interlaced ? tr("Interlaced") : tr("Progressive"),
                 QStringLiteral("%1 × %2").arg(t.hActive).arg(t.frameActiveLines()),
                 QStringLiteral("%1 × %2").arg(t.hActive+t.hBlank).arg(t.frameTotalLines()),
-                QString::number(t.pixelClock10kHz/100.0,'f',2),QString::number(t.refreshHz(),'f',2),
-                t.interlaced ? QString::number(2*t.refreshHz(),'f',2) : QStringLiteral("—")});
+                QString::number(t.pixelClockKHz/1000.0,'f',3),QString::number(t.refreshHz(),'f',2),
+                t.interlaced ? QString::number(2*t.refreshHz(),'f',2) : QStringLiteral("—"), diagnostictools::edidTimingSource(t.source)});
             item->setData(0,Qt::UserRole,int(t.offset));
+            item->setData(0,Qt::UserRole + 1,int(t.length));
         }
         std::erase_if(timings, [](const edidfields::Timing &timing) { return timing.interlaced; });
         plot->setData(std::move(timings),decoded.vrrMin,decoded.vrrMax);
@@ -1056,17 +1057,38 @@ void DiagReportView::previewExport() {
     auto *tables = new QTreeWidgetItem(selection, {tr("Tables")});
     tables->setFlags(tables->flags() | Qt::ItemIsAutoTristate | Qt::ItemIsUserCheckable);
     findings->setCheckState(0, Qt::Checked);
-    for (const auto &t : captured.tables) {
+    for (qsizetype tableIndex = 0; tableIndex < captured.tables.size(); ++tableIndex) {
+        const auto &t = captured.tables.at(tableIndex);
         auto *item=add(tables,t.title);
         item->setFlags(item->flags()|Qt::ItemIsAutoTristate);
         auto *columns=add(item,tr("Columns"));columns->setFlags(columns->flags()|Qt::ItemIsAutoTristate);
         int width=int(t.headers.size());for(const auto &row:t.rows)width=qMax(width,int(row.size()));
         for(int c=0;c<width;++c)add(columns,t.headers.value(c,tr("Column %1").arg(c+1)));
         auto *rows=add(item,tr("Rows"));rows->setFlags(rows->flags()|Qt::ItemIsAutoTristate);
-        for(int r=0;r<t.rows.size();++r)add(rows,tr("Row %1: %2").arg(r+1).arg(t.rows.at(r).join(QStringLiteral(" · ")).left(160)));
+        for (qsizetype r = 0; r < t.rows.size(); ++r) {
+            const auto &values = t.rows.at(r);
+            auto *row = add(rows, tr("Row %1: %2").arg(r + 1).arg(values.join(QStringLiteral(" · ")).left(160)));
+            if (values.isEmpty()) continue;
+            row->setData(0, Qt::UserRole, tableIndex);
+            row->setData(0, Qt::UserRole + 1, r);
+            row->setChildIndicatorPolicy(QTreeWidgetItem::ShowIndicator);
+        }
         if (!t.note.isEmpty()) add(item,tr("Table note"));
         if (t.privateBinary) {item->setCheckState(0,Qt::Unchecked);item->setToolTip(0,tr("Contains binary identifiers; redaction cannot guarantee privacy."));}
     }
+    connect(selection, &QTreeWidget::itemExpanded, &dlg, [=](QTreeWidgetItem *row) {
+        const auto tableIndex = row->data(0, Qt::UserRole);
+        if (!tableIndex.isValid() || row->childCount()) return;
+        const auto &table = captured.tables.at(tableIndex.toLongLong());
+        const auto &values = table.rows.at(row->data(0, Qt::UserRole + 1).toLongLong());
+        const QSignalBlocker blocker(selection);
+        const auto checked = row->checkState(0);
+        for (qsizetype c = 0; c < values.size(); ++c) {
+            auto *cell = add(row, table.headers.value(c, tr("Column %1").arg(c + 1)));
+            cell->setCheckState(0, checked);
+        }
+        row->setFlags(row->flags() | Qt::ItemIsAutoTristate);
+    });
     auto *context = new QTreeWidgetItem(selection,{tr("Report context and limits")});
     context->setFlags(context->flags()|Qt::ItemIsAutoTristate|Qt::ItemIsUserCheckable);
     auto *about = add(context,tr("Report description"));
@@ -1074,6 +1096,7 @@ void DiagReportView::previewExport() {
     auto *limits = add(context,tr("Source limitations")); limits->setFlags(limits->flags()|Qt::ItemIsAutoTristate);
     for(const auto &limit:captured.limits) add(limits,limit);
     context->setCheckState(0,Qt::Checked);
+    layout->addWidget(text(tr("Expand a table row to select its individual cells.")));
     layout->addWidget(selection);
     auto *includeRaw = new QCheckBox(tr("Include technical details")); includeRaw->setChecked(false);
     auto *redact = new QCheckBox(tr("Redact detected private data")); redact->setChecked(true);
@@ -1112,17 +1135,40 @@ void DiagReportView::previewExport() {
             if(!f.action.isEmpty() && item->child(c)->checkState(0)!=Qt::Checked){f.action.clear();++excludedFindingFields;}
             if(titleSelected || !f.detail.isEmpty() || !f.action.isEmpty()) selected.findings<<f;
         }
-        int excludedRows=0,excludedColumns=0,excludedTables=0,excludedNotes=0;
+        int excludedRows=0,excludedColumns=0,excludedTables=0,excludedNotes=0,excludedCells=0;
         for (int i=0;i<tables->childCount();++i) {
             const auto *item=tables->child(i);const auto &source=captured.tables.at(i);
             if(item->checkState(0)==Qt::Unchecked || (source.privateBinary && !binary->isChecked())){++excludedTables;continue;}
             const auto *cols=item->child(0),*rows=item->child(1);
             diag::Table t=source;t.headers.clear();t.rows.clear();t.levels.clear();t.parents.clear();t.rowKeys.clear();
+            t.privateColumns.clear();
             if(item->childCount()>2 && item->child(2)->checkState(0)!=Qt::Checked){t.note.clear();++excludedNotes;}
             QList<int> included;
-            for(int c=0;c<cols->childCount();++c){if(cols->child(c)->checkState(0)==Qt::Checked){included<<c;t.headers<<source.headers.value(c);}else ++excludedColumns;}
+            for (int c = 0; c < cols->childCount(); ++c) {
+                if (cols->child(c)->checkState(0) != Qt::Checked) { ++excludedColumns; continue; }
+                if (source.privateColumns.contains(c)) t.privateColumns << int(t.headers.size());
+                included << c;
+                t.headers << source.headers.value(c);
+            }
             if(included.isEmpty()){++excludedTables;continue;}
-            for(int r=0;r<rows->childCount();++r){if(rows->child(r)->checkState(0)!=Qt::Checked){++excludedRows;continue;}QStringList cells;for(int c:included)cells<<source.rows.at(r).value(c);t.add(cells,source.levels.value(r,Level::Info));}
+            for (int r = 0; r < rows->childCount(); ++r) {
+                const auto *row = rows->child(r);
+                if (row->checkState(0) == Qt::Unchecked) { ++excludedRows; continue; }
+                QStringList cells;
+                bool selectedCell = false;
+                for (int c : included) {
+                    const auto *field = row->child(c);
+                    if (field && field->checkState(0) == Qt::Unchecked) {
+                        cells << QString();
+                        ++excludedCells;
+                    } else {
+                        cells << source.rows.at(r).value(c);
+                        selectedCell |= c < source.rows.at(r).size();
+                    }
+                }
+                if (selectedCell) t.add(cells, source.levels.value(r, Level::Info));
+                else ++excludedRows;
+            }
             selected.tables<<t;
         }
         if (!includeRaw->isChecked()) selected.raw.clear();
@@ -1130,6 +1176,7 @@ void DiagReportView::previewExport() {
         QString result = tr("Verdict refers to the complete original report; selected sections follow.") + QStringLiteral("\n")
             + tr("Excluded: %1 findings, %2 tables, %3 rows, %4 columns.").arg(captured.findings.size()-selected.findings.size()).arg(excludedTables).arg(excludedRows).arg(excludedColumns)+QStringLiteral("\n");
         result+=tr("Excluded: %1 finding details/actions, %2 table notes, %3 source limitations.").arg(excludedFindingFields).arg(excludedNotes).arg(captured.limits.size()-selected.limits.size())+QStringLiteral("\n");
+        if (excludedCells) result += tr("Excluded table cells: %1.").arg(excludedCells) + QLatin1Char('\n');
         if(metadata->isChecked())result+=tr("Captured: %1").arg(captureTime)+QStringLiteral("\n");
         if(bootMetadata->isChecked())result+=tr("Capture boot: %1").arg(captureBoot)+QStringLiteral("\n");
         result+=QStringLiteral("\n")+selected.toTextWithVerdict(captured);
@@ -1176,39 +1223,48 @@ void DiagReportView::archiveWorkspace() {
     if (!hasReport_ || report_.code.isEmpty()) return;
     const auto captured = diag::archiveSnapshot(report_);
     const QString capturedAt = capturedAt_, boot = captureBoot_, locale = i18n::effective();
-    const QString dir = diagsrc::dataDir() + QStringLiteral("/diagnostic-history");
-    const QString path = dir + QLatin1Char('/') + QString::fromLatin1(QCryptographicHash::hash(report_.code.toUtf8(), QCryptographicHash::Sha256).toHex()) + QStringLiteral(".json");
+    const auto dir = diagnostichistory::archiveDirectory();
+    const auto code = captured.value(QStringLiteral("code")).toString();
     if (!QDir().mkpath(dir)) { QMessageBox::warning(this, tr("Diagnostic History"), tr("Could not create history directory.")); return; }
-    auto read = [&]() -> std::optional<QJsonArray> {
-        if (!QFileInfo::exists(path)) return QJsonArray{};
-        const auto o = diagsrc::loadJson(path);
-        if (o.value(QStringLiteral("version")).toInt() != 1 || !o.value(QStringLiteral("entries")).isArray()) return std::nullopt;
-        const auto entries = o.value(QStringLiteral("entries")).toArray();
-        if (entries.size() > 20) return std::nullopt;
-        QSet<QString> ids;
-        for (const auto &v : entries) {
-            const auto e = v.toObject();
-            const QString id = diagnostichistory::full(e.value(QStringLiteral("id")).toString());
-            if (id.isEmpty()) return std::nullopt;
-            if (ids.contains(id)) return std::nullopt;
-            ids.insert(id);
-            const auto snap = e.value(QStringLiteral("snapshot")).toObject();
-            if (snap.value(QStringLiteral("code")) != captured.value(QStringLiteral("code"))
-                || !diagnostichistory::validSnapshot(snap)) return std::nullopt;
-        }
-        return entries;
+    const auto read = [&] { return diagnostichistory::readArchive(dir, code); };
+    const auto write = [&](const QJsonArray &updated, QLockFile &lock) {
+        using diagnostichistory::SaveArchive;
+        const auto result = diagnostichistory::writeArchive(dir, code, updated);
+        lock.unlock();
+        if (result == SaveArchive::Saved) return true;
+        QMessageBox::warning(this, tr("Diagnostic History"), result == SaveArchive::Full
+            ? tr("History is full. Delete an old snapshot first.") : tr("Could not save diagnostic history."));
+        return false;
     };
     auto entries = read();
     if (!entries) { QMessageBox::warning(this, tr("Diagnostic History"), tr("History is damaged or uses an unsupported schema; it has not been overwritten.")); return; }
     QDialog dlg(this); dlg.setWindowTitle(tr("Diagnostic History")); dlg.resize(950, 600);
     auto *layout = new QVBoxLayout(&dlg);
-    layout->addWidget(text(tr("Local, manually saved snapshots. Raw text and executable fixes are omitted; redaction is best effort. Up to 20 entries per report, 1 MiB total per report. Capture boot is not evidence boot.")));
+    layout->addWidget(text(tr("Local, manually saved snapshots. Raw text and executable fixes are omitted; redaction is best effort. Up to 20 entries and 1 MiB per report, with 128 reports and 32 MiB overall. When full, existing snapshots are kept.")));
     auto *list = new QComboBox; layout->addWidget(list);
     auto *output = new QPlainTextEdit; output->setReadOnly(true); layout->addWidget(output, 1);
     auto *buttons = new QDialogButtonBox(QDialogButtonBox::Close);
     auto *save = buttons->addButton(tr("Archive current snapshot"), QDialogButtonBox::ActionRole);
     auto *remove = buttons->addButton(tr("Delete selected snapshot"), QDialogButtonBox::DestructiveRole);
     auto *editNote = buttons->addButton(tr("Edit snapshot note…"), QDialogButtonBox::ActionRole);
+    auto *exportArchive = buttons->addButton(tr("Export report archive…"), QDialogButtonBox::ActionRole);
+    connect(exportArchive, &QPushButton::clicked, &dlg, [&] {
+        const auto latest = read();
+        if (!latest || latest->isEmpty()) {
+            QMessageBox::information(&dlg, tr("Diagnostic History"), tr("No saved snapshots."));
+            return;
+        }
+        const auto destination = QFileDialog::getSaveFileName(&dlg, tr("Export report archive"), {},
+                                                              tr("JSON files (*.json)"));
+        if (destination.isEmpty()) return;
+        const QFileInfo outputFile(destination);
+        if (outputFile.isSymLink() || QDir(outputFile.absolutePath()).canonicalPath() == QDir(dir).canonicalPath()) {
+            QMessageBox::warning(&dlg, tr("Diagnostic History"), tr("Choose a location outside the diagnostic archive."));
+            return;
+        }
+        const auto error = diagsrc::saveJson(destination, diagnostichistory::archiveObject(*latest));
+        if (!error.isEmpty()) QMessageBox::warning(&dlg, tr("Diagnostic History"), error);
+    });
     layout->addWidget(buttons);
     connect(buttons, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
     auto render = [&] {
@@ -1238,7 +1294,7 @@ void DiagReportView::archiveWorkspace() {
         const QString selected = list->currentData().toString();
         const int selectedIndex = list->currentIndex();
         if (!adding && (selected.isEmpty() || QMessageBox::question(&dlg, tr("Diagnostic History"), tr("Delete only this archived snapshot?")) != QMessageBox::Yes)) return;
-        QLockFile lock(path + QStringLiteral(".lock"));
+        QLockFile lock(diagnostichistory::archiveLockPath(dir));
         if (!lock.tryLock(0)) { QMessageBox::warning(&dlg, tr("Diagnostic History"), tr("History is currently in use.")); return; }
         auto latest = read();
         if (!latest) { lock.unlock(); QMessageBox::warning(&dlg, tr("Diagnostic History"), tr("History changed or is damaged.")); return; }
@@ -1250,7 +1306,7 @@ void DiagReportView::archiveWorkspace() {
                     QMessageBox::information(&dlg,tr("Diagnostic History"),tr("This capture is already archived."));return;
                 }
             }
-            if (latest->size() >= 20) {
+            if (latest->size() >= diagnostichistory::ArchiveEntriesPerReport) {
                 lock.unlock(); entries = latest; refill(selectedIndex, selected);
                 QMessageBox::information(&dlg, tr("Diagnostic History"), tr("History is full. Delete an old snapshot first.")); return;
             }
@@ -1267,9 +1323,7 @@ void DiagReportView::archiveWorkspace() {
                 return;
             }
         }
-        const QString error = diagsrc::saveJson(path, QJsonObject{{"version", 1}, {"entries", *latest}});
-        lock.unlock();
-        if (!error.isEmpty()) { QMessageBox::warning(&dlg, tr("Diagnostic History"), error); return; }
+        if (!write(*latest, lock)) return;
         entries = latest; refill(adding ? int(entries->size()) - 1 : selectedIndex);
     };
     connect(save, &QPushButton::clicked, &dlg, [&] { change(true); });
@@ -1280,7 +1334,7 @@ void DiagReportView::archiveWorkspace() {
         bool ok=false;const auto note=QInputDialog::getMultiLineText(&dlg,tr("Diagnostic History"),tr("Local snapshot note (redaction is best effort)"),old,&ok);
         if(!ok) return;
         if(note.size()>4096) {QMessageBox::warning(&dlg,tr("Diagnostic History"),tr("Note exceeds 4096 characters."));return;}
-        QLockFile lock(path+QStringLiteral(".lock"));
+        QLockFile lock(diagnostichistory::archiveLockPath(dir));
         if(!lock.tryLock(0)) {QMessageBox::warning(&dlg,tr("Diagnostic History"),tr("History is currently in use."));return;}
         auto latest=read();if(!latest) {lock.unlock();QMessageBox::warning(&dlg,tr("Diagnostic History"),tr("History changed or is damaged."));return;}
         for(qsizetype i=0;i<latest->size();++i) {
@@ -1290,9 +1344,7 @@ void DiagReportView::archiveWorkspace() {
                 QMessageBox::warning(&dlg,tr("Diagnostic History"),tr("This note changed while you were editing it."));return;
             }
             e.insert("note",diag::redactPrivateText(note));latest->replace(i,e);
-            const auto error=diagsrc::saveJson(path,QJsonObject{{"version",1},{"entries",*latest}});
-            lock.unlock();
-            if(!error.isEmpty()) {QMessageBox::warning(&dlg,tr("Diagnostic History"),error);return;}
+            if (!write(*latest, lock)) return;
             entries=latest;refill(int(i));return;
         }
         lock.unlock(); entries=latest; refill(list->currentIndex());

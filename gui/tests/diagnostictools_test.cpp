@@ -137,6 +137,7 @@ int main(int argc, char **argv) {
     CHECK(diagnostictools::decodeEdid(e.left(128)).truncated);
     put(QStringLiteral("/sys/class/drm/card1-eDP-1/status"), "connected\n");
     put(QStringLiteral("/sys/class/drm/card1-eDP-1/edid"), e);
+    put(QStringLiteral("/sys/class/drm/card1-eDP-1/modes"), "1920x1080\n1920x1080\n1280x720\n");
     const diag::Report disp = diagnostictools::displays(root);
     CHECK(has(disp, Level::Info, QStringLiteral("48–240")));
     CHECK(disp.tables.size() >= 2 && disp.tables.at(1).rows.at(0).value(4).contains(QStringLiteral("800 nits")));
@@ -147,13 +148,20 @@ int main(int argc, char **argv) {
         CHECK(disp.tables.at(2).rows.at(1).value(4) == QStringLiteral("0"));
         CHECK(disp.tables.at(2).rows.at(1).value(2) == QStringLiteral("CTA-861"));
         CHECK(disp.tables.at(3).rows.at(0).value(1).contains(QStringLiteral("1920×1080")));
+        CHECK(disp.tables.at(3).rows.at(0).value(2) == QStringLiteral("EDID base block"));
+        CHECK(disp.tables.at(3).rows.at(0).value(3) == QStringLiteral("Listed"));
     }
-    bool foundBinary=false, foundTimings=false;
+    bool foundBinary=false, foundTimings=false, foundKernelModes=false;
     for (const auto &table : disp.tables) {
         if (table.title == QStringLiteral("EDID Binary Inspector")) { CHECK(table.rows.size()==16); CHECK(table.rows.first().value(2)==QStringLiteral("0x0000")); foundBinary=true; }
         if (table.title == QStringLiteral("Progressive Timing Details")) { CHECK(!table.rows.isEmpty()); foundTimings=true; }
+        if (table.title == QStringLiteral("Modes Listed by Linux DRM")) {
+            CHECK(table.rows.size() == 2 && table.rows.first().value(1) == QStringLiteral("1920x1080"));
+            CHECK(table.rows.first().value(2) == QStringLiteral("sysfs DRM modes"));
+            foundKernelModes = true;
+        }
     }
-    CHECK(foundBinary && foundTimings);
+    CHECK(foundBinary && foundTimings && foundKernelModes);
     QByteArray shortCta=e; shortCta[130]=7; checksum(shortCta,1);
     CHECK(diagnostictools::decodeEdid(shortCta).vrrMin<=0);
     const auto redacted=diag::redactPrivateText(QStringLiteral("192.168.1.42 aa:bb:cc:dd:ee:ff 0000:01:00.0 Xid 154\nSerial: secret-123\n/home/private/file"));
@@ -176,6 +184,20 @@ int main(int argc, char **argv) {
     CHECK(!selected.toTextWithVerdict(original).contains(QStringLiteral("secret-456")));
     CHECK(selected.toTextWithVerdict(original).contains(original.headline()));
     CHECK(!selected.toTextWithVerdict(original).contains(QStringLiteral("excluded evidence")));
+    diag::Report sourceScoped;
+    diag::Table sourceFields;
+    sourceFields.headers = {QStringLiteral("Localized identity"), QStringLiteral("Kernel message")};
+    sourceFields.privateColumns = {0};
+    sourceFields.add({QStringLiteral("a1b2c3d4"), QStringLiteral("Xid 154")});
+    sourceScoped.tables << sourceFields;
+    sourceScoped.privatePaths << QStringLiteral("/mnt/private-volume");
+    sourceScoped.raw = QStringLiteral("path=/mnt/private-volume");
+    sourceScoped.add(Level::Info, QStringLiteral("Mounted at /mnt/private-volume"));
+    const auto archive = QJsonDocument(diag::archiveSnapshot(sourceScoped)).toJson(QJsonDocument::Compact);
+    CHECK(!archive.contains("private-volume") && !archive.contains("a1b2c3d4"));
+    diag::redactPrivateFields(sourceScoped);
+    CHECK(!sourceScoped.raw.contains(QStringLiteral("private-volume")));
+    CHECK(sourceScoped.tables.first().rows.first() == QStringList({QStringLiteral("[redacted]"), QStringLiteral("Xid 154")}));
     put(QStringLiteral("/sys/class/drm/card1-eDP-1/edid"), broken);
     const diag::Report badDisp = diagnostictools::displays(root);
     CHECK(badDisp.tables.size() >= 3 && badDisp.tables.at(2).levels.value(1) == Level::Review);

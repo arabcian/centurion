@@ -36,6 +36,30 @@ int main(){
  timing[255]^=1;assert(progressiveTimings(timing).empty());timing[255]^=1;
  assert(progressiveTimings(std::span(timing).first(255)).empty());
  timing[130]=3;fix(timing,1);assert(progressiveTimings(timing).empty());
+ // Identical DisplayID dimensions with the two timing clock units.
+ for (const auto typeVII : {false, true}) {
+   std::vector<uint8_t> did(256);
+   for (int i=1; i<7; ++i) did[i]=255;
+   did[126]=1; fix(did,0);
+   const size_t pos=136, sectionChecksum=156;
+   did[128]=0x70; did[129]=typeVII?0x20:0x13; did[130]=23;
+   did[133]=typeVII?0x22:0x03; did[135]=20;
+   const unsigned pclk=typeVII?148501:14850, encoded=pclk-1;
+   did[pos]=uint8_t(encoded); did[pos+1]=uint8_t(encoded>>8); did[pos+2]=uint8_t(encoded>>16);
+   auto word=[&](size_t off,unsigned n){did[pos+off]=uint8_t(n); did[pos+off+1]=uint8_t(n>>8);};
+   word(4,1919); word(6,279); word(8,87); word(10,43);
+   word(12,1079); word(14,44); word(16,3); word(18,4);
+   auto seal=[&]{unsigned sum=0; for(size_t i=129;i<sectionChecksum;++i)sum+=did[i]; did[sectionChecksum]=uint8_t(-sum); fix(did,1);};
+   seal();
+   auto decoded=detailedTimings(did);
+   assert(decoded.size()==1 && decoded[0].offset==pos && decoded[0].length==20);
+   assert(decoded[0].source==(typeVII?TimingSource::DisplayIdTypeVII:TimingSource::DisplayIdTypeI));
+   assert(decoded[0].pixelClockKHz==(typeVII?pclk:10*pclk));
+   assert(decoded[0].hActive==1920 && decoded[0].vActive==1080 && std::abs(decoded[0].refreshHz()-60)<0.01);
+   did[sectionChecksum]^=1; fix(did,1); assert(detailedTimings(did).empty());
+   word(8,290); seal(); assert(detailedTimings(did).empty());
+   word(8,87); did[135]=19; seal(); assert(detailedTimings(did).empty());
+ }
  std::mt19937 rng(123);for(int i=0;i<30000;i++){std::vector<uint8_t> b(rng()%4200);for(auto& x:b)x=uint8_t(rng());auto v=inspect(b);bounds(v,b.size()); if(b.size()<128)assert(!trusted(v));}
  std::puts("PASS: 8192 CTA boundary combinations + 30000 random captures + progressive timing/invalid/interlaced fixtures");
 }'''

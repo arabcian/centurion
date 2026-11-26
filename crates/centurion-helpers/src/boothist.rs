@@ -30,8 +30,9 @@ pub fn load() -> Value {
 /// The flight recorder's samples (flight::parse) go to the boot they were recorded in, as "flight".
 pub fn attach_flight(out: &mut Value, flight: &Value) {
     let Some(id) = flight["boot"].as_str() else { return };
+    if out["current"].as_str().is_some_and(|current| id.eq_ignore_ascii_case(current)) { return; }
     for b in out["boots"].as_array_mut().into_iter().flatten() {
-        if b["boot"].as_str() == Some(id) {
+        if b["boot"].as_str().is_some_and(|boot| id.eq_ignore_ascii_case(boot)) {
             b["flight"] = flight["samples"].clone();
             // The flight recorder interval may be configured as 5/10/30/60s.
             // Preserve it to avoid false missing-sample warnings for slower cadences.

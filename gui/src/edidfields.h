@@ -73,6 +73,7 @@ inline Inspection inspect(std::span<const std::uint8_t> data) {
                 field(base+end, 1, Kind::DisplayIdChecksum);
                 const bool zeroPadding = std::all_of(data.begin()+base+end+1, data.begin()+base+127,
                     [](auto byte) { return byte == 0; });
+                structure &= zeroPadding;
                 field(base+end+1, 126-end, zeroPadding ? Kind::Padding : Kind::Unknown);
             }
         } else if (b) { field(base,1,Kind::ExtensionHeader,data[base]); field(base+1,126,Kind::Unknown); }
@@ -88,23 +89,57 @@ inline bool trusted(const Inspection &i) {
 }
 // Only complete, structurally trusted captures are eligible for decoded timings.
 // Unknown extension formats remain opaque.
+enum class TimingSource { Base, Cta, DisplayIdTypeI, DisplayIdTypeVII };
 struct Timing {
     std::size_t offset;
-    unsigned hActive, hBlank, vActive, vBlank, pixelClock10kHz;
+    unsigned hActive, hBlank, vActive, vBlank, pixelClockKHz;
     bool interlaced = false;
-    unsigned frameActiveLines() const { return interlaced ? 2 * vActive : vActive; }
+    TimingSource source = TimingSource::Base;
+    std::size_t length = 18;
+    bool preferred = false;
+    bool fieldEncoded() const { return interlaced && (source == TimingSource::Base || source == TimingSource::Cta); }
+    unsigned frameActiveLines() const { return fieldEncoded() ? 2 * vActive : vActive; }
     unsigned frameTotalLines() const {
         // The interlaced descriptor counts lines in one field. The full frame
         // includes the additional line from the two half-line offsets.
-        return interlaced ? 2 * (vActive + vBlank) + 1 : vActive + vBlank;
+        return fieldEncoded() ? 2 * (vActive + vBlank) + 1 : vActive + vBlank;
     }
-    double refreshHz() const { return double(pixelClock10kHz) * 10000.0 / ((hActive+hBlank)*frameTotalLines()); }
+    double refreshHz() const { return double(pixelClockKHz) * 1000.0 / (double(hActive+hBlank)*frameTotalLines()); }
 };
+inline void appendDisplayIdTimings(std::vector<Timing> &out, std::span<const std::uint8_t> data, const Field &f) {
+    const auto version = data[(f.offset / 128) * 128 + 1] >> 4;
+    const bool typeI = f.tag == 0x03 && version == 1;
+    const bool typeVII = f.tag == 0x22 && version == 2;
+    if (!typeI && !typeVII) return;
+    const std::size_t length = 20 + (typeVII ? (data[f.offset + 1] >> 4) & 7 : 0);
+    if ((f.length - 3) % length != 0) return;
+    const auto originalSize = out.size();
+    for (std::size_t pos = f.offset + 3; pos < f.offset + f.length; pos += length) {
+        const auto d = data.subspan(pos, length);
+        const auto word = [&d](std::size_t i) { return unsigned(d[i]) | (unsigned(d[i + 1]) << 8); };
+        const auto clock = (1 + (word(0) | (unsigned(d[2]) << 16))) * (typeI ? 10u : 1u);
+        const auto hBlank = 1 + word(6), vBlank = 1 + word(14);
+        const auto hSyncEnd = 2 + (word(8) & 0x7fff) + word(10);
+        const auto vSyncEnd = 2 + (word(16) & 0x7fff) + word(18);
+        if (hSyncEnd > hBlank || vSyncEnd > vBlank) {
+            out.resize(originalSize);
+            return;
+        }
+        out.push_back({pos, 1 + word(4), hBlank, 1 + word(12), vBlank, clock, bool(d[3] & 0x10),
+            typeI ? TimingSource::DisplayIdTypeI : TimingSource::DisplayIdTypeVII, length,
+            (data[f.offset + 1] & 7) < 2 && bool(d[3] & 0x80)});
+    }
+}
+
 inline std::vector<Timing> detailedTimings(std::span<const std::uint8_t> data) {
     const auto inspection = inspect(data);
     std::vector<Timing> out;
     if (!trusted(inspection)) return out;
     for (const auto &f : inspection.fields) {
+        if (f.kind == Kind::DisplayIdData) {
+            appendDisplayIdTimings(out, data, f);
+            continue;
+        }
         if (f.kind != Kind::DetailedTiming || f.length != 18) continue;
         const auto d = data.subspan(f.offset, f.length);
         const unsigned clock = unsigned(d[0]) | (unsigned(d[1]) << 8);
@@ -113,7 +148,8 @@ inline std::vector<Timing> detailedTimings(std::span<const std::uint8_t> data) {
         const unsigned va = unsigned(d[5]) | ((unsigned(d[7]) & 0xf0) << 4);
         const unsigned vb = unsigned(d[6]) | ((unsigned(d[7]) & 0x0f) << 8);
         if (!clock || !ha || !hb || !va || !vb) continue;
-        out.push_back({f.offset, ha, hb, va, vb, clock, bool(d[17] & 0x80)});
+        out.push_back({f.offset, ha, hb, va, vb, clock * 10, bool(d[17] & 0x80),
+            f.offset < 128 ? TimingSource::Base : TimingSource::Cta, 18, f.offset == 54});
     }
     return out;
 }

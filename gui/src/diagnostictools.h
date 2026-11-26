@@ -9,7 +9,7 @@
 #include <QString>
 #include <QStringList>
 
-namespace edidfields { enum class Kind; }
+namespace edidfields { enum class Kind; enum class TimingSource; }
 
 namespace diagnostictools {
 
@@ -32,6 +32,7 @@ struct Edid {
     QStringList badBlocks;            // "1 (CTA-861)" for every block whose checksum fails
     QString maker, name;              // three-letter PNP id, monitor name / panel text
     int year = 0;
+    QString preferredMode;
     QStringList timings;              // "2560×1600 @ 240.00 Hz"
     int rangeMin = 0, rangeMax = 0;   // range-limits descriptor (vertical, Hz)
     int vrrMin = 0, vrrMax = 0;       // FreeSync or HDMI VRR block
@@ -44,6 +45,7 @@ struct Edid {
     double maxNits = 0, minNits = 0;  // HDR static metadata: peak and black level, cd/m²
 };
 Edid decodeEdid(const QByteArray &data);
+QString edidTimingSource(edidfields::TimingSource source);
 QString edidFieldName(edidfields::Kind kind);
 diag::Report displays(const QString &root = {});
 

@@ -34,6 +34,7 @@ struct Table {
     // Optional tree presentation: one parent row index per row, strictly earlier or -1.
     QList<int> parents;
     QStringList rowKeys; // optional transient identities; empty entries must never restore selection
+    QList<int> privateColumns;  // marked by the source, independent of translated headers
     bool privateBinary = false;
     QString viewKind; // transient stable presentation ID, not exported as evidence
     void add(const QStringList &row, Level l = Level::Info) { rows << row; levels << l; }
@@ -45,6 +46,7 @@ struct Report {
     QList<Table> tables;
     QStringList limits;   // what these sources cannot tell
     QString raw;          // the readings the findings came from (technical details)
+    QStringList privatePaths;  // source paths that can also appear in findings or raw text
 
     Finding &add(Level l, const QString &title, const QString &detail = {}, const QString &action = {});
     int count(Level l) const;

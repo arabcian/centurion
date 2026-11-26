@@ -1,5 +1,5 @@
 #pragma once
-// Existing diagnostic-history v1 archive reader. Bounded and read-only.
+// Diagnostic history v1 schema and bounded reader.
 #include "diagnostichistory.h"
 #include "diagreport.h"
 #include "diagsources.h"
@@ -67,8 +67,18 @@ inline QList<RecordedEvent> recordedEvents(const diagsrc::LogTail &health, const
     return out;
 }
 
-struct Entry { QString id,code,title,boot,reportedBoot,time,locale,note; QJsonObject snapshot; QDateTime capturedAt; };
-struct Archive { QList<Entry> entries; int rejected=0; bool limited=false; };
+inline constexpr int ArchiveEntriesPerReport = 20;
+inline constexpr int ArchiveFiles = 128;
+inline constexpr qint64 ArchiveFileBytes = 1 << 20;
+inline constexpr qint64 ArchiveBytes = 32LL << 20;
+
+struct Entry {
+    QString id,code,title,boot,reportedBoot,time,locale,note;
+    QJsonObject snapshot;
+    QDateTime capturedAt;
+    bool imported = false;
+};
+struct Archive { QList<Entry> entries; QSet<QString> ambiguousIds; int rejected=0; bool limited=false; };
 inline bool validSnapshot(const QJsonObject &snap) {
     if(snap.value("version").toInt()!=1 || !snap.value("code").isString() || !snap.value("title").isString() || !snap.value("records").isArray()) return false;
     const auto level=[](const QJsonValue &v) {return v.isDouble()&&v.toDouble()>=0&&v.toDouble()<=4&&v.toDouble()==v.toInt(-1);};
@@ -87,36 +97,47 @@ inline bool validSnapshot(const QJsonObject &snap) {
     return true;
 }
 inline QString full(const QString &s) { return QString::fromStdString(fullBoot(s.toStdString())); }
+inline QString archiveFileName(const QString &code) {
+    return QString::fromLatin1(QCryptographicHash::hash(code.toUtf8(), QCryptographicHash::Sha256).toHex()) + QStringLiteral(".json");
+}
+inline bool validEntry(const QJsonObject &entry) {
+    const auto snapshot = entry.value("snapshot").toObject();
+    const auto code = snapshot.value("code").toString();
+    return !full(entry.value("id").toString()).isEmpty()
+        && !code.trimmed().isEmpty() && code.size() <= 128 && validSnapshot(snapshot);
+}
+inline bool validArchive(const QJsonObject &archive) {
+    return archive.value("version").toInt() == 1 && archive.value("entries").isArray()
+        && archive.value("entries").toArray().size() <= ArchiveEntriesPerReport;
+}
 inline Archive load(const QString &dir) {
     Archive out;
     const auto files=QDir(dir).entryInfoList({QStringLiteral("*.json")},QDir::Files|QDir::NoSymLinks,QDir::Name);
-    QSet<QString> ids,duplicates;
+    QSet<QString> ids;
     qsizetype bytes=0; int fileCount=0;
     for(const auto &fi:files) {
-        if(++fileCount>128 || bytes>=32*1024*1024) {out.limited=true;break;}
-        constexpr qint64 entryLimit = 1024 * 1024;
-        if (fi.size() > entryLimit) { ++out.rejected; continue; }
-        if (fi.size() > 32*1024*1024-bytes) { out.limited=true; continue; }
-        const auto data=diagsrc::readRecord(fi.absoluteFilePath(),qMin<qint64>(entryLimit,32*1024*1024-bytes));
+        if(++fileCount > ArchiveFiles || bytes >= ArchiveBytes) {out.limited=true;break;}
+        if (fi.size() > ArchiveFileBytes) { ++out.rejected; continue; }
+        if (fi.size() > ArchiveBytes - bytes) { out.limited=true; continue; }
+        const auto data=diagsrc::readRecord(fi.absoluteFilePath(),qMin<qint64>(ArchiveFileBytes,ArchiveBytes - bytes));
         if(!data) {++out.rejected;continue;}
         bytes+=data->size();
         const auto o=QJsonDocument::fromJson(*data).object(); const auto entries=o.value("entries").toArray();
-        if(o.value("version").toInt()!=1 || !o.value("entries").isArray() || entries.size()>20) {++out.rejected;continue;}
+        if (!validArchive(o)) {++out.rejected;continue;}
         for(const auto &v:entries) {
             const auto e=v.toObject(), snap=e.value("snapshot").toObject();
             const auto id=full(e.value("id").toString()), code=snap.value("code").toString();
-            const auto expected=QString::fromLatin1(QCryptographicHash::hash(code.toUtf8(),QCryptographicHash::Sha256).toHex())+QStringLiteral(".json");
-            if(id.isEmpty() || code.isEmpty() || code.size()>128 || expected!=fi.fileName() || !validSnapshot(snap)) {++out.rejected;continue;}
-            if(ids.contains(id)) {duplicates.insert(id);++out.rejected;continue;}
+            if (!validEntry(e) || archiveFileName(code) != fi.fileName()) {++out.rejected;continue;}
+            if(ids.contains(id)) {out.ambiguousIds.insert(id);++out.rejected;continue;}
             ids.insert(id);
             const auto boot=e.value("boot").toString();
             const auto time=e.value("time").toString().left(80);
             auto capturedAt=QDateTime::fromString(time,Qt::ISODate);
             if (capturedAt.timeSpec()==Qt::LocalTime) capturedAt=QDateTime();
-            out.entries.append({id,code,diag::redactPrivateText(snap.value("title").toString()),full(boot),diag::redactPrivateText(boot).left(80),time,e.value("locale").toString().left(32),diag::redactPrivateText(e.value("note").toString()).left(4096),snap,capturedAt});
+            out.entries.append({id,code,diag::redactPrivateText(snap.value("title").toString()),full(boot),diag::redactPrivateText(boot).left(80),time,e.value("locale").toString().left(32),diag::redactPrivateText(e.value("note").toString()).left(4096),snap,capturedAt,e.value("imported").toBool()});
         }
     }
-    for(qsizetype i=out.entries.size();i>0;--i) if(duplicates.contains(out.entries.at(i-1).id)) {out.entries.removeAt(i-1);++out.rejected;}
+    for(qsizetype i=out.entries.size();i>0;--i) if(out.ambiguousIds.contains(out.entries.at(i-1).id)) {out.entries.removeAt(i-1);++out.rejected;}
     // Presentation order only. Wall timestamps are not monotonic causal evidence.
     std::sort(out.entries.begin(),out.entries.end(),[](const Entry &a,const Entry &b) {
         if (a.capturedAt.isValid()!=b.capturedAt.isValid()) return a.capturedAt.isValid();
