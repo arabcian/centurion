@@ -1,11 +1,9 @@
 //! Keyboard lighting (Spectrum per-key RGB, and the 4-zone RGB keyboard) — shared by
 //! lighting-helper and centurion-gamemode.
 //!
-//! Unlike the other helpers this one normally runs *as the user*: the udev
-//! rule (70-centurion-lighting.rules) tags the controller's hidraw
-//! node `uaccess`. Callers try it directly first and fall back to pkexec only
-//! when the reply carries `"denied": true` (rule missing, or the node was
-//! created before it was installed).
+//! Unlike the other helpers this one is first tried *as the user*; there is no udev
+//! `uaccess` rule any more, so the hidraw node is normally root-only. Callers fall
+//! back to pkexec when the reply carries `"denied": true`.
 //!
 //! Request (one JSON object):
 //!   {"op": "probe"}                         -> {"ok", "present"}
@@ -44,7 +42,7 @@ fn err(e: sp::Error) -> Value {
     let mut v = json!({"ok": false, "error": e.to_string()});
     if denied {
         v["denied"] = json!(true);
-        v["error"] = json!("no access to the keyboard's hidraw node (udev rule not applied yet — re-login or re-plug)");
+        v["error"] = json!("no access to the keyboard's hidraw node (run it through pkexec)");
     }
     if matches!(e, sp::Error::NotFound) {
         v["present"] = json!(false);

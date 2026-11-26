@@ -907,8 +907,8 @@ fn apply_scene(name: &str, parts: SceneParts, entering_game: bool, restore_gener
     }
 
     if superseded() { return false; }
-    // 6. keyboard lighting — in-process as the user (udev uaccess on the
-    //    hidraw node); lighting-helper through pkexec only if that is denied.
+    // 6. keyboard lighting — in-process as the user if the hidraw
+    //    node is readable; lighting-helper through pkexec if that is denied.
     // A machine without the keyboard skips the step (as the GUI does); it is not a failed scene.
     let light = lighting::scene_request(&s["lighting"]);
     if light.is_some() && !centurion_spectrum::present() {

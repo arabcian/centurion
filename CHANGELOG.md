@@ -21,6 +21,16 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions follo
   shortcut, D-Bus, drift watch) and anything while the window is closed reuse approved values only: an edited scene
   is refused until it is applied once from the unlocked window. After this update, apply each automatic scene once
   by hand.
+- Scene `command` line: it now needs the same approval as the values root writes (new gated `tune-helper` op
+  `scene_command`). Applying a scene from the unlocked window approves its command; automatic applies run it only if
+  that exact line was approved before. Apply each scene that has a command once by hand.
+- Keyboard lighting: the udev `uaccess` rule on the ITE controller's hidraw node is gone (a session process could
+  send it any HID report); lighting goes through `lighting-helper` and pkexec (silent for a wheel/sudo admin at the
+  machine). The installer removes the old rule.
+- `health-reader` (kernel-log scan, ksnap, boot history…): the polkit default for `com.centurion.health.read` is now
+  `auth_admin_keep` instead of `yes`; only a wheel/sudo admin at the machine gets it silently.
+- Scene files are opened with the owning user's file-system identity (`setfsuid`), so a symlinked `~/.config` or
+  `scenes` directory cannot make root read a file the user cannot.
 - New `tune-admin-helper` (polkit `com.centurion.tune.admin`, the administrator password every time): boot preset,
   preset store, boot calibration, wake sources, wireless power lock and the PIN. tune-helper refuses these through
   pkexec.

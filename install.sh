@@ -26,7 +26,6 @@
 #   /usr/bin/centurion-gamemode                           Lutris/Steam game-mode hook (runs as the user)
 #   /usr/bin/centurion-netguard                           network guard daemon (IP blacklist, Wine/.exe guard, connection log)
 #   /usr/libexec/centurion/*-helper      pkexec targets (root:root)
-#   $PREFIX/lib/udev/rules.d/70-centurion-lighting.rules   keyboard lighting (uaccess)
 #   $PREFIX/lib/udev/rules.d/90-centurion-dgpu.rules       "Keep the dGPU awake" re-apply
 #   /usr/share/polkit-1/actions/com.centurion.policy
 #   /etc/polkit-1/rules.d/49-centurion.rules
