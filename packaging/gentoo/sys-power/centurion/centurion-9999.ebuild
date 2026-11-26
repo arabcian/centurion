@@ -182,7 +182,6 @@ src_install() {
 	exeinto "${_#"${EPREFIX}"}"
 	doexe packaging/sleep/centurion-sleep-log
 
-	udev_dorules packaging/udev/70-centurion-lighting.rules
 	_centurion_subst packaging/udev/90-centurion-dgpu.rules "${T}"/90-centurion-dgpu.rules
 	udev_dorules "${T}"/90-centurion-dgpu.rules
 
@@ -225,8 +224,8 @@ pkg_postinst() {
 	elog "  systemd: systemctl enable <name>.service"
 	elog "centurion-calibrate-boot is one-shot: scheduling it from Autotune adds it to the"
 	elog "  next boot and it removes itself afterwards (no rc-update needed)."
-	elog "Keyboard lighting: re-login or re-plug once so the uaccess udev rule applies to"
-	elog "  the keyboard's hidraw node; until then the Lighting tab goes through pkexec."
+	elog "Keyboard lighting goes through pkexec (no udev uaccess rule); a wheel/sudo admin at"
+	elog "  the machine is not asked for a password."
 	elog "Lutris hooks: /usr/bin/centurion-gamemode PRE / POST / RUN (Game launch sub-tab)."
 
 	optfeature "GPU power limits, Custom fan curve, GPU mode and EC sensors" sys-power/acpi_call

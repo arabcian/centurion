@@ -785,8 +785,7 @@ void LightingTab::reload(bool elevate) {
             showBanner({}, false);
             applyState(r.json);
         } else if (r.reached && r.json.value("denied").toBool()) {
-            showBanner("No access to the keyboard controller yet: the udev rule applies after the next login "
-                       "(or replug). Until then lighting goes through administrator rights.", true);
+            showBanner("No direct access to the keyboard controller: lighting goes through administrator rights.", true);
         } else if (r.reached && r.json.contains("present") && !r.json.value("present").toBool()) {
             showBanner("The Spectrum keyboard controller is not responding.", false);
         } else {

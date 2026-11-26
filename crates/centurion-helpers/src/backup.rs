@@ -61,7 +61,7 @@ use std::time::{Duration, Instant, SystemTime};
 pub const HOME_EXCLUDE: &str = "/home/*";
 /// Mount points created in the restore target when the archive lacks them
 /// (archives made with plain `--exclude=/proc`): (path, mode).
-const MOUNT_POINTS: &[(&str, u32)] = &[("proc", 0o755), ("sys", 0o755), ("dev", 0o755), ("run", 0o755),
+pub(crate) const MOUNT_POINTS: &[(&str, u32)] = &[("proc", 0o755), ("sys", 0o755), ("dev", 0o755), ("run", 0o755),
     ("tmp", 0o1777), ("var/tmp", 0o1777), ("mnt", 0o755), ("media", 0o755), ("home", 0o755)];
 
 pub const CONFIG_FORMAT: &str = "centurion-config-backup";
@@ -73,8 +73,8 @@ const SYS_CENTURION_LOGS: &[&str] = &["var/log/centurion"];
 /// /var/lib/centurion files worth restoring; the rest (boot guard
 /// state, boot-default snapshot, pending GPU mode) belongs to the boot it was made in.
 /// /etc/centurion files a restore may write (everything the helpers keep there); anything else in an archive is skipped.
-const ETC_RESTORE: &[&str] = &["tune-boot.json", "intel-uv-boot.json", "netguard.json", "wakeup.json", "dgpu-awake", "wireless-pm-lock"];
-const VARLIB_RESTORE: &[&str] = &["signature.json", "calibration.json", "outcomes.json", "io-probe.json", "wmae-verified.json"];
+pub(crate) const ETC_RESTORE: &[&str] = &["tune-boot.json", "intel-uv-boot.json", "netguard.json", "wakeup.json", "dgpu-awake", "wireless-pm-lock"];
+pub(crate) const VARLIB_RESTORE: &[&str] = &["signature.json", "calibration.json", "outcomes.json", "io-probe.json", "wmae-verified.json"];
 // "System profile": how this installation is put together, reference only — `distro::PROFILE_COMMON` plus
 // `distro::profile_paths(family)`. Left out: `distro::PROFILE_SKIP` (Portage's / pacman's GnuPG homes, which
 // hold private keys and agent sockets, and repository credentials).
@@ -282,12 +282,15 @@ impl Comp {
         use std::os::unix::fs::FileExt;
         let mut m = [0u8; 22];
         let n = f.read_at(&mut m, 0).unwrap_or(0);
-        match &m[..n] {
+        Comp::from_bytes(&m[..n])
+    }
+    fn from_bytes(m: &[u8]) -> Comp {
+        match m {
             [0x1f, 0x8b, ..] => Comp::Gzip,
             [0x28, 0xb5, 0x2f, 0xfd, ..] => Comp::Zstd,
             [0xfd, b'7', b'z', b'X', b'Z', 0, ..] => Comp::Xz,
             [b'B', b'Z', b'h', ..] => Comp::Bzip2,
-            _ if m[..n].starts_with(AGE_HEADER) => Comp::Age,
+            _ if m.starts_with(AGE_HEADER) => Comp::Age,
             _ => Comp::None,
         }
     }
@@ -477,20 +480,25 @@ fn command_tty(path: &Path, low_priority: bool, tty: RawFd) -> Command {
     c
 }
 
-/// Whether `key` opens an encrypted image: age decrypts (and authenticates) the first chunk, nothing more.
-fn key_opens(archive: &Path, key: &Key) -> bool {
-    let (Some(age), Ok(f)) = (tool("age"), File::open(archive)) else { return false };
-    let Ok((mut c, aux)) = age_command(&age, true, true, None, Some(key)) else { return false };
+/// The first `n` bytes of an encrypted image after decryption (age decrypts and authenticates the first chunk,
+/// nothing more); empty when `key` does not open it.
+fn age_head(archive: &Path, key: &Key, n: usize) -> Vec<u8> {
+    let (Some(age), Ok(f)) = (tool("age"), File::open(archive)) else { return Vec::new() };
+    let Ok((mut c, aux)) = age_command(&age, true, true, None, Some(key)) else { return Vec::new() };
     c.stdin(Stdio::from(f)).stdout(Stdio::piped()).stderr(Stdio::null());
-    let Ok(mut ch) = c.spawn() else { return false };
+    let Ok(mut ch) = c.spawn() else { return Vec::new() };
     let mut aux = aux;
     aux.key_pipe = None;
-    let mut one = [0u8; 1];
-    let got = ch.stdout.take().is_some_and(|mut o| matches!(o.read(&mut one), Ok(1)));
+    let mut buf = vec![0u8; n];
+    let got = ch.stdout.take().map_or(0, |mut o| o.read_exact(&mut buf).map_or(0, |_| n));
     let _ = ch.kill();
     let _ = ch.wait();
-    got
+    buf.truncate(got);
+    buf
 }
+
+/// Whether `key` opens an encrypted image.
+fn key_opens(archive: &Path, key: &Key) -> bool { age_head(archive, key, 1).len() == 1 }
 
 // ── system image: create ────────────────────────────────────────────────────
 
@@ -750,6 +758,16 @@ fn system_backup_inner(req: &Value) -> Result<Value, String> {
         "parent": tip.as_ref().map(|t| t.image.file_name().unwrap_or_default().to_string_lossy().into_owned())});
     let side = sidecar(&fin);
     let _ = crate::write_root_file(&side, info.to_string().as_bytes());
+    // Hand-restore instructions next to the image (best effort: the image is good without them).
+    let steps: Vec<String> = restore_sequence(&fin).map_or_else(|_| vec![name.clone()], |s| s.iter()
+        .map(|(p, _)| p.file_name().unwrap_or_default().to_string_lossy().into_owned()).collect());
+    let guide = crate::restore_guide::guide_path(&fin);
+    let guide_text = crate::restore_guide::image_guide(&crate::restore_guide::Image {
+        dir: &dest.to_string_lossy(), steps: &steps, include_home: req["include_home"].as_bool().unwrap_or(false),
+        created: &st.iso, host: &host,
+        crypt: match &enc { Enc::None => crate::restore_guide::Crypt::None, Enc::Recipient(_) => crate::restore_guide::Crypt::Key,
+                            Enc::Passphrase => crate::restore_guide::Crypt::Passphrase } });
+    let guide_ok = crate::write_root_file(&guide, guide_text.as_bytes()).is_ok();
     crate::wlog::log("backup", &format!("system_backup {} level {level_out}{}", fin.display(),
                                         if age.is_some() { format!(" ({})", enc.label()) } else { String::new() }));
 
@@ -772,6 +790,7 @@ fn system_backup_inner(req: &Value) -> Result<Value, String> {
     let removed = prune(&dest, req["keep"].as_u64().unwrap_or(0) as usize, &chain);
     if !removed.is_empty() { crate::wlog::log("backup", &format!("retention removed {}", removed.join(" "))); }
     Ok(json!({"ok": true, "archive": fin, "bytes": bytes, "files": files, "tar_status": tcode,
+              "restore_guide": guide_ok.then_some(guide),
               "degraded": tcode == 2, "verified": verified, "encrypted": age.is_some(), "encryption": info["encryption"],
               "level": level_out, "chain": chain, "notes": notes,
               "removed": removed, "message_count": prog.msg_count.load(Ordering::Relaxed), "messages": prog.tail(),
@@ -853,6 +872,7 @@ fn prune(dir: &Path, keep: usize, kept: &str) -> Vec<String> {
             if fs::remove_file(&p).is_ok() {
                 let _ = fs::remove_file(sidecar(&p));
                 let _ = fs::remove_file(snar_of(&p));
+                let _ = fs::remove_file(crate::restore_guide::guide_path(&p));
                 removed.push(n.clone());
             }
         }
@@ -1298,6 +1318,35 @@ fn restore_sequence(archive: &Path) -> Result<Vec<(PathBuf, bool)>, String> {
         .collect()
 }
 
+/// What every image of `seq` needs, checked before the first one is unpacked. Each image is a stream of its own and
+/// a chain may mix them (an increment can be made with another compressor or level than the image it continues, and
+/// an encrypted chain names each image's compression only in its file name), so a missing decompressor, a key that
+/// does not open a later image or a file that is not what its name says would otherwise surface at step 3, after
+/// steps 1–2 had overwritten the target — which may be the running system.
+fn restore_preflight(seq: &[(PathBuf, bool)], key: Option<&Key>) -> Result<(), String> {
+    tool("tar").ok_or("tar is not installed")?;
+    for (i, (file, _)) in seq.iter().enumerate() {
+        let at = |e: String| if seq.len() > 1 { format!("{} (step {} of {}): {e}", file.display(), i + 1, seq.len()) } else { format!("{}: {e}", file.display()) };
+        let f = File::open(file).map_err(|e| at(e.to_string()))?;
+        let comp = Comp::from_magic(&f);
+        let inner = if comp == Comp::Age {
+            tool("age").ok_or_else(|| at("age is not installed (needed to read an encrypted image)".into()))?;
+            let inner = inner_comp(file).map_err(&at)?;
+            let head = key.map(|k| age_head(file, k, 6)).unwrap_or_default();
+            if head.is_empty() { return Err(at("this key or passphrase does not open the archive".into())); }
+            // The name is the only record of what is inside the encryption: it must match the bytes.
+            if Comp::from_bytes(&head) != inner { return Err(at("the compression inside the encryption is not what the file name says".into())); }
+            inner
+        } else {
+            let named = file.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+            if comp == Comp::None && is_image_name(&named) { return Err(at("the archive is empty or not compressed the way its name says".into())); }
+            comp
+        };
+        if inner != Comp::None { inner.decompressor().map_err(&at)?; }
+    }
+    Ok(())
+}
+
 /// {"op":"system_restore","archive":"/…","target":"/mnt/gentoo","confirm":"/mnt/gentoo","identity":"AGE-SECRET-KEY-1…"}
 /// `confirm` must repeat the target: a request cannot restore somewhere by accident.
 pub fn system_restore(req: &Value) -> Value {
@@ -1313,6 +1362,7 @@ pub fn system_restore(req: &Value) -> Value {
     if key.is_none() && seq.iter().any(|(f, _)| sniff(f) == Comp::Age) {
         return json!({"ok": false, "needs_key": true, "archive": archive, "error": "the archive is encrypted: its passphrase or age key is needed"});
     }
+    if let Err(e) = restore_preflight(&seq, key.as_ref()) { return fail(format!("{e} — nothing was written to {}", target.display())); }
     crate::wlog::log("backup", &format!("system_restore {} -> {}{}", archive.display(), target.display(),
                                         if seq.len() > 1 { format!(" ({} steps)", seq.len()) } else { String::new() }));
     crate::emit(&json!({"event": "start", "phase": "restore", "archive": archive, "target": target, "steps": seq.len(),
@@ -1474,7 +1524,8 @@ fn pre_write_victims(mut names: Vec<String>, keep: usize) -> Vec<String> {
 
 fn prune_pre_write(dir: &Path, keep: usize) -> Vec<String> {
     let names: Vec<String> = fs::read_dir(dir).into_iter().flatten().flatten().filter_map(|e| e.file_name().into_string().ok()).collect();
-    pre_write_victims(names, keep).into_iter().filter(|n| fs::remove_file(dir.join(n)).is_ok()).collect()
+    pre_write_victims(names, keep).into_iter().filter(|n| fs::remove_file(dir.join(n)).is_ok())
+        .inspect(|n| { let _ = fs::remove_file(crate::restore_guide::guide_path(&dir.join(n))); }).collect()
 }
 
 /// {"op":"config_backup","dest_dir":"/…","include_profile":true,"include_logs":false,"tag":"pre-restore","centurion_version":"2.0.0"}
@@ -1557,11 +1608,19 @@ fn config_backup_inner(req: &Value) -> Result<Value, String> {
     }
     let _ = fs::set_permissions(&partial, fs::Permissions::from_mode(0o600));
     fs::rename(&partial, &fin).map_err(|e| { let _ = fs::remove_file(&partial); format!("{}: {e}", fin.display()) })?;
+    // Hand-restore instructions next to the archive (best effort).
+    let guide = crate::restore_guide::guide_path(&fin);
+    let c = &manifest["contents"];
+    let guide_text = crate::restore_guide::config_guide(&crate::restore_guide::Config {
+        archive: &fin.to_string_lossy(), created: &st.iso, host: &host, profile_only,
+        user_config: c["user_config"].as_u64().unwrap_or(0), user_state: c["user_state"].as_u64().unwrap_or(0),
+        system: c["system"].as_u64().unwrap_or(0), system_profile: c["system_profile"].as_u64().unwrap_or(0) });
+    let guide_ok = fs::write(&guide, guide_text).is_ok();
     let removed = match safe_tag(&req["tag"]) {
         Some(t) if PRE_WRITE_TAGS.contains(&t) => prune_pre_write(&dest, PRE_WRITE_KEEP),
         _ => Vec::new(),
     };
-    Ok(json!({"ok": true, "archive": fin, "bytes": fs::metadata(&fin).map_or(0, |m| m.len()),
+    Ok(json!({"ok": true, "archive": fin, "restore_guide": guide_ok.then_some(guide), "bytes": fs::metadata(&fin).map_or(0, |m| m.len()),
               "contents": manifest["contents"], "skipped": manifest["skipped"], "removed": removed}))
 }
 
@@ -2589,6 +2648,140 @@ mod tests {
         }
         assert!(r["deleted"].as_u64().unwrap() >= 3, "{r}");
         assert_eq!(r["renamed"], 1, "{r}");
+        let _ = fs::remove_dir_all(&base);
+    }
+
+    /// A full image and one increment, each through its own `filter` (compressor, optionally `| age …`): etc/a is "1"
+    /// in the full image and "2" in the increment, etc/b only exists in the increment. Returns the increment.
+    fn two_image_chain(base: &Path, full: (&str, &str), inc: (&str, &str)) -> PathBuf {
+        let (src, arch) = (base.join("src"), base.join("arch"));
+        fs::create_dir_all(src.join("etc")).unwrap();
+        fs::create_dir_all(&arch).unwrap();
+        fs::write(src.join("etc/a"), "1").unwrap();
+        let snar = arch.join("chain.snar");
+        let dump = |name: &str, filter: &str| {
+            std::thread::sleep(Duration::from_millis(1100));  // tar's change detection works in whole seconds
+            sh(&format!("tar -C {} --xattrs --listed-incremental={} -cf - . | {} > {}", src.display(), snar.display(), filter, arch.join(name).display()));
+        };
+        dump(full.0, full.1);
+        fs::write(src.join("etc/a"), "2").unwrap();
+        fs::write(src.join("etc/b"), "new").unwrap();
+        dump(inc.0, inc.1);
+        fs::write(sidecar(&arch.join(full.0)), json!({"level": 0, "chain": full.0}).to_string()).unwrap();
+        fs::write(sidecar(&arch.join(inc.0)), json!({"level": 1, "chain": full.0, "parent": full.0}).to_string()).unwrap();
+        arch.join(inc.0)
+    }
+
+    const FULL_GZ: &str = "backup-2026-10-01.tar.gz";
+    const INC_XZ: &str = "backup-2026-10-02_100000-i1.tar.xz";
+
+    /// An increment may be made with another compressor or level than the image it continues: each image is
+    /// its own stream, so the restore picks the decompressor per file.
+    #[test]
+    fn chain_with_mixed_compression_restores() {
+        if !(have("tar") && have("gzip") && have("xz")) { return; }
+        let base = tmp("mixed-comp");
+        let inc = two_image_chain(&base, (FULL_GZ, "gzip -1 -c"), (INC_XZ, "xz -9 -c"));
+        let dst = base.join("dst");
+        fs::create_dir_all(&dst).unwrap();
+        let t = fs::canonicalize(&dst).unwrap();
+        let r = system_restore(&json!({"archive": inc, "target": t, "confirm": t}));
+        assert_eq!(r["ok"], true, "{r}");
+        assert_eq!(r["steps"], 2);
+        assert_eq!(fs::read_to_string(dst.join("etc/a")).unwrap(), "2");
+        assert_eq!(fs::read_to_string(dst.join("etc/b")).unwrap(), "new");
+        let _ = fs::remove_dir_all(&base);
+    }
+
+    /// The same chain, encrypted: the compressor inside age is read from each file's name.
+    #[test]
+    fn encrypted_chain_with_mixed_compression_restores_and_refuses_a_foreign_key_before_writing() {
+        if !(have("tar") && have("gzip") && have("xz") && have("age")) { return; }
+        let base = tmp("mixed-age");
+        let keygen = |n: &str| -> Option<(String, String)> {
+            let p = base.join(n);
+            Command::new("age-keygen").arg("-o").arg(&p).output().ok().filter(|o| o.status.success())?;
+            let text = fs::read_to_string(&p).ok()?;
+            let rec = text.lines().find_map(|l| l.strip_prefix("# public key: "))?.trim().to_owned();
+            Some((rec, text))
+        };
+        let (Some((r1, k1)), Some((r2, _))) = (keygen("k1.txt"), keygen("k2.txt")) else { let _ = fs::remove_dir_all(&base); return };
+        let full = "backup-2026-10-01.tar.gz.age";
+        let inc_name = "backup-2026-10-02_100000-i1.tar.xz.age";
+        // Same key throughout, two compressors.
+        let inc = two_image_chain(&base, (full, &format!("gzip -c | age -r {r1}")), (inc_name, &format!("xz -c | age -r {r1}")));
+        let (ok_dst, bad_dst) = (base.join("ok"), base.join("bad"));
+        for d in [&ok_dst, &bad_dst] { fs::create_dir_all(d).unwrap(); }
+        let t = fs::canonicalize(&ok_dst).unwrap();
+        let r = system_restore(&json!({"archive": inc, "target": t, "confirm": t, "identity": k1}));
+        assert_eq!(r["ok"], true, "{r}");
+        assert_eq!(fs::read_to_string(ok_dst.join("etc/a")).unwrap(), "2");
+        // The increment encrypted to another key: nothing may be unpacked from the full image first.
+        fs::remove_file(&inc).unwrap();
+        sh(&format!("tar -C {}/src -cf - etc | xz -c | age -r {r2} > {}", base.display(), inc.display()));
+        let t = fs::canonicalize(&bad_dst).unwrap();
+        let r = system_restore(&json!({"archive": inc, "target": t, "confirm": t, "identity": k1}));
+        assert_eq!(r["ok"], false, "{r}");
+        assert!(r["error"].as_str().unwrap().contains("step 2 of 2"), "{r}");
+        assert!(!bad_dst.join("etc").exists(), "the full image was unpacked before the increment was found unreadable: {r}");
+        let _ = fs::remove_dir_all(&base);
+    }
+
+    /// The compression inside age is known only from the file name: a name that disagrees with the bytes is refused up front.
+    #[test]
+    fn encrypted_image_named_for_another_compressor_is_refused_before_writing() {
+        if !(have("tar") && have("gzip") && have("xz") && have("age")) { return; }
+        let base = tmp("age-name");
+        let kp = base.join("k.txt");
+        if !Command::new("age-keygen").arg("-o").arg(&kp).output().is_ok_and(|o| o.status.success()) { let _ = fs::remove_dir_all(&base); return; }
+        let text = fs::read_to_string(&kp).unwrap();
+        let r = text.lines().find_map(|l| l.strip_prefix("# public key: ")).unwrap().trim().to_owned();
+        let (full, inc_name) = ("backup-2026-10-01.tar.gz.age", "backup-2026-10-02_100000-i1.tar.xz.age");
+        let inc = two_image_chain(&base, (full, &format!("gzip -c | age -r {r}")), (inc_name, &format!("gzip -c | age -r {r}")));
+        let dst = base.join("dst");
+        fs::create_dir_all(&dst).unwrap();
+        let t = fs::canonicalize(&dst).unwrap();
+        let res = system_restore(&json!({"archive": inc, "target": t, "confirm": t, "identity": text}));
+        assert_eq!(res["ok"], false, "{res}");
+        assert!(res["error"].as_str().unwrap().contains("not what the file name says"), "{res}");
+        assert!(!dst.join("etc").exists(), "{res}");
+        let _ = fs::remove_dir_all(&base);
+    }
+
+    /// A decompressor missing for a later image (zstd here, absent on a minimal live system) must stop the restore
+    /// before the first image is unpacked, not after it.
+    #[test]
+    fn missing_decompressor_of_a_later_image_stops_before_anything_is_written() {
+        if !(have("tar") && have("gzip") && have("xz")) || have("zstd") { return; }
+        let base = tmp("no-zstd");
+        let inc = two_image_chain(&base, (FULL_GZ, "gzip -c"), (INC_XZ, "xz -c"));
+        fs::write(&inc, [0x28u8, 0xb5, 0x2f, 0xfd, 0, 0, 0, 0]).unwrap();  // a zstd frame header
+        let dst = base.join("dst");
+        fs::create_dir_all(&dst).unwrap();
+        let t = fs::canonicalize(&dst).unwrap();
+        let r = system_restore(&json!({"archive": inc, "target": t, "confirm": t}));
+        assert_eq!(r["ok"], false, "{r}");
+        let e = r["error"].as_str().unwrap();
+        assert!(e.contains("zstd") && e.contains("step 2 of 2") && e.contains("nothing was written"), "{e}");
+        assert!(!dst.join("etc").exists(), "the full image was unpacked before the missing decompressor was found: {r}");
+        let _ = fs::remove_dir_all(&base);
+    }
+
+    /// An image whose name says it is compressed but whose bytes are not (cut to nothing, wrong file): refused up
+    /// front, instead of being read as an empty tar that unpacks nothing and reports success.
+    #[test]
+    fn an_empty_or_uncompressed_image_is_refused_before_anything_is_written() {
+        if !(have("tar") && have("gzip") && have("xz")) { return; }
+        let base = tmp("empty-img");
+        let inc = two_image_chain(&base, (FULL_GZ, "gzip -c"), (INC_XZ, "xz -c"));
+        fs::write(&inc, b"").unwrap();
+        let dst = base.join("dst");
+        fs::create_dir_all(&dst).unwrap();
+        let t = fs::canonicalize(&dst).unwrap();
+        let r = system_restore(&json!({"archive": inc, "target": t, "confirm": t}));
+        assert_eq!(r["ok"], false, "{r}");
+        assert!(r["error"].as_str().unwrap().contains("step 2 of 2"), "{r}");
+        assert!(!dst.join("etc").exists(), "{r}");
         let _ = fs::remove_dir_all(&base);
     }
 

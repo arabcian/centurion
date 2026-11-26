@@ -222,7 +222,7 @@ Copy the tarball into your `DISTDIR` and emerge the ebuild from
 
 ### After installing
 
-1. Log out and back in once (keyboard-lighting udev rule and polkit rules take effect).
+1. Log out and back in once (the polkit rules take effect).
 2. Start **Centurion** from the menu — it lives in the tray and
    starts at login. Missing tray → the window opens instead.
 3. The first time the window opens, a setup wizard shows what was found, the
@@ -328,8 +328,8 @@ re-save your scenes. Details: [docs/AUTOTUNE.md](docs/AUTOTUNE.md).
   *Optimizations → CPU* CCD settings and the NVIDIA driver options.
 - **BIOS setting reverts at boot:** check `/var/log/centurion/writes.log`
   for what Centurion wrote and when.
-- **Lighting asks for admin rights:** re-login or replug the keyboard once so
-  the udev `uaccess` rule applies.
+- **Lighting asks for admin rights:** lighting goes through pkexec; only a
+  wheel/sudo admin at the machine is not asked for a password.
 
 ## Requirements
 
@@ -347,7 +347,7 @@ re-save your scenes. Details: [docs/AUTOTUNE.md](docs/AUTOTUNE.md).
 | Ryzen tab | `ryzen_smu` ≥ 0.1.7 (required with Secure Boot / kernel lockdown; CO goes through the driver's own `smu_args` + `rsmu_cmd`/`mp1_smu_cmd` mailbox), or root write access to PCI config (kernel lockdown off); no `ryzenadj` needed. Cezanne, Rembrandt, Phoenix, Hawk Point, Dragon Range, Fire Range, Strix Halo: all-core + per-core; Strix Point, Krackan: all-core only |
 | live memory timings, extra CPU sensors *(optional)* | `ryzen_smu`, `zenpower` / `zenergy` |
 | BIOS memory timings | efivarfs (`/sys/firmware/efi/efivars`) |
-| Lighting tab without a password | udev + systemd-logind or elogind (`uaccess`) |
+| Lighting tab without a password | membership in `wheel` / `sudo` (polkit) |
 | Health → Sleep (per-sleep log) | the `centurion-sleep-log` system-sleep hook (installed for systemd and elogind) |
 | Scenes → refresh rate | `kscreen-doctor` (KDE), `wlr-randr` (wlroots) or `xrandr` (X11) |
 | Scenes → screen brightness | `dbus-send` or `busctl` (logind / elogind SetBrightness), or `brightnessctl` |
@@ -386,7 +386,7 @@ The GUI runs as your user. A local, active `wheel`/`sudo` admin runs the
 helpers without a password. Firmware-persistent changes, backups and
 network-guard rules always ask for the administrator password.
 Debian/Ubuntu admins are in `sudo`; Gentoo and most others use `wheel`.
-The lighting helper normally runs as you through a udev `uaccess` rule.
+The lighting helper runs through pkexec; there is no udev `uaccess` rule on the keyboard.
 
 Data lives in `~/.config/centurion/` (scenes, presets, AMD GPU
 profiles), `~/.config/ryzen-curve-optimizer/` (CPU profiles), `/etc/nvcurve/`

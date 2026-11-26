@@ -1816,6 +1816,9 @@ fn run() -> Value {
     } else { None };
     let out = match op {
         "snapshot" => json!({"ok": true}),
+        // A scene's own command line: nothing is written by root; the gate above (unlock.rs) is the point. The GUI
+        // runs the command (as the user) only after this accepts it, so an edited scene file cannot launch a new one.
+        "scene_command" => json!({"ok": true}),
         "apply" => op_apply(&req),
         "apply_preset" => op_apply_preset(&req, false),
         "apply_scene_preset" => op_apply_preset(&req, true),
