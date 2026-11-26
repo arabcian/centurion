@@ -115,7 +115,7 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
     auto showLock = [this](bool on) {
         lockButton_->setIcon(sessionLockIcon(on));
         lockButton_->setText(on ? tr("Unlocked") : tr("Locked"));
-        lockButton_->setToolTip(on ? tr("New values can be written. Click to lock (closing the window locks too).")
+        lockButton_->setToolTip(on ? tr("New values can be written. Click to lock. The window locks when closed or after 10 minutes without input.")
                                    : tr("Writing new values (undervolt, curves, power limits, kernel tunables) needs the PIN. Click to unlock."));
     };
     showLock(false);

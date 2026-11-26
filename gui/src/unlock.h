@@ -5,9 +5,10 @@
 //
 //   locked   -> the lock button asks for the PIN; no PIN yet: set one first
 //               (tune-admin-helper "pin_set", the administrator password).
-//   unlocked -> closing / hiding the window locks the UI again; scene steps keep the grant (they run from the tray).
+//   unlocked -> closing / hiding the window or leaving it idle locks the UI; previously approved scenes can still run.
 #include <QObject>
 #include <QString>
+#include <QTimer>
 
 class QWidget;
 
@@ -29,11 +30,14 @@ Q_SIGNALS:
     void changed(bool unlocked);
 
 private:
+    Manager();
+    bool eventFilter(QObject *receiver, QEvent *event) override;
     void askPin(QWidget *parent, const QString &note);
     void setNewPin(QWidget *parent);
     void submitPin(QWidget *parent, const QString &pin, bool retryWrongPin);
     void revokeGrant(bool keepScenes);
     void setUnlocked(bool on);
+    QTimer idleTimer_;
     bool unlocked_ = false;
     bool busy_ = false;
     bool revoking_ = false;

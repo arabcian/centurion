@@ -2,6 +2,8 @@
 
 #include "privileged.h"
 
+#include <QApplication>
+#include <QEvent>
 #include <QInputDialog>
 #include <QJsonObject>
 #include <QLineEdit>
@@ -23,11 +25,37 @@ QString readPin(QWidget *parent, const QString &title, const QString &label) {
 }
 }  // namespace
 
+Manager::Manager() : idleTimer_(this) {
+    idleTimer_.setSingleShot(true);
+    idleTimer_.setTimerType(Qt::PreciseTimer);
+    idleTimer_.setInterval(10 * 60 * 1000);
+    connect(&idleTimer_, &QTimer::timeout, this, [this] { lock(true); });
+    qApp->installEventFilter(this);
+}
+
+bool Manager::eventFilter(QObject *receiver, QEvent *event) {
+    if (!unlocked_ || !event->spontaneous() || !receiver->isWidgetType()) return false;
+    switch (event->type()) {
+    case QEvent::KeyPress:
+    case QEvent::MouseButtonPress:
+    case QEvent::MouseButtonDblClick:
+    case QEvent::Wheel:
+    case QEvent::TouchBegin:
+    case QEvent::TabletPress:
+        idleTimer_.start();
+        break;
+    default:
+        break;
+    }
+    return false;
+}
+
 Manager &Manager::instance() { static Manager m; return m; }
 
 void Manager::setUnlocked(bool on) {
     if (unlocked_ == on) return;
     unlocked_ = on;
+    if (on) idleTimer_.start(); else idleTimer_.stop();
     Q_EMIT changed(on);
 }
 

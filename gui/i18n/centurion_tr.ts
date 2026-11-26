@@ -4596,8 +4596,8 @@ Centurion bunda test edilmedi; bazı donanım yazılımı özellikleri eksik ola
             <translation>Kilitli</translation>
         </message>
         <message>
-            <source>New values can be written. Click to lock (closing the window locks too).</source>
-            <translation>Yeni değerler yazılabilir. Kilitlemek için tıklayın (pencereyi kapatmak da kilitler).</translation>
+            <source>New values can be written. Click to lock. The window locks when closed or after 10 minutes without input.</source>
+            <translation>Yeni değerler yazılabilir. Kilitlemek için tıklayın. Pencere kapatıldığında veya 10 dakika etkileşim olmadığında kilitlenir.</translation>
         </message>
         <message>
             <source>Writing new values (undervolt, curves, power limits, kernel tunables) needs the PIN. Click to unlock.</source>

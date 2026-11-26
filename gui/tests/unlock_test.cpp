@@ -2,7 +2,9 @@
 #include "../src/unlock.h"
 
 #include <QApplication>
+#include <QEventLoop>
 #include <QInputDialog>
+#include <QKeyEvent>
 #include <QTimer>
 #include <QWidget>
 #include <utility>
@@ -68,5 +70,24 @@ int main(int argc, char **argv) {
     manager.requestUnlock(&window);
     manager.lock(true);
     reply({{"ok", true}, {"pin_set", true}});
-    return manager.unlocked() || pendingReply ? 8 : 0;
+    if (manager.unlocked() || pendingReply) return 8;
+
+    auto *timer = manager.findChild<QTimer *>();
+    if (!timer || timer->interval() != 600000 || timer->isActive()) return 9;
+    if (!enterPin()) return 10;
+    reply({{"ok", true}, {"unlocked", true}});
+    if (!manager.unlocked() || !timer->isActive()) return 11;
+
+    timer->setInterval(25);
+    const int timerId = timer->timerId();
+    QKeyEvent syntheticInput(QEvent::KeyPress, Qt::Key_A, Qt::NoModifier);
+    QApplication::sendEvent(&window, &syntheticInput);
+    if (timer->timerId() != timerId) return 12;
+    QEventLoop waitForLock;
+    QObject::connect(timer, &QTimer::timeout, &waitForLock, &QEventLoop::quit);
+    QTimer::singleShot(1000, &waitForLock, &QEventLoop::quit);
+    waitForLock.exec();
+    if (manager.unlocked() || timer->isActive() || pendingOp != QStringLiteral("lock") || !pendingReply) return 13;
+    reply({{"ok", true}, {"locked", true}, {"scenes_only", true}});
+    return manager.unlocked() || pendingReply ? 14 : 0;
 }
