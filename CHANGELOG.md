@@ -42,6 +42,11 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions follo
   Same keys, presets, Restore originals and boot defaults; only the page and its own Apply checked button differ.
 
 ### Added
+- Health → Backups: every backup (system image and configuration backup) now also writes `<archive>.RESTORE.txt`
+  beside it — a Turkish/English, step-by-step guide to restoring that exact archive by hand with Centurion not
+  running (live USB): plain, encrypted (age key or passphrase), incremental (every file of the chain in order, without
+  tar's own `--listed-incremental`), or both; the exact `tar`/`age`/decompressor commands and flags, mount points,
+  fstab/bootloader steps. Retention and the automatic-backup pruning remove the guide with its archive.
 - System tools → Kernel: *Info…* next to Load / Unload runs `modinfo` for the module names typed in the field
   (several allowed), or for every loaded module when it is empty, and adds each module's current parameter values from
   `/sys/module/<name>/parameters`. Read-only, runs as the user.
