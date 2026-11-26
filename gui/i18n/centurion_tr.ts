@@ -25506,6 +25506,10 @@ Satırlar sıralamadan bağımsız karşılaştırılır; değişen satırlar si
     <context>
         <name>KernelParamsPage</name>
         <message>
+            <source>Unlock Centurion to read kernel settings.</source>
+            <translation>Çekirdek ayarlarını okumak için Centurion'un kilidini açın.</translation>
+        </message>
+        <message>
             <source>Live values of kernel settings, including the root-only debugfs ones (read-only: nothing is changed here). The last column names the Centurion knob that sets a row, if any.</source>
             <translation>Çekirdek ayarlarının canlı değerleri; yalnızca root'un okuyabildiği debugfs ayarları dahil (salt okunur: burada hiçbir şey değiştirilmez). Son sütun, bir satırı ayarlayan Centurion ayarını (varsa) gösterir.</translation>
         </message>

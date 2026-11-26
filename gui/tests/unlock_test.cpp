@@ -1,29 +1,44 @@
+#include "../src/kernelparamspage.h"
 #include "../src/privileged.h"
 #include "../src/unlock.h"
 
 #include <QApplication>
+#include <QComboBox>
 #include <QEventLoop>
 #include <QInputDialog>
+#include <QJsonArray>
 #include <QKeyEvent>
+#include <QPushButton>
+#include <QTableView>
+#include <QTemporaryDir>
 #include <QTimer>
 #include <QWidget>
 #include <utility>
 
 namespace {
 QString pendingOp;
-privileged::Callback pendingReply;
+privileged::Callback pendingReply, pendingSnapshot;
 
 void reply(QJsonObject json) {
     std::exchange(pendingReply, {})({true, std::move(json), {}});
 }
 }  // namespace
 
+namespace theme {
+bool experimentalEnabled() { return false; }
+}
+
 namespace privileged {
 // Keep the helper reply pending until the test releases it, with no root calls.
-QString helperPath(const QString &name) { return name; }
+QString helperPath(const QString &) { return QCoreApplication::applicationFilePath(); }
 QString Result::message() const { return error; }
 void run(const QString &, const QJsonObject &payload, QObject *, Callback cb, int) {
-    pendingOp = payload.value(QStringLiteral("op")).toString();
+    const auto op = payload.value(QStringLiteral("op")).toString();
+    if (op == QStringLiteral("ksnap")) {
+        pendingSnapshot = std::move(cb);
+        return;
+    }
+    pendingOp = op;
     pendingReply = std::move(cb);
 }
 void runUntilExit(const QString &helper, const QJsonObject &payload, QObject *ctx, Callback cb, int timeout,
@@ -33,6 +48,9 @@ void runUntilExit(const QString &helper, const QJsonObject &payload, QObject *ct
 }  // namespace privileged
 
 int main(int argc, char **argv) {
+    QTemporaryDir settings;
+    if (!settings.isValid()) return 25;
+    qputenv("XDG_CONFIG_HOME", settings.path().toUtf8());
     QApplication app(argc, argv);
     QWidget window;
     window.show();
@@ -89,5 +107,43 @@ int main(int argc, char **argv) {
     waitForLock.exec();
     if (manager.unlocked() || timer->isActive() || pendingOp != QStringLiteral("lock") || !pendingReply) return 13;
     reply({{"ok", true}, {"locked", true}, {"scenes_only", true}});
-    return manager.unlocked() || pendingReply ? 14 : 0;
+    if (manager.unlocked() || pendingReply) return 14;
+
+    timer->setInterval(600000);
+    KernelParamsPage page;
+    auto *scope = page.findChild<QComboBox *>();
+    auto *table = page.findChild<QTableView *>();
+    QPushButton *read = nullptr, *save = nullptr;
+    for (auto *button : page.findChildren<QPushButton *>()) {
+        if (button->text() == QStringLiteral("Read")) read = button;
+        if (button->text() == QStringLiteral("Export and Save As…")) save = button;
+    }
+    if (!scope || !table || !read || !save || scope->isEnabled() || read->isEnabled() || save->isEnabled()) return 15;
+    // The read path also checks the lock if triggered directly through scope activation.
+    scope->setCurrentIndex(scope->findData(QStringLiteral("/sys")));
+    if (!QMetaObject::invokeMethod(scope, "activated", Qt::DirectConnection, Q_ARG(int, scope->currentIndex())) || pendingSnapshot)
+        return 16;
+
+    if (!enterPin()) return 17;
+    reply({{"ok", true}, {"unlocked", true}});
+    if (!read->isEnabled() || !scope->isEnabled()) return 18;
+    const auto deliverSnapshot = [] {
+        std::exchange(pendingSnapshot, {})({true, {{"ok", true}, {"entries", QJsonArray{
+            QJsonObject{{"p", "/sys/test"}, {"v", "value"}, {"w", false}}}}}, {}});
+    };
+    read->click();
+    if (!pendingSnapshot) return 19;
+    deliverSnapshot();
+    if (table->model()->rowCount() != 1 || !save->isEnabled()) return 20;
+
+    read->click();
+    if (!pendingSnapshot) return 21;
+    manager.lock(false);
+    if (table->model()->rowCount() != 0 || save->isEnabled() || read->isEnabled() || scope->isEnabled()) return 22;
+    reply({{"ok", true}, {"locked", true}});
+    if (!enterPin()) return 23;
+    reply({{"ok", true}, {"unlocked", true}});
+    deliverSnapshot();
+    if (table->model()->rowCount() != 0 || save->isEnabled() || !scope->isEnabled()) return 24;
+    return 0;
 }

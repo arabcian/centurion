@@ -30,6 +30,7 @@
 //!                               Every readable text file below the roots (default: all of /sys, debugfs
 //!                               limited to its allowlisted subtrees) as {"p","v","w"} entries: the values
 //!                               the GUI cannot read itself because debugfs is root-only. Read-only.
+//!                               Requires an unlocked Centurion window when invoked via pkexec.
 //!                               See centurion_helpers::ksnap for what is never read.
 //!
 //! stdin:  {"op": "debugfs_snapshot"}  Optimizations tab: refresh the world-readable copy of the debugfs tunable
@@ -44,9 +45,16 @@ fn main() {
     centurion_helpers::init();
     let req = centurion_helpers::read_request(4096).unwrap_or(serde_json::Value::Null);
     if req["op"].as_str() == Some("ksnap") {
+        // Only the interactive grant applies to kernel snapshots.
+        let interactive = serde_json::Value::Null;
+        if let Some(reply) = centurion_helpers::unlock::refuse(&interactive) {
+            std::process::exit(centurion_helpers::finish(reply));
+        }
         // A walk can end in a sysfs read that never returns (a device that stopped answering): kill the helper then.
         centurion_helpers::watchdog(30);
-        std::process::exit(centurion_helpers::finish(centurion_helpers::ksnap::scan(&req)));
+        let reply = centurion_helpers::ksnap::scan(&req);
+        let reply = centurion_helpers::unlock::refuse(&interactive).unwrap_or(reply);
+        std::process::exit(centurion_helpers::finish(reply));
     }
     if req["op"].as_str() == Some("debugfs_snapshot") {
         std::process::exit(centurion_helpers::finish(centurion_helpers::tune::refresh_debugfs_snapshot()));

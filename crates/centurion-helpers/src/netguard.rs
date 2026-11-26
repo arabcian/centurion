@@ -1641,10 +1641,19 @@ fn kconfig_missing(cfg: &Config) -> Option<Vec<&'static str>> {
         .and_then(|gz| std::process::Command::new(gz).args(["-dc", "/proc/config.gz"]).env_clear().output().ok())
         .filter(|o| o.status.success()).map(|o| String::from_utf8_lossy(&o.stdout).into_owned())
         .or_else(|| std::fs::read_to_string(format!("/boot/config-{rel}")).ok())?;
-    let set: HashSet<&str> = text.lines().filter_map(|l| l.strip_prefix("CONFIG_")?.split_once('=').map(|(k, _)| k)).collect();
+    Some(missing_kernel_options(cfg, &text, Path::new("/sys/module/nfnetlink_log").is_dir()))
+}
+
+fn missing_kernel_options(cfg: &Config, text: &str, nflog_loaded: bool) -> Vec<&'static str> {
+    let set: HashSet<&str> = text.lines().filter_map(|line| {
+        let (key, value) = line.strip_prefix("CONFIG_")?.split_once('=')?;
+        matches!(value, "y" | "m").then_some(key)
+    }).collect();
     let reject = if cfg.fw.uses_reject() { KCONFIG_REJECT } else { &[] };
     let log = if wants_nflog(cfg) { KCONFIG_FW_LOG } else { &[] };
-    Some(KCONFIG.iter().chain(reject).chain(log).copied().filter(|k| !set.contains(k)).collect())
+    KCONFIG.iter().chain(reject).chain(log).copied().filter(|&key| {
+        !set.contains(key) && !(key == "NETFILTER_NETLINK_LOG" && nflog_loaded)
+    }).collect()
 }
 
 pub fn status(full: bool) -> Value {
@@ -2505,6 +2514,22 @@ mod tests {
         let mut stale = good.clone();
         stale["guard"] = json!(!c.guard);
         assert_eq!(reload_state(&c, &stale), ReloadState::Pending);
+    }
+
+    #[test]
+    fn loaded_nflog_overrides_missing_kernel_config_symbol() {
+        let mut cfg = Config { log_conns: true, ..Default::default() };
+        cfg.fw.enabled = true;
+        cfg.fw.inbound = crate::firewall::Verdict::Block;
+        let nflog = "NETFILTER_NETLINK_LOG";
+        let text = "# CONFIG_NETFILTER_NETLINK_LOG is not set";
+        let missing = missing_kernel_options(&cfg, text, true);
+        assert!(!missing.contains(&nflog));
+        assert!(missing.contains(&"NFT_LOG"));
+        assert!(missing_kernel_options(&cfg, text, false).contains(&nflog));
+        for text in ["CONFIG_NETFILTER_NETLINK_LOG=m", "CONFIG_NETFILTER_NETLINK_LOG=y"] {
+            assert!(!missing_kernel_options(&cfg, text, false).contains(&nflog));
+        }
     }
 
     #[test]
