@@ -851,6 +851,9 @@ fn write_back(items: &[(String, PathBuf, String)], stamps: &StorageStamps) -> (u
             Err(e) if matches!(tune::find(key).map(|t| &t.target), Some(tune::Target::PciLatency)) && e.contains("skipped (GPU tree or suspended device)") => { evidence[i] = RestoreEvidence::Deferred; failed.insert(i); deferred += 1; }
             // Best-effort rows (IRQs, PCI/USB devices): not an error, but the
             // original stays recorded for the next restore instead of being lost.
+            // Unless the kernel refuses a knob that already holds its original (a managed IRQ never moved):
+            // nothing is left to restore, and deferring it would keep a stale game record alive forever.
+            Err(_) if tune::find(key).is_some_and(|t| tune::best_effort(t) && tune::baseline_value(t, f).is_some_and(|live| tune::same_value(t, &live, orig))) => { evidence[i] = RestoreEvidence::WrittenUnknown; }
             Err(_) if tune::find(key).is_some_and(tune::best_effort) => { evidence[i] = RestoreEvidence::Deferred; failed.insert(i); deferred += 1; }
             Err(e) => { failed.insert(i); errs.push(json!({"key": key, "error": e})); }
         }
