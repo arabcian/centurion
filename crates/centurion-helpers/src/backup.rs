@@ -282,12 +282,15 @@ impl Comp {
         use std::os::unix::fs::FileExt;
         let mut m = [0u8; 22];
         let n = f.read_at(&mut m, 0).unwrap_or(0);
-        match &m[..n] {
+        Comp::from_bytes(&m[..n])
+    }
+    fn from_bytes(m: &[u8]) -> Comp {
+        match m {
             [0x1f, 0x8b, ..] => Comp::Gzip,
             [0x28, 0xb5, 0x2f, 0xfd, ..] => Comp::Zstd,
             [0xfd, b'7', b'z', b'X', b'Z', 0, ..] => Comp::Xz,
             [b'B', b'Z', b'h', ..] => Comp::Bzip2,
-            _ if m[..n].starts_with(AGE_HEADER) => Comp::Age,
+            _ if m.starts_with(AGE_HEADER) => Comp::Age,
             _ => Comp::None,
         }
     }
@@ -477,20 +480,25 @@ fn command_tty(path: &Path, low_priority: bool, tty: RawFd) -> Command {
     c
 }
 
-/// Whether `key` opens an encrypted image: age decrypts (and authenticates) the first chunk, nothing more.
-fn key_opens(archive: &Path, key: &Key) -> bool {
-    let (Some(age), Ok(f)) = (tool("age"), File::open(archive)) else { return false };
-    let Ok((mut c, aux)) = age_command(&age, true, true, None, Some(key)) else { return false };
+/// The first `n` bytes of an encrypted image after decryption (age decrypts and authenticates the first chunk,
+/// nothing more); empty when `key` does not open it.
+fn age_head(archive: &Path, key: &Key, n: usize) -> Vec<u8> {
+    let (Some(age), Ok(f)) = (tool("age"), File::open(archive)) else { return Vec::new() };
+    let Ok((mut c, aux)) = age_command(&age, true, true, None, Some(key)) else { return Vec::new() };
     c.stdin(Stdio::from(f)).stdout(Stdio::piped()).stderr(Stdio::null());
-    let Ok(mut ch) = c.spawn() else { return false };
+    let Ok(mut ch) = c.spawn() else { return Vec::new() };
     let mut aux = aux;
     aux.key_pipe = None;
-    let mut one = [0u8; 1];
-    let got = ch.stdout.take().is_some_and(|mut o| matches!(o.read(&mut one), Ok(1)));
+    let mut buf = vec![0u8; n];
+    let got = ch.stdout.take().map_or(0, |mut o| o.read_exact(&mut buf).map_or(0, |_| n));
     let _ = ch.kill();
     let _ = ch.wait();
-    got
+    buf.truncate(got);
+    buf
 }
+
+/// Whether `key` opens an encrypted image.
+fn key_opens(archive: &Path, key: &Key) -> bool { age_head(archive, key, 1).len() == 1 }
 
 // ── system image: create ────────────────────────────────────────────────────
 
@@ -1324,7 +1332,10 @@ fn restore_preflight(seq: &[(PathBuf, bool)], key: Option<&Key>) -> Result<(), S
         let inner = if comp == Comp::Age {
             tool("age").ok_or_else(|| at("age is not installed (needed to read an encrypted image)".into()))?;
             let inner = inner_comp(file).map_err(&at)?;
-            if !key.is_some_and(|k| key_opens(file, k)) { return Err(at("this key or passphrase does not open the archive".into())); }
+            let head = key.map(|k| age_head(file, k, 6)).unwrap_or_default();
+            if head.is_empty() { return Err(at("this key or passphrase does not open the archive".into())); }
+            // The name is the only record of what is inside the encryption: it must match the bytes.
+            if Comp::from_bytes(&head) != inner { return Err(at("the compression inside the encryption is not what the file name says".into())); }
             inner
         } else {
             let named = file.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
@@ -2713,6 +2724,27 @@ mod tests {
         assert_eq!(r["ok"], false, "{r}");
         assert!(r["error"].as_str().unwrap().contains("step 2 of 2"), "{r}");
         assert!(!bad_dst.join("etc").exists(), "the full image was unpacked before the increment was found unreadable: {r}");
+        let _ = fs::remove_dir_all(&base);
+    }
+
+    /// The compression inside age is known only from the file name: a name that disagrees with the bytes is refused up front.
+    #[test]
+    fn encrypted_image_named_for_another_compressor_is_refused_before_writing() {
+        if !(have("tar") && have("gzip") && have("xz") && have("age")) { return; }
+        let base = tmp("age-name");
+        let kp = base.join("k.txt");
+        if !Command::new("age-keygen").arg("-o").arg(&kp).output().is_ok_and(|o| o.status.success()) { let _ = fs::remove_dir_all(&base); return; }
+        let text = fs::read_to_string(&kp).unwrap();
+        let r = text.lines().find_map(|l| l.strip_prefix("# public key: ")).unwrap().trim().to_owned();
+        let (full, inc_name) = ("backup-2026-10-01.tar.gz.age", "backup-2026-10-02_100000-i1.tar.xz.age");
+        let inc = two_image_chain(&base, (full, &format!("gzip -c | age -r {r}")), (inc_name, &format!("gzip -c | age -r {r}")));
+        let dst = base.join("dst");
+        fs::create_dir_all(&dst).unwrap();
+        let t = fs::canonicalize(&dst).unwrap();
+        let res = system_restore(&json!({"archive": inc, "target": t, "confirm": t, "identity": text}));
+        assert_eq!(res["ok"], false, "{res}");
+        assert!(res["error"].as_str().unwrap().contains("not what the file name says"), "{res}");
+        assert!(!dst.join("etc").exists(), "{res}");
         let _ = fs::remove_dir_all(&base);
     }
 
