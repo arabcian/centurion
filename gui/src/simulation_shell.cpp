@@ -42,7 +42,8 @@ int runRealShell(QApplication &app) {
     if (size.size()!=2) return 3;
     window.resize(size[0].toInt(),size[1].toInt());
     window.show();
-    auto *tabs = window.findChild<QTabWidget *>(QStringLiteral("mainTabs"));
+    // The Experimental shell renames the page stack (MainWindow::installExperimentalShell).
+    auto *tabs = window.findChild<QTabWidget *>(theme::experimentalEnabled() ? QStringLiteral("expPageStack") : QStringLiteral("mainTabs"));
     if (!tabs) return 3;
     QTimer::singleShot(300, &window, [&] {
         QJsonArray pages, shots;
