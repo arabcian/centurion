@@ -677,124 +677,137 @@ QMenuBar { background: @BG0; } QMenuBar::item:selected { background: @BG3; }
     // Appended after the classic selectors, so the original styling is selectable.
     // Uses the same palette tokens: every existing colour theme keeps working.
     if (experimentalEnabled()) s += QStringLiteral(R"QSS(
-/* Experimental / Studio: content-first, tight hierarchy, no faux-metal shading. */
+/* Experimental / Studio: content-first, flat surfaces. Depth comes from surface tone and one
+   hairline, never from light effects; the accent marks only what is active or primary
+   (current page, primary button, focus, checked controls, selected sub-tab). */
 QScrollArea { border: 0; }
 QSplitter::handle { background: @BORDER_SOFT; }
 QSplitter::handle:horizontal { width: 1px; }
 QSplitter::handle:vertical { height: 1px; }
-QWidget#expShell QGroupBox { background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 @CARD_TOP, stop:1 @CARD_BOT);
-    border: 1px solid @BORDER; border-top-color: @EDGE; }
-QWidget#expShell QGroupBox QGroupBox { background: transparent; border: 0;
-    border-top: 1px solid @BORDER_SOFT; }
+QSplitter::handle:hover { background: @ACCENT_SOFT; }
+/* The rail's own hairline is the divider; its splitter handle is only a grip. */
+QSplitter#expShellSplitter::handle { background: transparent; }
+QSplitter#expShellSplitter::handle:hover { background: @BORDER; }
 QToolButton#expDisclosure { background: transparent; color: @FG_DIM; text-align: left;
     border: 0; border-top: 1px solid @BORDER_SOFT; border-radius: 0;
-    font-weight: 700; font-size: 8pt; padding: 8px 6px; }
-QToolButton#expDisclosure:hover { color: @FG; background: @BG2; }
+    font-weight: 700; font-size: 8pt; padding: 6px 4px; }
+QToolButton#expDisclosure:hover { color: @FG; background: @HILITE; }
 QTabWidget#intelWorkflows::pane { border-top: 1px solid @BORDER_SOFT; }
-QTabWidget#intelWorkflows QTabBar::tab { padding: 7px 14px; }
+QTabWidget#intelWorkflows QTabBar::tab { padding: 4px 12px; }
 
 QWidget#expShell, QWidget#expContent { background: @BG0; }
-/* The rail sits a step below the page: content is the lit surface, navigation recedes. */
-QFrame#expRail { background: @SIDEBAR; border-right: 1px solid @BORDER_SOFT; }
+/* The rail sits a step below the page, flat: content is the lit surface, navigation recedes. */
+QFrame#expRail { background: @SIDEBAR; border: 0; border-right: 1px solid @BORDER_SOFT; }
 QWidget#expNavHost, QScrollArea#expNavScroll,
 QScrollArea#expNavScroll > QWidget > QWidget { background: transparent; }
-QLabel#expBrandLabel { color: @FG; font-size: 10pt; font-weight: 800; letter-spacing: 1.6px; background: transparent; }
-QLabel#expBrandVersion { color: @MUTED; font-size: 7pt; font-weight: 600; background: transparent; }
+QLabel#expBrandLabel { color: @FG; font-size: 10pt; font-weight: 800; letter-spacing: 1.4px; background: transparent; }
+QLabel#expBrandVersion { color: @MUTED; font-size: 8pt; background: transparent; }
 QLabel#expBrandIcon { background: transparent; }
 QFrame#expRailDivider { background: @BORDER_SOFT; border: 0; }
 QLabel#expNavHeading { color: @MUTED; background: transparent;
-    padding: 12px 6px 4px 12px; font-size: 8pt; font-weight: 600; letter-spacing: 1px; }
+    padding: @GAP_Mpx 6px @GAP_XSpx @GAP_Mpx; font-size: 8pt; font-weight: 600; letter-spacing: 1px; }
+/* Navigation keys: the current page is a neutral key with a thin accent marker, no wash. */
 QPushButton#expNavButton { text-align: left; color: @FG_DIM; background: transparent;
-    border: 1px solid transparent; border-left: 3px solid transparent; border-radius: 7px;
-    font-weight: 500; padding: 3px 10px; min-height: 0; }
+    border: 1px solid transparent; border-left: 2px solid transparent; border-radius: 6px;
+    border-top-left-radius: 0; border-bottom-left-radius: 0;
+    font-weight: 500; padding: 3px @GAP_Spx; }
 QPushButton#expNavButton:hover { background: @HILITE; color: @FG; }
 QPushButton#expNavButton:pressed { background: @HILITE2; }
-/* Current page: a framed accent wash that fades into the rail, lit from its marker. */
-QPushButton#expNavButton:checked { color: @FG;
-    background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 @ACCENT_TINT, stop:1 @ACCENT_FADE);
-    border: 1px solid @ACCENT_EDGE; border-left: 3px solid @ACCENT; font-weight: 700; }
+QPushButton#expNavButton:checked { color: @FG; background: @HILITE2; border-left-color: @ACCENT; font-weight: 600; }
 QPushButton#expNavButton:disabled { color: @BG4; }
-QPushButton#expNavButton[collapsed="true"] { text-align: center; padding: 3px 1px; font-size: 8pt; }
+QPushButton#expNavButton[collapsed="true"] { text-align: center; padding: 3px 1px; }
 /* The boxes at the foot of the rail (the lock button is styled with them): one height, one look. */
 QPushButton#expRailAction, QPushButton#expRailToggle { text-align: left; color: @FG_DIM;
-    background: @BG2; border: 1px solid @BORDER; border-radius: 7px; padding: 0 8px; min-height: 0; }
-QPushButton#expRailAction:hover, QPushButton#expRailToggle:hover { color: @FG; border-color: @ACCENT; }
+    background: @BG2; border: 1px solid @BORDER; border-radius: 6px; padding: 0 @GAP_Spx; min-height: 0; }
+QPushButton#expRailAction:hover, QPushButton#expRailToggle:hover { color: @FG; background: @BG3; border-color: @EDGE; }
 QPushButton#expRailAction:pressed, QPushButton#expRailToggle:pressed { background: @HILITE2; }
 QPushButton#expRailAction[collapsed="true"], QPushButton#expRailToggle[collapsed="true"] { text-align: center; padding: 0; }
-QFrame#expTopbar { background: @BG0; border-bottom: 1px solid @BORDER_SOFT; }
-QLabel#expTopPath { color: @MUTED; font-size: 7pt; font-weight: 700; letter-spacing: 1.4px; }
-QLabel#expTopTitle { color: @FG; font-size: 14pt; font-weight: 700; }
-/* Search field look-alike: opens the navigator (Ctrl+K). */
-QPushButton#expSearch { background: @WELL; border: 1px solid @BORDER; border-radius: 9px;
-    padding: 0; min-height: 30px; }
-QPushButton#expSearch:hover { border-color: @ACCENT_LINE; background: @FOCUS_WELL; }
+QToolButton#lockButton:hover { background: @BG3; border-color: @EDGE; }
+/* Keyboard focus: a soft accent ring on the rail and top-bar keys. */
+QPushButton#expNavButton:focus, QPushButton#expRailToggle:focus, QPushButton#expRailAction:focus,
+QToolButton#lockButton:focus, QPushButton#expChip:focus { border-color: @ACCENT_SOFT; }
+QPushButton#expNavButton:checked:focus { border-left-color: @ACCENT; }
+/* Top bar: flat, one hairline below; path, title and hint read as one block. */
+QFrame#expTopbar { background: @BG0; border: 0; }
+QFrame#expSignal { background: @BORDER_SOFT; border: 0; }
+QLabel#expTopPath { color: @MUTED; font-size: 8pt; font-weight: 600; letter-spacing: 1.2px; }
+QLabel#expTopTitle { color: @FG; font-size: 13pt; font-weight: 700; }
+QLabel#expTopHint { color: @MUTED; font-size: 8pt; padding-bottom: 2px; }
+/* Search field look-alike: opens the navigator (Ctrl+K). Same height as the chips beside it. */
+QPushButton#expSearch { background: @WELL; border: 1px solid @BORDER; border-radius: 6px;
+    padding: 0; min-height: @CTRL_FLATpx; }
+QPushButton#expSearch:hover { border-color: @EDGE; }
 QPushButton#expSearch:pressed, QPushButton#expSearch:focus { border-color: @ACCENT_SOFT; }
 QLabel#expSearchText { color: @MUTED; font-size: 8pt; }
-/* Key legend: a small raised cap. */
-QLabel#expKeycap { color: @FG_DIM; background: @BG3; border: 1px solid @BORDER; border-bottom: 2px solid @BORDER;
-    border-radius: 4px; padding: 0 5px; font-size: 7pt; font-weight: 700; }
-/* Status chips: the power profile and the active scene, on every page. */
-QPushButton#expChip { background: @BG2; color: @FG_DIM; border: 1px solid @BORDER; border-radius: 12px;
-    padding: 0 11px 0 9px; min-height: 22px; font-size: 8pt; font-weight: 600; }
-QPushButton#expChip:hover { color: @FG; background: @BG3; border-color: @ACCENT_LINE; }
-QPushButton#expChip:pressed { background: @BG2; }
+QLabel#expKeycap { color: @MUTED; background: transparent; border: 1px solid @BORDER;
+    border-radius: 4px; padding: 0 4px; font-size: 8pt; font-weight: 600; }
+/* Status chips (power profile, active scene): quiet outlines; the profile keeps its coloured dot. */
+QPushButton#expChip { background: transparent; color: @FG_DIM; border: 1px solid @BORDER_SOFT; border-radius: 6px;
+    padding: 0 @GAP_Spx 0 6px; min-height: @CTRL_FLATpx; font-size: 8pt; font-weight: 500; }
+QPushButton#expChip:hover { color: @FG; background: @HILITE; border-color: @BORDER; }
+QPushButton#expChip:pressed { background: @HILITE2; }
 /* Command palette (Ctrl+K). */
-QDialog#expPalette { background: @BG1; border: 1px solid @EDGE; }
+QDialog#expPalette { background: @BG1; border: 1px solid @BORDER; }
 QLineEdit#experimentalQuickSearch { background: transparent; border: 0; border-radius: 0;
-    padding: 9px 0; font-size: 11pt; }
+    padding: @GAP_Spx 0; font-size: 10pt; }
 QLineEdit#experimentalQuickSearch:focus { background: transparent; border: 0; }
 QListWidget#experimentalQuickResults { background: transparent; border: 0; border-top: 1px solid @BORDER_SOFT;
     border-radius: 0; padding: 6px; }
-QListWidget#experimentalQuickResults::item { padding: 6px 9px; border: 0; border-left: 3px solid transparent;
+QListWidget#experimentalQuickResults::item { padding: 5px 8px; border: 0; border-left: 2px solid transparent;
     border-radius: 6px; color: @FG_DIM; }
 QListWidget#experimentalQuickResults::item:hover:!selected { background: @HILITE; }
-QListWidget#experimentalQuickResults::item:selected { background: @ACCENT_TINT; color: @FG; border-left: 3px solid @ACCENT; }
+QListWidget#experimentalQuickResults::item:selected { background: @HILITE2; color: @FG; border-left: 2px solid @ACCENT; }
 QLabel#expPaletteHint { color: @MUTED; background: @SIDEBAR; border-top: 1px solid @BORDER_SOFT;
-    padding: 7px 16px; font-size: 8pt; }
+    padding: 6px @GAP_Lpx; font-size: 8pt; }
 QTabWidget#expPageStack::pane { border: 0; background: @BG0; }
 QTabWidget#expPageStack > QTabBar { max-height: 0px; }
-/* App-wide visual tokens. Compact, restrained, consistent with all palettes. */
-/* Cards stand clear of the page: a lifted surface with a full hairline and a lit top edge. */
-QGroupBox { background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 @CARD_TOP, stop:1 @CARD_BOT);
-    border: 1px solid @BORDER; border-top-color: @EDGE; border-radius: 10px;
-    margin-top: 0; padding: 31px 10px 8px 10px; color: @FG; font-weight: 600; }
-/* Classic's colour-coded title bar, at Studio density: sections stay scannable. */
+
+/* ── Cards: one flat surface a step above the page, one hairline. The title sits on the
+   content edge; a 2 px marker hangs to its left, coloured only for caution and danger. ── */
+QGroupBox { background: @SURFACE; border: 1px solid @BORDER; border-radius: 8px;
+    margin-top: 0; padding: @HEAD_PADpx @GAP_Mpx @GAP_Mpx @GAP_Mpx; color: @FG; font-weight: 600; }
+QGroupBox[title=""] { padding-top: @GAP_Mpx; }
 QGroupBox::title { subcontrol-origin: border; subcontrol-position: top left;
-    top: 10px; left: 12px; color: @FG; font-size: 10pt;
-    border: 0; border-left: 3px solid @ACCENT; padding: 0 0 0 8px; background: transparent; font-weight: 700; }
-/* The title reads in the text colour; the bar carries the section colour. Only caution/danger tint the text. */
-QGroupBox#box_red::title { color: @DANGER; border-left-color: @DANGER; }
-QGroupBox#box_green::title { color: @FG; border-left-color: @OK; }
-QGroupBox#box_yellow::title { color: @WARN; border-left-color: @WARN; }
-QGroupBox#box_blue::title { color: @FG; border-left-color: @INFO; }
-QGroupBox#box_purple::title { color: @FG; border-left-color: @PURPLE; }
-QGroupBox#box_grey::title { color: @FG_DIM; border-left-color: @MUTED; }
-QGroupBox QGroupBox { background: transparent; border: none; border-top: 1px solid @BORDER_SOFT;
-    padding: 22px 0 0; border-radius: 0; }
+    top: @TITLE_TOPpx; left: 4px; color: @FG; font-size: 10pt; font-weight: 700;
+    border: 0; border-left: 2px solid transparent; padding: 0 0 0 6px; background: transparent; }
+QGroupBox#box_red::title { color: @FG; border-left-color: @DANGER; }
+QGroupBox#box_yellow::title { color: @FG; border-left-color: @WARN; }
+QGroupBox#box_green::title, QGroupBox#box_blue::title, QGroupBox#box_purple::title,
+QGroupBox#box_grey::title { color: @FG; border-left-color: transparent; }
+/* A section inside a section is not another card: a divider and a small heading. */
+QGroupBox QGroupBox { background: transparent; border: 0; border-top: 1px solid @BORDER_SOFT;
+    border-radius: 0; padding: @SUB_HEADpx 0 0 0; }
 QGroupBox QGroupBox::title { left: 0; top: 6px; color: @FG_DIM; border-left: 0; padding: 0; font-size: 8pt; }
-QLabel[role="title"] { color: @FG; font-size: 14pt; font-weight: 700; }
+QLabel[role="title"] { color: @FG; font-size: 13pt; font-weight: 700; }
 QLabel[role="muted"] { color: @MUTED; font-size: 8pt; }
-QPushButton { background: @BG3; border: 1px solid @BORDER;
-    color: @FG; border-radius: 7px; padding: 3px 9px; min-height: 17px;
-    font-weight: 500; }
+
+/* ── Controls: one height on every row (buttons, line edits, combos, spin boxes). ── */
+QPushButton { background: @BG2; border: 1px solid @BORDER; color: @FG; border-radius: 6px;
+    padding: 3px 10px; min-height: @CTRL_MINpx; font-weight: 500; }
 /* One flat ring per state: Classic's lit/shaded edges must not leak through. */
+QPushButton:hover { background: @BG3; border-color: @EDGE; }
+QPushButton:pressed { background: @BG1; border-color: @BORDER; }
 QPushButton:focus { border-color: @ACCENT_SOFT; }
-QPushButton:hover { background: @BG4; border-color: @ACCENT_LINE; }
-QPushButton:pressed { background: @BG2; border-color: @ACCENT_SOFT; }
 QPushButton:checked { background: @ACCENT_TINT; border-color: @ACCENT_SOFT; color: @FG; }
-QPushButton#btnAccent { background: @ACCENT; color: @ON_ACCENT; font-weight: 700;
-    border: 1px solid @ACCENT; }
-QPushButton#btnAccent:hover { background: @ACCENT_HI; border-color: @ACCENT_TOP; }
+QPushButton::menu-indicator { image: url(:/theme/chev-down.png); subcontrol-origin: content;
+    subcontrol-position: center right; width: 8px; height: 8px; }
+QPushButton#btnAccent { background: @ACCENT; color: @ON_ACCENT; font-weight: 600; border: 1px solid @ACCENT; }
+QPushButton#btnAccent:hover { background: @ACCENT_HI; border-color: @ACCENT_HI; }
 QPushButton#btnAccent:pressed { background: @ACCENT_SOFT; border-color: @ACCENT_SOFT; }
 QPushButton#btnAccent:focus { border-color: @FG; }
-QPushButton#btnDanger { color: @DANGER; border-color: @DANGER_SOFT; background: @DANGER_WASH; }
-QPushButton#btnDanger:hover { background: @DANGER_TINT; border-color: @DANGER; }
+/* Destructive: an outline in the danger colour, filled only while pointed at. */
+QPushButton#btnDanger { color: @DANGER; border-color: @DANGER_SOFT; background: transparent; }
+QPushButton#btnDanger:hover { background: @DANGER_WASH; border-color: @DANGER; }
+QPushButton#btnDanger:pressed { background: @DANGER_TINT; }
 QPushButton:disabled, QPushButton#btnAccent:disabled, QPushButton#btnDanger:disabled {
     color: @MUTED; background: transparent; border-color: @BORDER_SOFT; }
-QPushButton#btnMini { font-size: 8pt; padding: 1px 7px; min-height: 15px; }
+QPushButton#btnMini { font-size: 8pt; padding: 1px 8px; min-height: 16px; }
+QToolButton:hover { background: @HILITE; border-color: @BORDER_SOFT; }
 QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox, Int64SpinBox {
     background: @WELL; border: 1px solid @BORDER; color: @FG;
-    border-radius: 7px; padding: 2px 7px; min-height: 18px; }
+    border-radius: 6px; padding: 3px 8px; min-height: @CTRL_MINpx; }
+QComboBox { padding-right: 22px; }
+QSpinBox, QDoubleSpinBox, Int64SpinBox { padding-right: 18px; }
 QLineEdit:hover, QComboBox:hover, QSpinBox:hover, QDoubleSpinBox:hover, Int64SpinBox:hover {
     border-color: @EDGE; }
 QLineEdit:focus, QComboBox:focus, QComboBox:on, QSpinBox:focus, QDoubleSpinBox:focus, Int64SpinBox:focus {
@@ -802,93 +815,84 @@ QLineEdit:focus, QComboBox:focus, QComboBox:on, QSpinBox:focus, QDoubleSpinBox:f
 QLineEdit:disabled, QComboBox:disabled, QSpinBox:disabled, QDoubleSpinBox:disabled, Int64SpinBox:disabled {
     border-color: @BORDER_SOFT; }
 QCheckBox::indicator, QRadioButton::indicator { border: 1px solid @BORDER; }
-QCheckBox::indicator:hover, QRadioButton::indicator:hover { border-color: @ACCENT; }
+QCheckBox::indicator:hover, QRadioButton::indicator:hover { border-color: @ACCENT; background: @WELL; }
 QCheckBox::indicator:checked { background: @ACCENT; border-color: @ACCENT; }
+QRadioButton::indicator:checked { border-color: @ACCENT;
+    background: qradialgradient(cx:0.5, cy:0.5, radius:0.5, fx:0.5, fy:0.5, stop:0 @ACCENT, stop:0.45 @ACCENT, stop:0.5 @WELL, stop:1 @WELL); }
 QCheckBox::indicator:disabled, QRadioButton::indicator:disabled { border-color: @BORDER_SOFT; }
 QCheckBox::indicator:checked:disabled { background: @BG4; border-color: @BG4; }
+/* Sliders: a plain rail, a flat accent fill, a knob with a neutral ring. */
+QSlider::groove:horizontal { background: @WELL; border: 1px solid @BORDER; }
+QSlider::sub-page:horizontal { background: @ACCENT; }
+QSlider::handle:horizontal { background: @ACCENT; border-color: @BORDER; }
+QSlider::handle:horizontal:hover { background: @ACCENT_HI; border-color: @EDGE; }
+QProgressBar { background: @WELL; border: 1px solid @BORDER; }
+QProgressBar::chunk { background: @ACCENT; }
 QPlainTextEdit, QTextEdit, QListView, QTreeView, QTableView {
     background: @WELL; border: 1px solid @BORDER; border-radius: 6px; }
-QTabWidget::pane { border-top: 1px solid @BORDER; background: transparent; }
-/* Sub-tabs: the current one is a soft accent tab standing on the pane rule. */
-QTabBar::tab { padding: 6px 13px; color: @MUTED; border-top-left-radius: 6px; border-top-right-radius: 6px; }
-QTabBar::tab:hover:!selected { background: @HILITE; }
-QTabBar::tab:selected { color: @ACCENT_HI; background: @ACCENT_TINT; border-bottom: 2px solid @ACCENT; }
-QHeaderView::section { background: @BG1; border: 0; border-bottom: 1px solid @BORDER;
-    color: @FG_DIM; font-weight: 600; padding: 4px 7px; }
-QMenu { background: @BG1; border: 1px solid @BORDER; border-top-color: @EDGE; border-radius: 8px; padding: 5px; }
-QMenu::item { border-radius: 5px; }
-QFrame#expInlineDivider { background: @BORDER; border: 0; max-height: 1px; }
-QSplitter::handle:horizontal { background: @BORDER_SOFT; width: 1px; }
-QSplitter::handle:vertical { background: @BORDER_SOFT; height: 1px; }
-QSplitter::handle:hover { background: @ACCENT_SOFT; }
-QFrame#homeDetailCard { background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 @CARD_TOP, stop:1 @CARD_BOT);
-    border: 1px solid @BORDER; border-top-color: @EDGE; border-radius: 10px; }
-QTreeView::item:selected, QListView::item:selected { border-radius: 5px; }
-QTabWidget#homeDetailTabs::pane { border: 0; border-top: 1px solid @BORDER_SOFT; background: transparent; }
-QTabWidget#homeDetailTabs > QTabBar::tab { padding: 5px 10px; }
-QTabWidget#homeDetailTabs > QStackedWidget { background: transparent; }
-QTabWidget#homeDetailTabs > QStackedWidget > QGroupBox { border: 0; background: transparent; padding: 6px 6px 4px 6px; }
+QFrame#expInlineDivider { background: @BORDER_SOFT; border: 0; max-height: 1px; }
 
-/* ── Studio polish: depth from light, not from frames ── */
-/* Top bar lit from above; its lower edge is the profile-coloured signal line (MainWindow::syncStatusChips). */
-QFrame#expTopbar { background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 @BEZEL_TOP, stop:1 @BG0); border-bottom: 0; }
-QLabel#expTopHint { color: @MUTED; font-size: 8pt; padding-bottom: 3px; }
-/* The rail darkens towards its foot; the current page is a marker and a wash, no box. */
-QFrame#expRail { background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 @SIDEBAR, stop:1 @BEZEL_BOT); }
-QPushButton#expNavButton { border-radius: 8px; border-top-left-radius: 3px; border-bottom-left-radius: 3px; }
-QPushButton#expNavButton:checked { color: @FG; border: 1px solid transparent; border-left: 3px solid @ACCENT;
-    background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 @ACCENT_TINT, stop:1 @ACCENT_FADE); }
-QPushButton#expNavButton:focus, QPushButton#expRailToggle:focus, QPushButton#expRailAction:focus,
-QToolButton#lockButton:focus, QPushButton#expChip:focus { border-color: @ACCENT_SOFT; }
-QPushButton#expNavButton:checked:focus { border-left-color: @ACCENT; }
-/* Cards: a softer corner and a shaded foot, so they sit on the page rather than being drawn on it. */
-QGroupBox { border-radius: 12px; border-bottom-color: @BTN_SHADE;
-    background: qradialgradient(cx:0, cy:0, radius:1, fx:0, fy:0, stop:0 @GLOW_ACCENT, stop:0.32 @CARD_TOP, stop:1 @CARD_BOT); }
-/* ...lit from the corner its title sits in, in the section's own colour. */
-QGroupBox#box_red { background: qradialgradient(cx:0, cy:0, radius:1, fx:0, fy:0, stop:0 @GLOW_DANGER, stop:0.32 @CARD_TOP, stop:1 @CARD_BOT); }
-QGroupBox#box_green { background: qradialgradient(cx:0, cy:0, radius:1, fx:0, fy:0, stop:0 @GLOW_OK, stop:0.32 @CARD_TOP, stop:1 @CARD_BOT); }
-QGroupBox#box_yellow { background: qradialgradient(cx:0, cy:0, radius:1, fx:0, fy:0, stop:0 @GLOW_WARN, stop:0.32 @CARD_TOP, stop:1 @CARD_BOT); }
-QGroupBox#box_blue { background: qradialgradient(cx:0, cy:0, radius:1, fx:0, fy:0, stop:0 @GLOW_INFO, stop:0.32 @CARD_TOP, stop:1 @CARD_BOT); }
-QGroupBox#box_purple { background: qradialgradient(cx:0, cy:0, radius:1, fx:0, fy:0, stop:0 @GLOW_PURPLE, stop:0.32 @CARD_TOP, stop:1 @CARD_BOT); }
-QGroupBox#box_grey { background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 @CARD_TOP, stop:1 @CARD_BOT); }
-QFrame#homeDetailCard { border-radius: 12px; border-bottom-color: @BTN_SHADE; }
-/* Sub-tabs: segmented pills on the pane's hairline. */
-QTabBar::tab { margin: 4px 3px 5px 0; padding: 5px 13px; border: 1px solid transparent; border-radius: 7px; background: transparent; }
+/* ── Sub-tabs: flat segments on the pane's hairline; the current one carries a faint accent. ── */
+QTabWidget::pane { border-top: 1px solid @BORDER_SOFT; background: transparent; }
+QTabBar::tab { margin: 2px 2px @GAP_XSpx 0; padding: 4px 10px; color: @MUTED;
+    border: 1px solid transparent; border-radius: 6px; background: transparent; }
 QTabBar::tab:hover:!selected { color: @FG; background: @HILITE; }
-QTabBar::tab:selected { color: @ACCENT_HI; background: @ACCENT_TINT; border: 1px solid @ACCENT_EDGE; }
-/* Health's page list speaks the main rail's language. */
-QTreeWidget#healthNav::item { border-left: 3px solid transparent; border-radius: 7px; border-top-left-radius: 3px;
-    border-bottom-left-radius: 3px; margin: 1px 0; }
-QTreeWidget#healthNav::item:hover:!selected { background: @HILITE; color: @FG; }
-QTreeWidget#healthNav::item:selected { color: @FG; border-left: 3px solid @ACCENT;
-    background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 @ACCENT_TINT, stop:1 @ACCENT_FADE); }
-/* Tables: a quieter header, a clearer current row. */
-QHeaderView::section { font-size: 8pt; padding: 5px 8px; }
+QTabBar::tab:selected { color: @FG; background: @ACCENT_TINT; border-color: @ACCENT_EDGE; }
+QHeaderView::section { background: @BG1; border: 0; border-bottom: 1px solid @BORDER;
+    color: @FG_DIM; font-weight: 600; font-size: 8pt; padding: 4px @GAP_Spx; }
 QTreeView::item:hover:!selected, QTableView::item:hover:!selected { background: @HILITE; }
-/* Menus and the tooltip: one surface, a hairline, the accent only where it points. */
-QMenu::item { padding: 6px 24px 6px 10px; margin: 0 3px; border-left: 2px solid transparent; }
+QTreeView::item:selected, QListView::item:selected { border-radius: 4px; }
+
+/* Home: the detail card is a card like its neighbours; its tab bar stands where a title would. */
+QFrame#homeDetailCard { background: @SURFACE; border: 1px solid @BORDER; border-radius: 8px; }
+QTabWidget#homeDetailTabs::pane { border: 0; border-top: 1px solid @BORDER_SOFT; background: transparent; }
+QTabWidget#homeDetailTabs > QTabBar::tab { padding: 4px 10px; }
+QTabWidget#homeDetailTabs > QStackedWidget { background: transparent; }
+QTabWidget#homeDetailTabs > QStackedWidget > QGroupBox { border: 0; background: transparent; padding: @GAP_Spx @GAP_XSpx @GAP_XSpx @GAP_XSpx; }
+
+/* Health's page list speaks the main rail's language. */
+QTreeWidget#healthNav::item { border-left: 2px solid transparent; border-radius: 6px; border-top-left-radius: 0;
+    border-bottom-left-radius: 0; margin: 1px 0; }
+QTreeWidget#healthNav::item:hover:!selected { background: @HILITE; color: @FG; }
+QTreeWidget#healthNav::item:selected { color: @FG; border-left: 2px solid @ACCENT; background: @HILITE2; }
+
+/* Menus and the tooltip: one surface and a hairline. */
+QMenu { background: @BG1; border: 1px solid @BORDER; border-radius: 8px; padding: @GAP_XSpx; }
+QMenu::item { padding: 5px 24px 5px 10px; margin: 0 3px; border-radius: 5px; border-left: 2px solid transparent; }
 QMenu::item:selected { background: @ACCENT_TINT; color: @FG; border-left-color: @ACCENT; }
-QToolTip { background: @BG2; border: 1px solid @EDGE; border-left: 3px solid @ACCENT; border-radius: 6px; padding: 6px 10px; }
+QToolTip { background: @BG2; color: @FG; border: 1px solid @BORDER; border-radius: 6px; padding: 5px @GAP_Spx; }
 /* Scrollbars: slim, out of the way until hovered. */
-QScrollBar:vertical { width: 9px; margin: 4px 2px 4px 0; }
-QScrollBar:horizontal { height: 9px; margin: 0 4px 2px 4px; }
+QScrollBar:vertical { width: 9px; margin: @GAP_XSpx 2px @GAP_XSpx 0; }
+QScrollBar:horizontal { height: 9px; margin: 0 @GAP_XSpx 2px @GAP_XSpx; }
 QScrollBar::handle:vertical, QScrollBar::handle:horizontal { background: @BORDER; border-radius: 3px; margin: 0; }
-QScrollBar::handle:vertical:hover, QScrollBar::handle:horizontal:hover { background: @ACCENT_SOFT; }
+QScrollBar::handle:vertical:hover, QScrollBar::handle:horizontal:hover { background: @EDGE; }
 )QSS");
     const QColor accent(QString::fromLatin1(ACCENT));
     // Dark foreground on pale accent, white foreground on deep accent.
     const QString onAccent = textOnAccent().name();
     const bool isLight = lightTheme();
     // Longest names first so @BG doesn't eat @BG0 etc.
-    // Card glow: the card's top surface with a trace of a signal colour (opaque, so it stays a card colour).
-    const QByteArray cardTop = mix(BG1, BG2, 0.55).toLatin1();
-    const auto glow = [&cardTop](const char *c) { return mix(cardTop.constData(), c, 0.10); };
+    // Experimental card head: the title 6 px below the edge, content one GAP_S below the title.
+    // Measured from the scaled section font, so a larger typography preference keeps the gap.
+    const auto lineHeight = [](int pt, bool bold) {
+        QFont f = QApplication::font();
+        f.setPointSizeF(qMax(6.0, pt * double(g_typography.points) / FONT_PT));
+        f.setBold(bold);
+        return QFontMetrics(f).height();
+    };
+    const int titleTop = 6;
     const std::pair<const char *, QString> toks[] = {
-        {"@GLOW_ACCENT", glow(ACCENT)}, {"@GLOW_DANGER", glow(DANGER)}, {"@GLOW_OK", glow(OK)}, {"@GLOW_WARN", glow(WARN)},
-        {"@GLOW_INFO", glow(INFO)}, {"@GLOW_PURPLE", glow(PURPLE)},
+        {"@HEAD_PAD", QString::number(titleTop + lineHeight(SECTION_PT, true) + GAP_S)},
+        {"@SUB_HEAD", QString::number(titleTop + lineHeight(SMALL_PT, true) + GAP_S - 2)},
+        {"@TITLE_TOP", QString::number(titleTop)},
+        // Experimental surfaces: a card one step above the page (lighter than the page on light palettes).
+        {"@SURFACE", isLight ? mix(BG0, WELL, 0.55) : mix(BG1, BG2, 0.3)},
+        {"@CTRL_MIN", QString::number(CONTROL_H - 8)}, {"@CTRL_FLAT", QString::number(CONTROL_H - 2)},
+        {"@GAP_XS", QString::number(GAP_XS)}, {"@GAP_S", QString::number(GAP_S)}, {"@GAP_M", QString::number(GAP_M)},
+        {"@GAP_L", QString::number(GAP_L)}, {"@GAP_XL", QString::number(GAP_XL)},
         {"@BORDER_SOFT", BORDER_SOFT}, {"@ACCENT_SOFT", ACCENT_SOFT}, {"@DANGER_SOFT", DANGER_SOFT},
         {"@DANGER_TINT", rgba(DANGER, 0.14)}, {"@DANGER_WASH", rgba(DANGER, 0.05)}, {"@ACCENT_TINT2", rgba(ACCENT, 0.10)},
-        {"@ACCENT_LINE", rgba(ACCENT, 0.32)}, {"@ACCENT_EDGE", rgba(ACCENT, 0.22)}, {"@ACCENT_FADE", rgba(ACCENT, 0.02)}, {"@FOCUS_WELL", mix(WELL, ACCENT, 0.05)}, {"@ACCENT_TINT", rgba(ACCENT, 0.16)}, {"@ACCENT_DEEP", accent.darker(135).name()},
+        {"@ACCENT_LINE", rgba(ACCENT, 0.32)}, {"@ACCENT_EDGE", rgba(ACCENT, 0.22)}, {"@FOCUS_WELL", mix(WELL, ACCENT, 0.05)}, {"@ACCENT_TINT", rgba(ACCENT, 0.16)}, {"@ACCENT_DEEP", accent.darker(135).name()},
         {"@HILITE2", isLight ? QStringLiteral("rgba(0, 0, 0, 0.08)") : QStringLiteral("rgba(255, 255, 255, 0.09)")},
         {"@HILITE", isLight ? QStringLiteral("rgba(0, 0, 0, 0.04)") : QStringLiteral("rgba(255, 255, 255, 0.05)" )}, {"@ACCENT_HALO", rgba(ACCENT, 0.28)},
         {"@ACCENT_TOP", accent.lighter(125).name()}, {"@ACCENT_HI", isLight ? accent.darker(115).name() : accent.lighter(112).name()}, {"@ON_ACCENT", onAccent},
@@ -896,7 +900,7 @@ QScrollBar::handle:vertical:hover, QScrollBar::handle:horizontal:hover { backgro
         // the rail and well shadows below that; edges are the border lifted towards the text colour.
         {"@BEZEL_TOP", mix(BG1, BG0, 0.35)}, {"@BEZEL_BOT", mix(BG0, WELL, 0.55)}, {"@PAGE_BOT", mix(BG0, WELL, 0.65)},
         {"@RAIL_SHADE", isLight ? mix(WELL, BORDER, 0.6) : mix(WELL, "#000000", 0.35)}, {"@RAIL", mix(WELL, BG0, 0.25)},
-        {"@BTN_SHADE", isLight ? mix(BORDER, FG, 0.08) : mix(BORDER, "#000000", 0.35)}, {"@CARD_TOP", mix(BG1, BG2, 0.55)}, {"@CARD_BOT", mix(BG1, BG2, 0.15)}, {"@SIDEBAR", mix(BG0, WELL, 0.6)}, {"@ROW_ALT", mix(WELL, BG1, 0.6)},
+        {"@BTN_SHADE", isLight ? mix(BORDER, FG, 0.08) : mix(BORDER, "#000000", 0.35)}, {"@CARD_TOP", mix(BG1, BG2, 0.55)}, {"@SIDEBAR", mix(BG0, WELL, 0.6)}, {"@ROW_ALT", mix(WELL, BG1, 0.6)},
         {"@KEY_TOP", mix(BG3, BG4, 0.45)}, {"@EDGE", mix(BORDER, FG, 0.13)},
         {"@BRANDW", QString::number(brandInset())}, {"@BRANDPT", QString::number(FONT_PT + 2)},
         {"@FG_DIM", FG_DIM}, {"@BORDER", BORDER}, {"@ACCENT", ACCENT}, {"@DANGER", DANGER},
@@ -932,6 +936,11 @@ public:
     using QProxyStyle::QProxyStyle;
     int pixelMetric(PixelMetric m, const QStyleOption *o = nullptr, const QWidget *w = nullptr) const override {
         if (m == PM_LayoutHorizontalSpacing || m == PM_LayoutVerticalSpacing) return g_compact ? 2 : 4;
+        // Experimental cards: the style sheet's padding is the whole inset. Without this the
+        // default child margin (9 px) was added on top of it, inside every card.
+        if (g_experimental && w && (m == PM_LayoutLeftMargin || m == PM_LayoutTopMargin ||
+                                    m == PM_LayoutRightMargin || m == PM_LayoutBottomMargin) && w->inherits("QGroupBox"))
+            return 0;
         return QProxyStyle::pixelMetric(m, o, w);
     }
     // Used per widget pair when the layout has no spacing at all (the nested case).

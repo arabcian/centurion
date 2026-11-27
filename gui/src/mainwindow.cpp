@@ -437,18 +437,19 @@ void MainWindow::installExperimentalShell() {
     shellLayout->setSpacing(0);
 
     expSplitter_ = new QSplitter(Qt::Horizontal, shell);
+    expSplitter_->setObjectName(QStringLiteral("expShellSplitter"));
     expSplitter_->setChildrenCollapsible(false);
     expSplitter_->setHandleWidth(6);
     shellLayout->addWidget(expSplitter_);
     expRail_ = new QFrame(expSplitter_);
     expRail_->setObjectName(QStringLiteral("expRail"));
     auto *rail = new QVBoxLayout(expRail_);
-    rail->setContentsMargins(6, 8, 6, 6);
-    rail->setSpacing(4);
+    rail->setContentsMargins(theme::GAP_S, theme::GAP_S, theme::GAP_S, theme::GAP_S);
+    rail->setSpacing(theme::GAP_XS);
     auto *brand = new QWidget;
     auto *brandRow = new QHBoxLayout(brand);
-    brandRow->setContentsMargins(5, 4, 0, 7);
-    brandRow->setSpacing(9);
+    brandRow->setContentsMargins(theme::GAP_XS, theme::GAP_XS, 0, theme::GAP_S);
+    brandRow->setSpacing(theme::GAP_S);
     auto *brandIcon = new QLabel;
     brandIcon->setObjectName(QStringLiteral("expBrandIcon"));
     brandIcon->setPixmap(appIcon(64).pixmap(26, 26));
@@ -479,8 +480,8 @@ void MainWindow::installExperimentalShell() {
     auto *nav = new QWidget;
     nav->setObjectName(QStringLiteral("expNavHost"));
     expNavLayout_ = new QVBoxLayout(nav);
-    expNavLayout_->setContentsMargins(0, 4, 0, 0);
-    expNavLayout_->setSpacing(3);
+    expNavLayout_->setContentsMargins(0, theme::GAP_XS, 0, 0);
+    expNavLayout_->setSpacing(2);
     navScroll->setWidget(nav);
     rail->addWidget(navScroll, 1);
     expToggle_ = new QPushButton(tr("Collapse navigation"));
@@ -524,8 +525,8 @@ void MainWindow::installExperimentalShell() {
     auto *top = new QFrame;
     top->setObjectName(QStringLiteral("expTopbar"));
     auto *topRow = new QHBoxLayout(top);
-    topRow->setContentsMargins(18, 7, 14, 7);
-    topRow->setSpacing(8);
+    topRow->setContentsMargins(theme::GAP_L, theme::GAP_XS + 2, theme::GAP_M, theme::GAP_XS + 2);
+    topRow->setSpacing(theme::GAP_S);
     auto *titles = new QVBoxLayout;
     titles->setSpacing(0);
     expPath_ = new QLabel;
@@ -535,7 +536,7 @@ void MainWindow::installExperimentalShell() {
     titles->addWidget(expPath_);
     // The title, then one muted line on what the page is for (clips first on a narrow window).
     auto *titleRow = new QHBoxLayout;
-    titleRow->setSpacing(12);
+    titleRow->setSpacing(theme::GAP_M);
     titleRow->addWidget(expTitle_);
     expHint_ = new QLabel;
     expHint_->setObjectName(QStringLiteral("expTopHint"));
@@ -565,7 +566,6 @@ void MainWindow::installExperimentalShell() {
     connect(scenes_, &SceneEngine::activeSceneChanged, this, &MainWindow::syncStatusChips);
     connect(&pp::Watcher::instance(), &pp::Watcher::changed, this, &MainWindow::syncStatusChips);
     syncStatusChips();
-    topRow->addSpacing(4);
     // A search field in looks, a button in behaviour: it opens the navigator.
     auto *find = new QPushButton;
     find->setObjectName(QStringLiteral("expSearch"));
@@ -576,8 +576,8 @@ void MainWindow::installExperimentalShell() {
     find->setMaximumWidth(292);
     find->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
     auto *findRow = new QHBoxLayout(find);
-    findRow->setContentsMargins(10, 0, 7, 0);
-    findRow->setSpacing(8);
+    findRow->setContentsMargins(theme::GAP_S, 0, theme::GAP_XS, 0);
+    findRow->setSpacing(theme::GAP_S);
     auto *findIcon = new QLabel;
     theme::bindPresentation(findIcon, [findIcon] { findIcon->setPixmap(experimentalui::searchIcon(theme::MUTED).pixmap(14, 14)); });
     auto *findText = new QLabel(tr("Jump to a page or a control"));
@@ -592,10 +592,10 @@ void MainWindow::installExperimentalShell() {
     connect(find, &QPushButton::clicked, this, &MainWindow::showQuickNavigator);
     topRow->addWidget(find, 2);
     column->addWidget(top);
-    // A thin line in the power profile's colour (the Legion power-button LED): the mode reads at a glance.
+    // The top bar's hairline (the profile's colour stays on the chip's dot).
     expSignal_ = new QFrame;
     expSignal_->setObjectName(QStringLiteral("expSignal"));
-    expSignal_->setFixedHeight(2);
+    expSignal_->setFixedHeight(1);
     column->addWidget(expSignal_);
     syncStatusChips();
     tabs_->tabBar()->hide();
@@ -603,7 +603,7 @@ void MainWindow::installExperimentalShell() {
     // A gutter around every page, so content never touches the rail or the window edge.
     auto *pageHost = new QWidget;
     auto *pageLayout = new QVBoxLayout(pageHost);
-    pageLayout->setContentsMargins(8, 6, 8, 4);
+    pageLayout->setContentsMargins(theme::GAP_XS, theme::GAP_XS, theme::GAP_XS, theme::GAP_XS);  // pages add their own 8 px
     pageLayout->addWidget(tabs_);
     column->addWidget(pageHost, 1);
     expSplitter_->addWidget(content);
@@ -925,12 +925,6 @@ void MainWindow::refreshStatusChipTheme() {
     if (!expProfileChip_) return;
     const QString profile = expProfileChip_->property("profileId").toString();
     if (!profile.isEmpty()) expProfileChip_->setIcon(experimentalui::dotIcon(QColor(theme::profileAccent(profile))));
-    if (!expSignal_) return;
-    const QString signal = profile.isEmpty() ? QString::fromLatin1(theme::ACCENT) : theme::profileAccent(profile);
-    const QByteArray hex = signal.toLatin1();
-    theme::setSheet(expSignal_, QStringLiteral("QFrame#expSignal { border: 0; background: qlineargradient(x1:0, y1:0, x2:1, y2:0, "
-                                               "stop:0 %1, stop:0.4 %2, stop:1 %3); }")
-                                    .arg(signal, theme::rgba(hex.constData(), 0.30), QString::fromLatin1(theme::BORDER_SOFT)));
 }
 
 QStringList MainWindow::activeOperations() const {

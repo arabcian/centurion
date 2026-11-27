@@ -10,7 +10,6 @@
 #include <QPainter>
 #include <QPainterPath>
 #include <QIcon>
-#include <QLinearGradient>
 #include <QPixmap>
 #include <QPolygonF>
 #include <QPen>
@@ -145,7 +144,7 @@ inline QIcon searchIcon(const char *color) {
     return QIcon(px);
 }
 
-// Status dot (top bar's power-profile chip): the colour with a soft halo.
+// Status dot (top bar's power-profile chip): a plain dot in the profile's colour.
 inline QIcon dotIcon(const QColor &color) {
     QPixmap px(20, 20);
     px.setDevicePixelRatio(2.0);
@@ -153,10 +152,6 @@ inline QIcon dotIcon(const QColor &color) {
     QPainter p(&px);
     p.setRenderHint(QPainter::Antialiasing);
     p.setPen(Qt::NoPen);
-    QColor halo = color;
-    halo.setAlphaF(0.25);
-    p.setBrush(halo);
-    p.drawEllipse(QPointF(5, 5), 5, 5);
     p.setBrush(color);
     p.drawEllipse(QPointF(5, 5), 3, 3);
     p.end();
@@ -264,52 +259,27 @@ protected:
         auto draw = [&](bool cpu, const QColor &color, const QString &name) {
             QPainterPath path;
             bool inSegment = false;
-            qreal segmentStart = 0;
             std::optional<double> last;
-            // A soft wash under each unbroken run of samples, fading to the baseline.
-            QLinearGradient wash(plot.topLeft(), plot.bottomLeft());
-            QColor top = color, bottom = color;
-            top.setAlphaF(0.20);
-            bottom.setAlphaF(0.0);
-            wash.setColorAt(0, top);
-            wash.setColorAt(1, bottom);
-            QPainterPath run;
-            auto closeRun = [&](qreal endX) {
-                if (run.elementCount() < 2) { run = QPainterPath(); return; }
-                run.lineTo(endX, plot.bottom());
-                run.lineTo(segmentStart, plot.bottom());
-                run.closeSubpath();
-                p.fillPath(run, wash);
-                run = QPainterPath();
-            };
             qreal x = 0;
             qint64 previousMs = -1;
             for (const auto &sample : samples_) {
                 if (sample.ms < firstMs) continue;
                 const auto &value = cpu ? sample.cpu : sample.gpu;
-                if (!value || (previousMs >= 0 && sample.ms - previousMs > 6000)) {
-                    if (inSegment) closeRun(x);
-                    inSegment = false;
-                }
+                if (!value || (previousMs >= 0 && sample.ms - previousMs > 6000)) inSegment = false;
                 previousMs = sample.ms;
                 if (!value) continue;
                 x = plot.right() - (now - sample.ms) * plot.width() / double(rangeMs);
                 const qreal y = plot.bottom() - (std::clamp(*value, 25.0, 105.0) - 25.0) / 80.0 * plot.height();
-                if (inSegment) { path.lineTo(x, y); run.lineTo(x, y); }
-                else { path.moveTo(x, y); run.moveTo(x, y); segmentStart = x; }
+                if (inSegment) path.lineTo(x, y);
+                else path.moveTo(x, y);
                 inSegment = true;
                 last = value;
             }
-            if (inSegment) closeRun(x);
-            p.setPen(QPen(color, 1.8, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+            p.setPen(QPen(color, 1.6, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
             p.drawPath(path);
             const bool live = inSegment && !samples_.isEmpty() && now - samples_.last().ms <= 6000;
-            if (live) {  // the live reading: a dot with a halo
-                QColor halo = color;
-                halo.setAlphaF(0.25);
+            if (live) {  // the live reading: a dot
                 p.setPen(Qt::NoPen);
-                p.setBrush(halo);
-                p.drawEllipse(path.currentPosition(), 5.5, 5.5);
                 p.setBrush(color);
                 p.drawEllipse(path.currentPosition(), 2.6, 2.6);
                 p.setBrush(Qt::NoBrush);
@@ -330,7 +300,7 @@ protected:
             legendRight = label.left() - 28;
         };
         draw(false, QColor(theme::OK), QStringLiteral("GPU"));
-        draw(true, QColor(theme::ACCENT), QStringLiteral("CPU"));
+        draw(true, QColor(theme::INFO), QStringLiteral("CPU"));
     }
 private:
     struct Sample { qint64 ms; std::optional<double> cpu, gpu; };
