@@ -78,12 +78,14 @@ BDEPEND="
 CMAKE_USE_DIR="${S}/gui"
 
 pkg_setup() {
-	# Health -> Network (centurion-netguard); warnings only.
-	if use netguard; then
-		CONFIG_CHECK="~NETFILTER_NETLINK_QUEUE ~NF_TABLES ~NF_TABLES_INET ~NFT_QUEUE
-			~NF_CONNTRACK ~NFT_CT ~INET_DIAG ~INET_TCP_DIAG ~INET_UDP_DIAG ~INET_DIAG_DESTROY"
-		linux-info_pkg_setup
-	fi
+	# Warnings only. /dev/cpu/*/msr: the CPU Curve live readings (power, clocks) and
+	# the Intel undervolt read and write model-specific registers through it.
+	CONFIG_CHECK="~X86_MSR"
+	ERROR_X86_MSR="CONFIG_X86_MSR is not set: CPU Curve live readings and Intel undervolt need /dev/cpu/*/msr"
+	# Health -> Network (centurion-netguard).
+	use netguard && CONFIG_CHECK+=" ~NETFILTER_NETLINK_QUEUE ~NF_TABLES ~NF_TABLES_INET ~NFT_QUEUE
+		~NF_CONNTRACK ~NFT_CT ~INET_DIAG ~INET_TCP_DIAG ~INET_UDP_DIAG ~INET_DIAG_DESTROY"
+	linux-info_pkg_setup
 	# linux-info's exported pkg_setup would otherwise shadow rust's.
 	rust_pkg_setup
 }
