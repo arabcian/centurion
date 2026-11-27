@@ -18319,8 +18319,8 @@ Açık bağlantılar çalışmaya devam eder. Devam edilsin mi?</translation>
             <translation>Çekirdek başına: adım %1. Bir geçişten sonraki ilk hata çekirdeği son geçen değerinde bitirir; hata veren bir Start adım adım yukarı çıkar. Adımı arama sırasında değiştirebilirsiniz.</translation>
         </message>
         <message>
-            <source>20-minute verification</source>
-            <translation>20 dakikalık doğrulama</translation>
+            <source>30-minute verification</source>
+            <translation>30 dakikalık doğrulama</translation>
         </message>
         <message>
             <source>Outdated centurion-cpustress</source>
@@ -18769,14 +18769,14 @@ Saklanan denemeler: %4 · çıkarılan: %5
         <translation>Kalan süre bilinmiyor: stok değerlere sıfırlama doğrulanmadı.</translation>
     </message>
         <message>
-            <source>Finds negative Curve Optimizer offsets with FFT / integer workload and boost/idle transitions. All-core runs 60-second cycles (40 s steady + 20 s transitions) to find one offset for every core, from its Start. Per-core tests one core at a time (the others at stock) from that core&apos;s Start (typed in the table, or taken from a saved preset), going more negative by your step; the first failure ends that core and keeps its last passing value, and nothing as negative as the failed value is tried on it again. If a core&apos;s Start fails, it climbs back towards stock by the step. A value that crashed the machine is never tried on that core again, in any later search either. Untick a core to leave it at stock. The final per-core set is then verified for 20 minutes with the whole curve applied, single-core loads alternating with all-core loads up to the power limit. The curve is reset to stock when the search ends; the result is saved as a Ryzen Curve profile, not applied. Passing is NOT proof of long-term stability. A hard freeze may still require rebooting: the search can resume after it.</source>
-            <translation>FFT / tamsayı iş yükü ve boost/boşta geçişleriyle negatif Curve Optimizer ofsetlerini bulur. Tüm çekirdek modu, her çekirdek için tek bir ofset bulmak üzere kendi Başlangıç değerinden 60 saniyelik döngüler (40 s sabit + 20 s geçiş) çalıştırır. Çekirdek bazlı mod her seferinde tek çekirdeği (diğerleri stokta) o çekirdeğin Başlangıç değerinden (tabloya yazılan ya da kayıtlı bir ön ayardan alınan) test eder ve adımınız kadar daha negatife iner; ilk başarısızlık o çekirdeği bitirir ve son geçen değeri tutar, başarısız değer kadar negatif hiçbir değer o çekirdekte bir daha denenmez. Bir çekirdeğin Başlangıç değeri başarısız olursa adım adım stoka doğru geri çıkar. Makineyi çökerten bir değer o çekirdekte, sonraki aramalarda da, bir daha asla denenmez. Bir çekirdeği stokta bırakmak için işaretini kaldırın. Son çekirdek bazlı set ardından tüm eğri uygulanmış halde 20 dakika doğrulanır; tek çekirdek yükleri güç sınırına kadar tüm çekirdek yükleriyle dönüşümlü çalışır. Arama bittiğinde eğri stoka sıfırlanır; sonuç uygulanmaz, bir Ryzen Eğrisi profili olarak kaydedilir. Geçmek uzun vadeli kararlılığın kanıtı DEĞİLDİR. Tam bir donma yine yeniden başlatma gerektirebilir: arama sonrasında devam edebilir.</translation>
+            <source>Finds negative Curve Optimizer offsets with FFT / integer workload and boost/idle transitions. All-core runs 60-second cycles (40 s steady + 20 s transitions) to find one offset for every core, from its Start. Per-core tests one core at a time (the others at stock) from that core&apos;s Start (typed in the table, or taken from a saved preset), going more negative by your step; the first failure ends that core and keeps its last passing value, and nothing as negative as the failed value is tried on it again. If a core&apos;s Start fails, it climbs back towards stock by the step. A value that crashed the machine is never tried on that core again, in any later search either. Untick a core to leave it at stock. The final per-core set is then verified for 30 minutes with the whole curve applied, single-core loads alternating with all-core loads up to the power limit, and one thread hopping from core to core. The curve is reset to stock when the search ends; the result is saved as a Ryzen Curve profile, not applied. Passing is NOT proof of long-term stability. A hard freeze may still require rebooting: the search can resume after it.</source>
+            <translation>FFT / tamsayı iş yükü ve boost/boşta geçişleriyle negatif Curve Optimizer ofsetlerini bulur. Tüm çekirdek modu, her çekirdek için tek bir ofset bulmak üzere kendi Başlangıç değerinden 60 saniyelik döngüler (40 s sabit + 20 s geçiş) çalıştırır. Çekirdek bazlı mod her seferinde tek çekirdeği (diğerleri stokta) o çekirdeğin Başlangıç değerinden (tabloya yazılan ya da kayıtlı bir ön ayardan alınan) test eder ve adımınız kadar daha negatife iner; ilk başarısızlık o çekirdeği bitirir ve son geçen değeri tutar, başarısız değer kadar negatif hiçbir değer o çekirdekte bir daha denenmez. Bir çekirdeğin Başlangıç değeri başarısız olursa adım adım stoka doğru geri çıkar. Makineyi çökerten bir değer o çekirdekte, sonraki aramalarda da, bir daha asla denenmez. Bir çekirdeği stokta bırakmak için işaretini kaldırın. Son çekirdek bazlı set ardından tüm eğri uygulanmış halde 30 dakika doğrulanır; tek çekirdek yükleri güç sınırına kadar tüm çekirdek yükleriyle dönüşümlü çalışır ve tek bir iş parçacığı çekirdekten çekirdeğe atlar. Arama bittiğinde eğri stoka sıfırlanır; sonuç uygulanmaz, bir Ryzen Eğrisi profili olarak kaydedilir. Geçmek uzun vadeli kararlılığın kanıtı DEĞİLDİR. Tam bir donma yine yeniden başlatma gerektirebilir: arama sonrasında devam edebilir.</translation>
         </message>
         <message>
-            <source>Per-core: 24-second probes (12 s steady + all 10 boost/idle patterns), then a 20-minute verification of the whole set at every level.
+            <source>Per-core: 24-second probes (12 s steady + all 10 boost/idle patterns), then a 30-minute verification of the whole set at every level.
 Fast: 1 probe cycle. Medium: 2 probe cycles. Long: 3 probe cycles.
 All-core trials use full 60-second cycles; its confirmation is 1 / 2 / 3 cycles per core and 1 / 2 / 5 all-core cycles.</source>
-            <translation>Çekirdek bazlı: 24 saniyelik yoklamalar (12 s sabit + 10 boost/boşta deseninin tamamı), ardından her seviyede tüm setin 20 dakikalık doğrulaması.
+            <translation>Çekirdek bazlı: 24 saniyelik yoklamalar (12 s sabit + 10 boost/boşta deseninin tamamı), ardından her seviyede tüm setin 30 dakikalık doğrulaması.
 Hızlı: 1 yoklama döngüsü. Orta: 2 yoklama döngüsü. Uzun: 3 yoklama döngüsü.
 Tüm çekirdek denemeleri tam 60 saniyelik döngüler kullanır; onayı çekirdek başına 1 / 2 / 3 döngü ve 1 / 2 / 5 tüm çekirdek döngüsüdür.</translation>
         </message>
@@ -18797,8 +18797,8 @@ eğri profili uygulayan sahneler sunulmaz. Önceki sahne sonrasında yeniden uyg
             <translation>Profil doğrula…</translation>
         </message>
         <message>
-            <source>Run only the 20-minute verification (per-core profile) or the confirmation (all-core) on a saved Ryzen Curve profile, without searching: after a BIOS update, or when the weather got warmer. A failing core backs off as in a search; the result is saved as a new profile.</source>
-            <translation>Kayıtlı bir Ryzen Eğrisi profilinde arama yapmadan yalnızca 20 dakikalık doğrulamayı (çekirdek bazlı profil) veya onayı (tüm çekirdek) çalıştırır: bir BIOS güncellemesinden sonra ya da havalar ısındığında. Başarısız olan çekirdek aramadaki gibi geri çekilir; sonuç yeni bir profil olarak kaydedilir.</translation>
+            <source>Run only the 30-minute verification (per-core profile) or the confirmation (all-core) on a saved Ryzen Curve profile, without searching: after a BIOS update, or when the weather got warmer. A failing core backs off as in a search; the result is saved as a new profile.</source>
+            <translation>Kayıtlı bir Ryzen Eğrisi profilinde arama yapmadan yalnızca 30 dakikalık doğrulamayı (çekirdek bazlı profil) veya onayı (tüm çekirdek) çalıştırır: bir BIOS güncellemesinden sonra ya da havalar ısındığında. Başarısız olan çekirdek aramadaki gibi geri çekilir; sonuç yeni bir profil olarak kaydedilir.</translation>
         </message>
         <message>
             <source>Crash guards…</source>
@@ -19347,8 +19347,8 @@ Günlük okunamıyor, bu yüzden onu tutmak hiçbir şeyi korumaz ve yalnızca b
             <translation>CPU stres aracı yetenek kontrolü iptal edildi.</translation>
         </message>
         <message>
-            <source>The CPU stress tool did not return valid power-load capabilities. Check that it matches this Centurion version.</source>
-            <translation>CPU stres aracı geçerli güç yükü yetenekleri döndürmedi. Bu Centurion sürümüyle uyumlu olduğunu kontrol edin.</translation>
+            <source>The CPU stress tool did not return the loads this version needs (power, hop). Check that it matches this Centurion version.</source>
+            <translation>CPU stres aracı bu sürümün ihtiyaç duyduğu yükleri (power, hop) döndürmedi. Bu Centurion sürümüyle uyumlu olduğunu kontrol edin.</translation>
         </message>
         <message>
             <source>Waiting for recovery to finish; the journal is still protected.</source>

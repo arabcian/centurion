@@ -25,7 +25,7 @@ and fault-detection behaviour from those documents is unchanged.
    during a trial (after its confirmed stock reset) is no failure at all: a resume runs that trial again.
 6. **Unticked cores** (Core column checkboxes, per-core mode) stay at stock in every probe, in the confirmation and
    in the saved profile. The selection is remembered in the CO Search settings.
-7. When every core is done, the whole set gets the **20-minute verification** (below). A failure backs the named
+7. When every core is done, the whole set gets the **30-minute verification** (below). A failure backs the named
    core(s) off by 1 (2 after a crash), or every undervolted core when no core can be named, and the verification
    runs again. A crash during it has no single culprit and is not stored as a per-core guard.
 
@@ -43,7 +43,7 @@ further with the given step.
 The global start moved to all-core (*All-core start*, default -5 = the previous fixed behaviour). All-core still
 descends by 5 and by 1 after a failure; a failed start keeps the steps of 5 from stock down to it.
 
-## 20-minute verification (per-core)
+## 30-minute verification (per-core)
 
 The whole found curve is applied for every part; each part stops at the first wrong result, and kernel / MCA
 events are checked as for every trial. Light and heavy parts alternate, so single cores are also tested on a hot
@@ -54,13 +54,14 @@ package and right after large current steps.
 | 1 | `percore --load co --seconds 24 --kernel 0`, each undervolted core in turn | 384 s | One busy core: the shared voltage rail follows that core's request alone, at its highest boost, with the lightest kernel (FFT-SSE) — where CO offsets fail first — plus all ten boost/idle patterns. First, as it fails fastest. |
 | 2 | `allcore --load power --seconds 180` | 180 s | Every thread at the package power limit: highest current, voltage droop, heat. |
 | 3 | `allcore --load co --cycles 2 --kernel 1` | 120 s | Right after it, on a hot CPU: FFT-AVX then NTT, current steps, a changing number of busy cores, a lone core boosting in turn. |
-| 4 | `percore --load co --seconds 24 --cycles N --kernel 2` | 384 s | More single-core cycles with the other kernels (NTT's integer multiplier, then FFT-AVX, …). |
-| 5 | `percore --load sse --seconds S --transitions` | – | Only if at least 5 s per core are left: different code with random 1–200 ms idle pauses. |
-| 6 | `allcore --load power --seconds R` | 132 s | Power limit again, for the rest of the 20 minutes (at least 60 s). |
+| 4 | `percore --load hop --seconds 300`, the undervolted cores | 300 s | Only with two or more undervolted cores: one thread jumping between them every 0.3–60 ms, with and without idle waits, over every ordered pair: a core waking into its highest boost while the shared rail moves from the previous core's request to its own (`docs/CO_STRESS_RESEARCH_2026-11-27.md`). |
+| 5 | `percore --load co --seconds 24 --cycles N --kernel 2` | 384 s | More single-core cycles with the other kernels (NTT's integer multiplier, then FFT-AVX, …). |
+| 6 | `percore --load sse --seconds S --transitions` | 288 s | Only if at least 5 s per core are left: different code with random 1–200 ms idle pauses. |
+| 7 | `allcore --load power --seconds R` | 144 s | Power limit again, for the rest of the 30 minutes (at least 130 s). |
 
-Only undervolted cores are loaded alone. The parts add up to 1,200 s; with more than 35 undervolted cores parts
-1, 2, 3 and 6 alone exceed it and the verification is that long. With 8 cores part 4 runs 3 cycles and part 5
-fits (9 s per core).
+Only undervolted cores are loaded alone. The parts add up to 1,800 s; with more than 44 undervolted cores parts
+1, 2, 3, 4 and 7 alone exceed it and the verification is that long. With 8 cores part 5 runs 4 cycles and part 6
+gets 13 s per core.
 
 ### Low-load wakeups in CO cycles
 
