@@ -121,6 +121,18 @@ Pil değişimi bu kayıtlardan belirlenemez.</translation></message>
     <context>
         <name>BootPage</name>
         <message>
+            <source>Clear highlight</source>
+            <translation>Vurgulamayı kaldır</translation>
+        </message>
+        <message>
+            <source>%1 boot(s) highlighted: %2</source>
+            <translation>%1 açılış vurgulandı: %2</translation>
+        </message>
+        <message>
+            <source>(%1 no longer in the recorded history)</source>
+            <translation>(%1 tanesi artık kayıtlı geçmişte yok)</translation>
+        </message>
+        <message>
             <source>Flight recorder:</source>
             <translation>Uçuş kaydedici:</translation>
         </message>
@@ -1579,6 +1591,14 @@ Bir adım geri alınamadı; "Lenovo logosuna dön" varsayılanı geri getirir.</
     </context>
     <context>
         <name>HealthTab</name>
+        <message>
+            <source>Diagnostics</source>
+            <translation>Tanılama</translation>
+        </message>
+        <message>
+            <source>What went wrong: every boot and its faults, this boot's evidence, and checks that compare boots and versions.</source>
+            <translation>Neyin ters gittiği: her açılış ve hataları, bu açılışın kanıtları ve açılışları ile sürümleri karşılaştıran denetimler.</translation>
+        </message>
         <message>
             <source>Could not clear all saved log files.</source>
             <translation>Kayıtlı günlük dosyalarının tümü temizlenemedi.</translation>
@@ -19499,6 +19519,10 @@ Günlük okunamıyor, bu yüzden onu tutmak hiçbir şeyi korumaz ve yalnızca b
     <context>
         <name>diag</name>
         <message>
+            <source>Show these %1 boot(s) in Boot History.</source>
+            <translation>Bu %1 açılışı Açılış geçmişi'nde göster.</translation>
+        </message>
+        <message>
             <source>The requested EDID bytes are missing or invalid.</source>
             <translation>İstenen EDID baytları eksik veya geçersiz.</translation>
         </message>
@@ -20055,8 +20079,8 @@ Günlük okunamıyor, bu yüzden onu tutmak hiçbir şeyi korumaz ve yalnızca b
             <translation>%3 ile %2 temiz saatte %1 hata, %6 ile %5 saatte %4 (şans eseri olasılığı: %7).</translation>
         </message>
         <message>
-            <source>Events &amp; alerts lists them by kind; Curve stability shows whether they follow a curve rather than the update.</source>
-            <translation>Olaylar ve uyarılar bunları türlerine göre listeler; Eğri kararlılığı güncellemeyi değil bir eğriyi izleyip izlemediklerini gösterir.</translation>
+            <source>Click Review to see the boots these faults happened in; Curve stability shows whether they follow a curve rather than the update.</source>
+            <translation>Bu hataların yaşandığı açılışları görmek için İncele'ye tıkla; Eğri kararlılığı güncellemeyi değil bir eğriyi izleyip izlemediklerini gösterir.</translation>
         </message>
         <message>
             <source>No version change was followed by a clear rise in unclean shutdowns or faults</source>
@@ -25249,6 +25273,10 @@ Satırlar sıralamadan bağımsız karşılaştırılır; değişen satırlar si
     <context>
         <name>AdvancedHealthPage</name>
         <message>
+            <source>More checks</source>
+            <translation>Diğer denetimler</translation>
+        </message>
+        <message>
             <source>Investigations read what Centurion already records (boot history, saved kernel logs, sleep log, CO Search records) and say what it means. Nothing runs until you press Run; no hardware setting is changed.</source>
             <translation>İncelemeler, Centurion'ın zaten tuttuğu kayıtları (açılış geçmişi, kaydedilen çekirdek günlükleri, uyku günlüğü, CO Arama kayıtları) okur ve ne anlama geldiklerini söyler. Çalıştır'a basmadan hiçbir şey çalışmaz; hiçbir donanım ayarı değiştirilmez.</translation>
         </message>
@@ -28364,4 +28392,31 @@ Set a 4-digit PIN now? The administrator password is asked once to store it.</so
             <translation>İki PIN birbirinden farklı.</translation>
         </message>
 </context>
+    <context>
+        <name>DiagnosticsPage</name>
+        <message>
+            <source>Boot History</source>
+            <translation>Açılış geçmişi</translation>
+        </message>
+        <message>
+            <source>This Boot</source>
+            <translation>Bu açılış</translation>
+        </message>
+        <message>
+            <source>Findings</source>
+            <translation>Bulgular</translation>
+        </message>
+        <message>
+            <source>Every boot: how it ended, its kernel events and faults, the curves in effect, crash records and patterns.</source>
+            <translation>Her açılış: nasıl bittiği, çekirdek olayları ve hataları, geçerli eğriler, çökme kayıtları ve örüntüler.</translation>
+        </message>
+        <message>
+            <source>The running boot's own evidence: machine checks, PCIe errors, NVIDIA Xid, F2FS failures and radio firmware faults.</source>
+            <translation>Çalışan açılışın kendi kanıtı: makine denetimleri, PCIe hataları, NVIDIA Xid, F2FS hataları ve telsiz yazılımı arızaları.</translation>
+        </message>
+        <message>
+            <source>Checks that compare boots and versions (did an update make things worse?), plus NVMe, USB, sleep and GPU memory checks.</source>
+            <translation>Açılışları ve sürümleri karşılaştıran denetimler (güncelleme işleri kötüleştirdi mi?) ile NVMe, USB, uyku ve GPU belleği denetimleri.</translation>
+        </message>
+    </context>
 </TS>

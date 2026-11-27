@@ -22,6 +22,8 @@ struct Finding {
     // A change that does it (sysadmin-helper request, see sysadmin.h); empty = only the text above.
     QString fixLabel;
     QJsonObject fix;
+    // Boot ids (Boot History's own ids) the finding is about: the card offers to show exactly these boots.
+    QStringList bootIds;
     void setFix(const QString &label, const QJsonObject &request) { fixLabel = label; fix = request; }
 };
 

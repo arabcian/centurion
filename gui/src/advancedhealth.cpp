@@ -23,6 +23,7 @@
 #include <QLabel>
 #include <QLineEdit>
 #include <QScrollBar>
+#include <QStandardItemModel>
 #include <QSignalBlocker>
 #include <QPlainTextEdit>
 #include <QPointer>
@@ -133,8 +134,14 @@ AdvancedHealthPage::AdvancedHealthPage(QWidget *parent) : QWidget(parent) {
     v->addWidget(help);
     auto *top = new QHBoxLayout;
     feature_ = new QComboBox;
-    for (const auto &[code, name] : features())
+    for (const auto &[code, name] : features()) {
+        if (QLatin1String(code) == QLatin1String("H06")) {  // the everyday checks above, the rest under one heading
+            feature_->addItem(QStringLiteral("── ") + tr("More checks") + QStringLiteral(" ──"), QString());
+            if (auto *model = qobject_cast<QStandardItemModel *>(feature_->model()))
+                model->item(feature_->count() - 1)->setEnabled(false);
+        }
         feature_->addItem(tr(name), QString::fromLatin1(code));
+    }
     top->addWidget(feature_, 1);
     category_ = new QComboBox;
     for (const advanceddiagnostics::TriageCategory &c : advanceddiagnostics::triageCategories())
@@ -160,6 +167,8 @@ AdvancedHealthPage::AdvancedHealthPage(QWidget *parent) : QWidget(parent) {
 
     stack_ = new QStackedWidget;
     view_ = new DiagReportView;
+    view_->setCompact(true);  // snapshot, history and evidence tools behind one "More…" menu
+    connect(view_, &DiagReportView::showBoots, this, &AdvancedHealthPage::showBoots);
     stack_->addWidget(view_);
     // H17: incidents on the left, what one means and its note on the right.
     incidentPage_ = new QWidget;

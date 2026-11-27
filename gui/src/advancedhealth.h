@@ -40,6 +40,8 @@ public:
 Q_SIGNALS:
     /// A "Look next" link: a Health page or System tool (toolcatalog::relatedFor).
     void openTarget(const QString &target);
+    /// A finding about boots was clicked (see DiagReportView::showBoots).
+    void showBoots(const QStringList &bootIds, const QString &why);
 
 private:
     void showRelated(const QStringList &targets);

@@ -88,6 +88,7 @@ add_executable(centurion
     src/diagnostictools.cpp src/diagnostictools.h
     src/healthevidence.cpp src/healthevidence.h
     src/advanceddiagnostics.cpp src/advanceddiagnostics.h
+    src/diagnosticspage.cpp src/diagnosticspage.h
     src/advancedhealth.cpp src/advancedhealth.h
     src/diagreport.cpp   src/diagreport.h
     src/diagreportview.cpp src/diagreportview.h

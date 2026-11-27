@@ -24,7 +24,7 @@
 #include "privileged.h"
 #include "sysinfo.h"
 #include "systools.h"
-#include "healthevidence.h"
+#include "diagnosticspage.h"
 #include "advancedhealth.h"
 #include "advanceddiagnostics.h"
 #include "theme.h"
@@ -163,6 +163,7 @@ private:
 static QString pageAbout(const QString &key) {
     static const QHash<QString, const char *> ABOUT = {
         {QStringLiteral("overview"), QT_TRANSLATE_NOOP("HealthTab", "One card per area with its level, and suggested next steps.")},
+        {QStringLiteral("diagnostics"), QT_TRANSLATE_NOOP("HealthTab", "What went wrong: every boot and its faults, this boot's evidence, and checks that compare boots and versions.")},
         {QStringLiteral("evidence"), QT_TRANSLATE_NOOP("HealthTab", "MCE topology, AER changes, NVIDIA Xid cases, F2FS failures and radio firmware faults.")},
         {QStringLiteral("investigations"), QT_TRANSLATE_NOOP("HealthTab", "Read-only boot regression, NVMe, USB, sleep, CO, GPU and incident investigations.")},
         {QStringLiteral("monitor"), QT_TRANSLATE_NOOP("HealthTab", "Hardware and driver errors from the kernel, explained, with saved history per day.")},
@@ -294,17 +295,17 @@ HealthTab::HealthTab(QWidget *parent) : QWidget(parent) {
     addPage(general, overview_, tr("System Overview"), QStringLiteral("overview"));
     auto *monitor = new QWidget;
     addPage(problems, monitor, tr("Events & Alerts"), QStringLiteral("monitor"));
-    addPage(problems, new HealthEvidencePage, tr("Evidence Lab"), QStringLiteral("evidence"));
-    investigations_ = new AdvancedHealthPage;
-    addPage(problems, investigations_, tr("Investigations"), QStringLiteral("investigations"));
+    // Boot History, this boot's evidence and the checks that compare boots: one page, three tabs.
+    diagnostics_ = new DiagnosticsPage;
+    investigations_ = diagnostics_->findings();
+    boot_ = diagnostics_->boots();
+    addPage(problems, diagnostics_, tr("Diagnostics"), QStringLiteral("diagnostics"));
     investigations_->setTargetLabel([this](const QString &target) { return targetLabel(target); });
     connect(investigations_, &AdvancedHealthPage::openTarget, this, [this](const QString &target) { navigateTo(target); });
     connect(overview_, &OverviewPage::triage, this, [this](const QString &category) {
-        showPage(investigations_);
+        showDiagnostics(DiagnosticsPage::Findings);
         investigations_->startTriage(category);
     });
-    boot_ = new BootPage;
-    addPage(problems, boot_, tr("Boot History"), QStringLiteral("boot"));
     addPage(problems, insights::capabilityPage(), tr("Capability Doctor"), QStringLiteral("capabilities"));
 
     auto *curves = new CurvePage;
@@ -486,7 +487,11 @@ HealthTab::HealthTab(QWidget *parent) : QWidget(parent) {
             showToolCatalog();  // clicking the currently selected rail item is also a navigation action
     });
     connect(navSearch, &QLineEdit::textChanged, this, &HealthTab::filterNavigation);
-    const QString lastPage = guiSettings().value(QStringLiteral("health/page"), QStringLiteral("overview")).toString();
+    QString lastPage = guiSettings().value(QStringLiteral("health/page"), QStringLiteral("overview")).toString();
+    if (const int tab = DiagnosticsPage::tabForKey(lastPage); tab >= 0) {   // a page of an earlier version
+        diagnostics_->showTab(static_cast<DiagnosticsPage::Tab>(tab));
+        lastPage = QStringLiteral("diagnostics");
+    }
     QTreeWidgetItem *initial = pageItems_.value(overview_);
     for (auto it = pageItems_.cbegin(); it != pageItems_.cend(); ++it) {
         if (it.value()->data(0, Qt::UserRole).toString() == lastPage) { initial = it.value(); break; }
@@ -499,7 +504,7 @@ HealthTab::HealthTab(QWidget *parent) : QWidget(parent) {
     connect(overview_, &OverviewPage::openPage, this, [monitor, this](const QString &target) {
         QWidget *page = nullptr;
         if (target == QLatin1String("monitor")) page = monitor;
-        else if (target == QLatin1String("boot")) page = boot_;
+        else if (target == QLatin1String("boot")) { diagnostics_->showTab(DiagnosticsPage::Boots); page = diagnostics_; }
         else if (target == QLatin1String("backup")) page = backup_;
         else if (target == QLatin1String("battery")) page = findChild<BatteryPage *>();
         else if (target == QLatin1String("cooling")) page = cooling_;
@@ -532,7 +537,7 @@ HealthTab::HealthTab(QWidget *parent) : QWidget(parent) {
     bandText_->setWordWrap(true);
     bandRow->addWidget(bandText_, 1);
     auto *bBandShow = new QPushButton(tr("Show"));
-    connect(bBandShow, &QPushButton::clicked, this, [this] { showPage(boot_); });
+    connect(bBandShow, &QPushButton::clicked, this, [this] { showDiagnostics(DiagnosticsPage::Boots); });
     bandRow->addWidget(bBandShow);
     auto *bBandHide = new QPushButton(tr("Dismiss"));
     connect(bBandHide, &QPushButton::clicked, this, [this] {
@@ -1092,6 +1097,11 @@ void HealthTab::showPage(QWidget *page) {
     pages_->setCurrentWidget(page);
 }
 
+void HealthTab::showDiagnostics(int tab) {
+    diagnostics_->showTab(static_cast<DiagnosticsPage::Tab>(tab));
+    showPage(diagnostics_);
+}
+
 void HealthTab::addToolPage(QWidget *page, const QString &label, const QString &key) {
     addTool(page, label, key);
     if (toolResults_) {
@@ -1552,6 +1562,7 @@ QList<HealthTab::NavigationEntry> HealthTab::navigationEntries() const {
 }
 
 QWidget *HealthTab::pageByKey(const QString &key) const {
+    if (DiagnosticsPage::tabForKey(key) >= 0) return diagnostics_;   // Boot History, Evidence Lab and Investigations are tabs now
     for (auto it = pageItems_.cbegin(); it != pageItems_.cend(); ++it)
         if (it.value()->data(0, Qt::UserRole).toString() == key) return it.key();
     return nullptr;
@@ -1563,6 +1574,8 @@ QString HealthTab::targetLabel(const QString &target) const {
         return t ? t->label : QString();
     }
     if (target.startsWith(QLatin1String("page:"))) {
+        if (const int tab = DiagnosticsPage::tabForKey(target.mid(5)); tab >= 0)
+            return pageItems_.value(diagnostics_)->text(0) + QStringLiteral(" › ") + diagnostics_->tabTitle(tab);
         QWidget *page = pageByKey(target.mid(5));
         return page ? pageItems_.value(page)->text(0) : QString();
     }
@@ -1580,6 +1593,8 @@ bool HealthTab::navigateTo(const QString &target) {
     if (target.startsWith(QLatin1String("page:"))) {
         QWidget *page = pageByKey(target.mid(5));
         if (!page) return false;
+        if (const int tab = DiagnosticsPage::tabForKey(target.mid(5)); tab >= 0)
+            diagnostics_->showTab(static_cast<DiagnosticsPage::Tab>(tab));
         if (page == toolDirectory_ && toolMode_->currentIndex() != 0) {
             const bool was = replaying_;
             replaying_ = true;
