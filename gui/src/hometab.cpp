@@ -215,6 +215,18 @@ static QPushButton *profileButton(const QString &label, const QString &profile) 
         const QString accent = theme::profileAccent(profile);
         b->setIcon(profileDot(accent));
         const QByteArray a = accent.toLatin1();
+        if (theme::experimentalEnabled()) {
+            // Flat keys: the profile's colour is its marker; the active key is a raised neutral surface.
+            b->setStyleSheet(QStringLiteral(
+                "QPushButton { background: transparent; color: %1; border: 1px solid transparent; border-left: 2px solid %2;"
+                " border-radius: 6px; border-top-left-radius: 0; border-bottom-left-radius: 0;"
+                " padding: 3px 12px 3px 10px; font-weight: 500; text-align: left; }"
+                "QPushButton:hover { background: %3; color: %4; }"
+                "QPushButton:checked { background: %5; color: %4; border-color: %6; border-left-color: %7; font-weight: 600; }")
+                .arg(theme::FG_DIM, theme::rgba(a.constData(), 0.45), theme::rgba(theme::FG, 0.05), theme::FG,
+                     theme::rgba(theme::FG, 0.08), theme::BORDER, accent));
+            return;
+        }
         // A plate per profile with its LED colour on the left edge; the active one is lit
         // (a wash of its colour fading to the right, a matching hairline frame).
         b->setStyleSheet(QStringLiteral(
@@ -597,7 +609,8 @@ HomeTab::HomeTab(QWidget *parent) : QWidget(parent), handler_(pp::primaryHandler
     navigationtargets::mark(profileBox, QStringLiteral("home.power"), QStringLiteral("Power Profile"), QStringLiteral("platform profile güç profili"));
     profileBox->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Expanding);
     grid_ = new QGridLayout(profileBox);
-    grid_->setContentsMargins(6, 2, 6, 4);
+    if (theme::experimentalEnabled()) grid_->setContentsMargins(0, 0, 0, 0);  // the card's padding is the inset
+    else grid_->setContentsMargins(6, 2, 6, 4);
     grid_->setHorizontalSpacing(8);
     grid_->setVerticalSpacing(4);
 
@@ -672,10 +685,11 @@ HomeTab::HomeTab(QWidget *parent) : QWidget(parent), handler_(pp::primaryHandler
         auto *gridHost = new QWidget;
         if (experimental) gridHost->setObjectName(QStringLiteral("homeWorkspace"));
         auto *cells = new QGridLayout(gridHost);
-        cells->setContentsMargins(0,0,0,0); cells->setSpacing(6);
+        cells->setContentsMargins(0,0,0,0); cells->setSpacing(experimental ? theme::GAP_S : 6);
         int index = 0;
         for (const auto &entry : panels) if (entry.second) {
-            entry.second->setSizePolicy(QSizePolicy::Preferred,QSizePolicy::Expanding);
+            // Experimental: cards take their content's height; the page's leftover space goes below them.
+            entry.second->setSizePolicy(QSizePolicy::Preferred,experimental ? QSizePolicy::Preferred : QSizePolicy::Expanding);
             cells->addWidget(entry.second,index/2,index%2); ++index;
         }
         // Only a window too small for the content scrolls.
@@ -701,7 +715,7 @@ HomeTab::HomeTab(QWidget *parent) : QWidget(parent), handler_(pp::primaryHandler
             if (defaultOrder.contains(id) && !order->contains(id)) order->append(id);
         for (const auto &id : defaultOrder) if (!order->contains(id)) order->append(id);
         auto layoutState=std::make_shared<QPair<QList<QWidget *>,int>>();
-        auto arrange = [cells,panels,order,layoutState](int width) {
+        auto arrange = [cells,panels,order,layoutState,experimental](int width) {
             auto &[lastVisible,lastColumns]=*layoutState;
             QList<QWidget *> visible;
             for (const auto &id : *order) for (const auto &entry : panels)
@@ -715,7 +729,8 @@ HomeTab::HomeTab(QWidget *parent) : QWidget(parent), handler_(pp::primaryHandler
             for (int i=0; i<visible.size(); ++i)
                 cells->addWidget(visible[i],i/columns,i%columns,1,columns==2 && i==visible.size()-1 && i%2==0 ? 2:1);
             cells->setColumnStretch(0,1); cells->setColumnStretch(1,columns==2?1:0);
-            for (int i=0; i<4; ++i) cells->setRowStretch(i,i==(visible.size()-1)/columns?1:0);
+            const int rows = int(visible.size()+columns-1)/columns;
+            for (int i=0; i<5; ++i) cells->setRowStretch(i,experimental ? (i==rows?1:0) : (i==(visible.size()-1)/columns?1:0));
         };
         // New children are hidden only by an explicit visibility choice, not because Home itself is hidden.
         profileBox->show(); if (dev) dev->show();
@@ -781,7 +796,12 @@ HomeTab::HomeTab(QWidget *parent) : QWidget(parent), handler_(pp::primaryHandler
             if (sensorDetail) sensorDetail->setChecked(true);
             arrange(scroll->viewport()->width());
         });
-        root->addWidget(dashboardMenu,0,Qt::AlignRight);
+        if (experimental) {  // beside Preferences: one header row instead of a row of its own
+            dashboardMenu->setObjectName(QStringLiteral("btnMini"));
+            headRow->addWidget(dashboardMenu, 0, Qt::AlignVCenter);
+        } else {
+            root->addWidget(dashboardMenu,0,Qt::AlignRight);
+        }
         scroll->reflow=arrange;
         arrange(scroll->viewport()->width());
         root->addWidget(scroll, 1);
