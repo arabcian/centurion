@@ -8,6 +8,7 @@
 #include "privileged.h"
 #include "systools.h"
 #include "theme.h"
+#include "unlock.h"
 #include "workspacestate.h"
 #include "socketbind.h"
 #include "processidentity.h"
@@ -50,6 +51,7 @@
 #include <QLocale>
 #include <QJsonDocument>
 #include <QLabel>
+#include <QStackedLayout>
 #include <QLineEdit>
 #include <QListWidget>
 #include <QMenu>
@@ -257,7 +259,23 @@ static std::optional<wifiage::Ranges> wifiRange(const QJsonObject &network) {
 }
 
 NetPage::NetPage(QWidget *parent) : QWidget(parent) {
-    auto *v = new QVBoxLayout(this);
+    // Nothing of this page (connections, logs, rules, Wi-Fi, firewall) is shown, read or polled until the window is unlocked.
+    stack_ = new QStackedLayout(this);
+    stack_->setContentsMargins(0, 0, 0, 0);
+    auto *content = new QWidget;
+    auto *lockedView = new QWidget;
+    auto *lockedBox = new QVBoxLayout(lockedView);
+    lockedBox->addStretch(1);
+    auto *lockedText = new QLabel(tr("Network Protection is locked.\nUnlock the window to see connections, logs and rules."));
+    lockedText->setAlignment(Qt::AlignCenter);
+    lockedBox->addWidget(lockedText);
+    auto *unlockBtn = new QPushButton(tr("Unlock…"));
+    connect(unlockBtn, &QPushButton::clicked, this, [this] { unlock::Manager::instance().requestUnlock(this); });
+    lockedBox->addWidget(unlockBtn, 0, Qt::AlignCenter);
+    lockedBox->addStretch(1);
+    stack_->addWidget(lockedView);  // 0
+    stack_->addWidget(content);     // 1
+    auto *v = new QVBoxLayout(content);
     v->setContentsMargins(8, 6, 8, 6);
     v->setSpacing(6);
 
@@ -1085,6 +1103,22 @@ NetPage::NetPage(QWidget *parent) : QWidget(parent) {
     connect(watch_, &QFileSystemWatcher::directoryChanged, settle, qOverload<>(&QTimer::start));
     watchLog();
     readLog(false);
+
+    connect(&unlock::Manager::instance(), &unlock::Manager::changed, this, [this](bool) { applyLock(); });
+    stack_->setCurrentIndex(unlock::Manager::instance().unlocked() ? 1 : 0);
+}
+
+void NetPage::applyLock() {
+    const bool open = unlock::Manager::instance().unlocked();
+    stack_->setCurrentIndex(open ? 1 : 0);
+    if (!isVisible()) return;
+    if (open) {
+        QShowEvent e;
+        showEvent(&e);
+    } else {
+        QHideEvent e;
+        hideEvent(&e);
+    }
 }
 
 void NetPage::watchLog() {
@@ -1095,6 +1129,7 @@ void NetPage::watchLog() {
 
 void NetPage::showEvent(QShowEvent *e) {
     QWidget::showEvent(e);
+    if (!unlock::Manager::instance().unlocked()) return;
     runUser({{"op", "status"}}, [this](const QJsonObject &s) { applyStatus(s); });
     watchLog();
     readLog(false);
@@ -1113,6 +1148,7 @@ void NetPage::hideEvent(QHideEvent *e) {
 
 /// The connection list and the connection log refresh only while they are what the user is looking at.
 void NetPage::poll() {
+    if (!unlock::Manager::instance().unlocked()) { timer_->stop(); wifiTimer_->stop(); return; }
     if (isVisible() && tabs_->currentIndex() == wifiTab_) {
         refreshWifi();
         if (wifiPages_->currentIndex() == 2) refreshWifiNets();
