@@ -219,6 +219,16 @@ impl Printer {
     }
 }
 
+fn worker_issue(cpu: usize, result: std::thread::Result<Result<u64, String>>) -> Option<String> {
+    let reason = match result {
+        Ok(Ok(0)) => "no chunks completed".into(),
+        Ok(Ok(_)) => return None,
+        Ok(Err(error)) => error,
+        Err(_) => "worker panicked".into(),
+    };
+    Some(format!("CPU {cpu}: {reason}"))
+}
+
 /// Prints the `end` line and returns the exit code that goes with its status.
 fn end(status: &str, t: f64, chunks: u64, errors: u64, failed: &[usize], msg: &str) -> i32 {
     emit(&json!({"ev": "end", "status": status, "t": t, "chunks": chunks, "errors": errors, "failed": failed, "msg": msg}));
@@ -263,6 +273,7 @@ fn run(a: &Args) -> i32 {
     let span = Duration::from_secs(a.seconds);
     let pause_at = |start: Instant| a.transitions.then(|| start + span * 2 / 3);
 
+    let mut incomplete = None;
     if a.per_core {
         'outer: for cycle in 0..a.cycles {
             for &cpu in &tested {
@@ -279,11 +290,14 @@ fn run(a: &Args) -> i32 {
                     p.drain(&sh);
                     p.progress(&sh, t0, Some(cpu));
                 }
-                let r = h.join().unwrap_or_else(|_| Err("worker panicked".into()));
+                let issue = worker_issue(cpu, h.join());
                 p.drain(&sh);
                 let errs = sh.errors.load(Ordering::Relaxed) - errs_before;
                 let mut v = json!({"ev": "core_end", "t": secs(t0), "cpu": cpu, "chunks": sh.chunks.load(Ordering::Relaxed) - chunks_before, "errors": errs});
-                if let Err(e) = r { v["skipped"] = json!(e); }
+                if let Some(issue) = issue {
+                    v["skipped"] = json!(issue);
+                    incomplete.get_or_insert(issue);
+                }
                 emit(&v);
             }
         }
@@ -299,7 +313,10 @@ fn run(a: &Args) -> i32 {
             p.progress(&sh, t0, None);
         }
         for (cpu, h) in hs {
-            if let Ok(Err(e)) = h.join() { eprintln!("centurion-cpustress: CPU {cpu}: {e}"); }
+            if let Some(issue) = worker_issue(cpu, h.join()) {
+                eprintln!("centurion-cpustress: {issue}");
+                incomplete.get_or_insert(issue);
+            }
         }
         p.drain(&sh);
     }
@@ -310,6 +327,7 @@ fn run(a: &Args) -> i32 {
     failed.sort_unstable();
     if errors > 0 { end("fail", t, chunks, errors, &failed, "wrong results") }
     else if STOP.load(Ordering::SeqCst) { end("stopped", t, chunks, 0, &[], "stopped") }
+    else if let Some(issue) = incomplete { end("init_failed", t, chunks, 0, &[], &issue) }
     else { end("pass", t, chunks, 0, &[], "") }
 }
 
@@ -340,6 +358,14 @@ mod tests {
     use super::*;
 
     fn v(s: &str) -> Vec<String> { s.split_whitespace().map(str::to_owned).collect() }
+
+    #[test]
+    fn worker_coverage_requires_a_completed_chunk() {
+        assert!(worker_issue(0, Ok(Ok(0))).is_some());
+        assert!(worker_issue(0, Ok(Err("affinity failed".into()))).is_some());
+        assert!(worker_issue(0, Err(Box::new("worker panic"))).is_some());
+        assert!(worker_issue(0, Ok(Ok(1))).is_none());
+    }
 
     #[test]
     fn arguments() {

@@ -1,3 +1,4 @@
+#include "unlock.h"
 #include "navigationtargets.h"
 #include <algorithm>
 #include <QFontMetrics>
@@ -400,6 +401,7 @@ FwattrTab::FwattrTab(QWidget *parent) : QWidget(parent) {
     });
     top->addWidget(inspect);
     applyAll_ = new QPushButton("Apply All");
+    connect(&unlock::Manager::instance(), &unlock::Manager::changed, this, [this] { setBusy(busy_); });
     applyAll_->setObjectName("btnAccent");
     connect(applyAll_, &QPushButton::clicked, this, &FwattrTab::applyAll);
     top->addWidget(applyAll_);
@@ -431,8 +433,9 @@ void FwattrTab::showStatus(const QString &m, int t) {
 
 void FwattrTab::setBusy(bool b) {
     busy_ = b;
-    tabs_->setEnabled(!b && !locked_ && !wmiReading_);
-    applyAll_->setEnabled(!b && !locked_ && !wmiReading_);
+    const bool canEdit = !b && !locked_ && !wmiReading_ && unlock::Manager::instance().unlocked();
+    tabs_->setEnabled(canEdit);
+    applyAll_->setEnabled(canEdit);
     rescan_->setEnabled(!b && !wmiReading_);
 }
 

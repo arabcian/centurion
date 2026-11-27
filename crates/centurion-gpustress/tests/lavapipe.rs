@@ -32,10 +32,11 @@ fn end(lines: &[Value]) -> &Value {
 #[test]
 fn vram_passes() {
     let Some(dev) = cpu_device() else { return };
-    let (lines, code, _) = run(&["vram", "--device", &dev, "--percent", "10", "--seconds", "3"]);
+    let (lines, code, _) = run(&["vram", "--device", &dev, "--percent", "10", "--seconds", "10"]);
     assert_eq!(lines[0]["ev"], "start");
     assert!(lines.iter().all(|l| l["ev"] != "error"));
     assert_eq!((end(&lines)["status"].as_str(), code), (Some("pass"), 0));
+    assert!(end(&lines)["passes"].as_u64().unwrap() > 0);
     assert_eq!(end(&lines)["errors"], 0);
 }
 

@@ -42,7 +42,8 @@ fn usage() -> ! {
     std::process::exit(2)
 }
 
-fn f(s: Option<&String>) -> f64 { s.and_then(|s| s.parse().ok()).unwrap_or_else(|| usage()) }
+/// NaN/inf are refused: json!(NaN) is null, which would silently drop the value from a profile.
+fn f(s: Option<&String>) -> f64 { s.and_then(|s| s.parse().ok()).filter(|v: &f64| v.is_finite()).unwrap_or_else(|| usage()) }
 
 fn print_status(v: &Value) {
     if let Some(c) = v.get("cpu").filter(|c| !c.is_null()) {
@@ -97,6 +98,12 @@ fn print_apply(v: &Value) -> i32 {
     for r in v["results"].as_array().into_iter().flatten() {
         println!("{} {:<16} {}", if r["ok"] == true { "OK " } else { "ERR" }, r["what"].as_str().unwrap_or(""), r["message"].as_str().unwrap_or(""));
     }
+    // apply_atomic: what was put back after a failed field, and whether the hardware is known to be as before.
+    for r in v["rollback"].as_array().into_iter().flatten() {
+        println!("{} undo {:<11} {}", if r["ok"] == true { "OK " } else { "ERR" }, r["what"].as_str().unwrap_or(""), r["message"].as_str().unwrap_or(""));
+    }
+    if let Some(s) = v["state"].as_str() { println!("state: {s}"); }
+    if let Some(n) = v["note"].as_str().filter(|n| !n.is_empty()) { println!("{n}"); }
     if v["ok"] == true { 0 } else { 1 }
 }
 
@@ -190,7 +197,7 @@ fn main() {
         "probe-fabric" => { let v = intel_uv::probe_fabric(); println!("{}", serde_json::to_string_pretty(&v).unwrap()); if v["ok"] == true { 0 } else { 1 } }
         "boot" => print_apply(&intel_uv_daemon::apply_boot()),
         "daemon" => intel_uv_daemon::run_daemon(),
-        "monitor" => monitor(args.get(1).map(|s| s.parse().unwrap_or_else(|_| usage())).unwrap_or(1.0f64).max(0.1)),
+        "monitor" => monitor(args.get(1).map(|s| f(Some(s))).unwrap_or(1.0f64).max(0.1)),
         "measure" => {
             let csv = args.iter().any(|a| a == "--csv");
             let secs = args.iter().position(|a| a == "--sleep").map(|i| f(args.get(i + 1))).unwrap_or(1.0);
@@ -232,7 +239,7 @@ fn main() {
                     for (k, mv) in &v { volt.insert((*k).into(), json!(mv)); cmdline += &format!(" --{k} {mv}"); }
                     println!("{cmdline}");
                     if args.iter().any(|a| a == "--apply") {
-                        match parse_profile(&json!({"voltage": volt})) { Ok(p) => print_apply(&intel_uv::apply(&p)),
+                        match parse_profile(&json!({"voltage": volt})) { Ok(p) => print_apply(&intel_uv::apply_atomic(&p)),
                             Err(e) => { eprintln!("invalid: {e}"); 1 } }
                     } else { 0 }
                 }
@@ -243,7 +250,7 @@ fn main() {
             match std::fs::read_to_string(path).map_err(|e| e.to_string())
                 .and_then(|s| serde_json::from_str::<Value>(&s).map_err(|e| e.to_string()))
                 .and_then(|v| parse_profile(&v)) {
-                Ok(p) => print_apply(&intel_uv::apply(&p)),
+                Ok(p) => print_apply(&intel_uv::apply_atomic(&p)),
                 Err(e) => { eprintln!("{path}: {e}"); 1 }
             }
         }
@@ -284,7 +291,7 @@ fn main() {
             prof.insert("iccmax".into(), Value::Object(icc));
             prof.insert("power".into(), Value::Object(power));
             match parse_profile(&Value::Object(prof)) {
-                Ok(p) => print_apply(&intel_uv::apply(&p)),
+                Ok(p) => print_apply(&intel_uv::apply_atomic(&p)),
                 Err(e) => { eprintln!("invalid: {e}"); 1 }
             }
         }

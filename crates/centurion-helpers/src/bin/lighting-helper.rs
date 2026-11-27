@@ -1,6 +1,6 @@
 //! Keyboard lighting helper (Spectrum per-key RGB; 4-zone RGB keyboards).
-//! Protocol and access model: see centurion_helpers::lighting. Runs as the user
-//! when the udev rule grants the hidraw node, through pkexec otherwise.
+//! Protocol and access model: see centurion_helpers::lighting. Tried as the
+//! user first; the hidraw node is normally root-only, so it runs through pkexec.
 
 use centurion_helpers::*;
 

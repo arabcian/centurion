@@ -44,6 +44,20 @@ int main(int argc, char **argv) {
     CHECK(ad::aerTotal(QStringLiteral("TOTAL_ERR_COR: 14\n"), QStringLiteral("TOTAL_ERR_COR")) == QStringLiteral("14"));
     CHECK(ad::aerTotal(QStringLiteral("TOTAL_ERR_COR overflow"), QStringLiteral("TOTAL_ERR_COR")).isEmpty());
 
+    // H01: a finding names the boots it is about, so the card can open Boot History on exactly those.
+    {
+        QJsonArray boots;
+        qint64 t = 1000000;
+        for (int i = 0; i < 6; ++i, t += 40000) boots.prepend(boot(QStringLiteral("old%1").arg(i), t, QStringLiteral("clean"), 10, {{"kernel", "6.12.1"}}));
+        const QJsonObject events[] = {{{"xid", 3}}, {{"mce", 2}}, {}, {}};
+        for (int i = 0; i < 4; ++i, t += 40000) boots.prepend(boot(QStringLiteral("new%1").arg(i), t, QStringLiteral("clean"), 5, {{"kernel", "6.13.0"}}, events[i]));
+        const diag::Report r = ad::bootRegression(boots, {}, {{"kernel", "6.13.0"}});
+        QStringList named;
+        for (const diag::Finding &f : r.findings)
+            if (f.title.contains(QStringLiteral("hardware faults"))) named = f.bootIds;
+        CHECK(named == QStringList({QStringLiteral("new0"), QStringLiteral("new1")}));  // the boots with faults, not the quiet ones
+    }
+
     // H01: unclean ends pile up after a kernel change.
     {
         QJsonArray boots;
