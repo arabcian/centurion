@@ -1147,7 +1147,7 @@ void HomeTab::applyEcExtras(const QJsonObject &o) {
     QStringList parts;
     if (ecFansWanted_) {
         const QJsonObject fans = o.value("fans").toObject();
-        static const struct { const char *key, *name; } ORDER[] = {{"cpu", "CPU"}, {"gpu", "GPU"}, {"pch", "System"}};
+        static const struct { const char *key, *name; } ORDER[] = {{"cpu", "CPU"}, {"gpu", "GPU"}, {"pch", "System"}, {"sys2", "System 2"}};
         for (const auto &f : ORDER)
             if (fans.value(QLatin1String(f.key)).isDouble())
                 parts << tr("%1 %2 RPM").arg(QLatin1String(f.name)).arg(fans.value(QLatin1String(f.key)).toInt());

@@ -122,18 +122,27 @@ Hardware-safety rules taken from LenovoLegionToolkit (behaviour only, no code):
   Performance; K1CN boards step through another mode when leaving Custom.
   Done in legion-profile-helper, so Home, tray, scenes and centurion-gamemode all
   get it; the reply's `via` names the intermediate mode.
-- The Spectrum keyboard is only talked to on a 048D:C1xx / C6xx / C9xx hidraw
-  interface whose HID descriptor declares a 960-byte feature report and that
-  answers the compatibility query; the 4-zone keyboard only on a 048D:C9xx
-  interface declaring a 33-byte feature report. Any other interface of the
-  same device gets no ioctl at all.
+- The Spectrum keyboard is only talked to on a 048D hidraw interface whose HID
+  descriptor declares a 960-byte feature report and that answers the
+  compatibility query (LLT 2.34 dropped its product-id filter for newer models;
+  the known C1xx / C6xx / C9xx families are still tried first, the LampArray
+  device last); the 4-zone keyboard only on a 048D:C9xx interface declaring a
+  33-byte feature report. Any other interface of the same device gets no ioctl
+  at all.
 - Custom mode is not offered (GUI) and refused (helper) on first-generation
   boards before the BIOS that fixed it: G9CN < 24, GKCN < 46, H1CN < 39,
   HACN < 31, HHCN < 20.
 - IdeaPad Gaming: the EC's Fn-lock bit means "F1–F12 primary", so the Fn lock
   switch is shown inverted there.
+- Keyboard RGB owned by the firmware: Legion 7 Gen 6, and GKCN boards before
+  BIOS 54, accept lighting commands and ignore them. *Device info…* says so
+  (`lighting_note`); nothing is blocked.
 - `machine.rs` carries the machine-type → series table and the generation rule
   ("16AFR10H" → 10); they select quirks only, never an address.
+- Model tables last compared with LenovoLegionToolkit **2.34.0**
+  (`tests/test_llt_model_sync_static.py` pins that state): machine types 83Q6,
+  83VK (Legion 5) and 83V9 (Legion 7), the known-model prefixes 15ASH and 14IAP,
+  and the extra system fan 0x04030005 came with it.
 - Everything else stays capability-based: each control appears only where
   its sysfs node / WMI method answers (see the tabs' `present()` checks).
 
@@ -306,7 +315,7 @@ kernel's `Documentation/wmi/devices/lenovo-wmi-{gamezone,other}.rst` and
 | | 43 SmartFan version, 55 thermal mode, 62 IsACFitForOC, 47 GetPowerChargeMode — read-only | K, LLL, LLT |
 | Other method `DC2A8805-…` (WMAE) | 17 GetFeatureValue / 18 SetFeatureValue, `{u32 id, u32 value}` | K, LLL, HW |
 | | ids: 0x0101–0x0104 CPU limits, 0x0201/0x0202/0x020B GPU, 0x04020000 fan full speed, 0x0301000{1,2} instant boot, 0x00100000 Fn+Q custom, 0x05050000 GPU temp | LLT, K, LLL, HW |
-| | 0x00030000 flip to start, 0x001A0000 Over Drive, 0x0403000{1,2,4} fan RPM — only when the capability list marks them valid | LLT, LLL |
+| | 0x00030000 flip to start, 0x001A0000 Over Drive, 0x0403000{1,2,4,5} fan RPM (5 = second system fan, read-only) — only when the capability list marks them valid | LLT, LLL |
 | | 0x06040000 power-button light sync with the keyboard, values 0 / 2 (not 0 / 1), read back after the write — only when listed readable and writable | LLT only |
 | Capability data 00 `362A3AFE-…` | `{u32 id, u32 flags, u32 default}`; flags bit0 valid, bit1 get, bit2 set | K |
 | Fan method `92549549-…` (WMAB) | 5 Fan_Get_Table, 6 Fan_Set_Table (`FSTM, FSID, FSTL, 10×u16`) | LLL, LLT, HW |

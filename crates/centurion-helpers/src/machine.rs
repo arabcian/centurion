@@ -133,14 +133,14 @@ const MACHINE_TYPES: &[(&str, Series)] = &[
     ("83N2", Series::Legion5), ("83LY", Series::Legion5), ("83DG", Series::Legion5), ("83EW", Series::Legion5),
     ("83EG", Series::Legion5), ("83JJ", Series::Legion5), ("82RC", Series::Legion5), ("82RB", Series::Legion5),
     ("82TB", Series::Legion5), ("83EF", Series::Legion5), ("82RE", Series::Legion5), ("82RD", Series::Legion5),
-    ("83Q7", Series::Legion5), ("83RW", Series::Legion5),
+    ("83Q7", Series::Legion5), ("83Q6", Series::Legion5), ("83RW", Series::Legion5), ("83VK", Series::Legion5),
     ("83DH", Series::LegionSlim5), ("83EX", Series::LegionSlim5), ("82Y5", Series::LegionSlim5),
     ("82Y9", Series::LegionSlim5), ("82YA", Series::LegionSlim5), ("83D6", Series::LegionSlim5),
     ("83LT", Series::LegionPro5), ("83F3", Series::LegionPro5), ("83DF", Series::LegionPro5), ("83F2", Series::LegionPro5),
     ("83LU", Series::LegionPro5), ("82WM", Series::LegionPro5), ("83NN", Series::LegionPro5), ("82WK", Series::LegionPro5),
     ("82JQ", Series::LegionPro5),
     ("83KY", Series::Legion7), ("83FD", Series::Legion7), ("82UH", Series::Legion7), ("82TD", Series::Legion7),
-    ("82N6", Series::Legion7),
+    ("82N6", Series::Legion7), ("83V9", Series::Legion7),
     ("83RU", Series::LegionPro7), ("83F5", Series::LegionPro7), ("83DE", Series::LegionPro7), ("82WR", Series::LegionPro7),
     ("82WQ", Series::LegionPro7), ("82WS", Series::LegionPro7),
     ("83G0", Series::Legion9), ("83EY", Series::Legion9),
@@ -216,6 +216,24 @@ pub fn custom_mode_needs_bios(bios: &Bios) -> Option<u32> {
     const MIN: &[(&str, u32)] = &[("G9CN", 24), ("GKCN", 46), ("H1CN", 39), ("HACN", 31), ("HHCN", 20)];
     let &(_, min) = MIN.iter().find(|(p, _)| bios.prefix.eq_ignore_ascii_case(p))?;
     (bios.version? < min).then_some(min)
+}
+
+/// Over Drive through the capability interface is not trusted on Legion 7 / Pro 7 from
+/// Gen 10 on: their firmware lists 0x001A0000 on panels without Over Drive
+/// (LenovoLegionToolkit GetIsOverdriverSupported).
+pub fn overdrive_capability_untrusted(info: &Info) -> bool {
+    matches!(info.series, Series::Legion7 | Series::LegionPro7) && info.generation >= 10
+}
+
+/// Keyboard RGB the firmware owns, per LenovoLegionToolkit (GetIsExcludedFromLenovoLighting):
+/// Legion 7 Gen 6 accepts the lighting commands but ignores them, and GKCN boards
+/// before BIOS 54 do the same. Some(reason) = do not promise lighting changes here.
+pub fn rgb_firmware_controlled(info: &Info) -> Option<&'static str> {
+    if info.series == Series::Legion7 && info.generation == 6 {
+        return Some("Legion 7 Gen 6: keyboard RGB is firmware-controlled; lighting commands are accepted but ignored");
+    }
+    (info.bios.prefix.eq_ignore_ascii_case("GKCN") && info.bios.version.is_some_and(|v| v < 54))
+        .then_some("GKCN BIOS before 54: keyboard lighting commands are ignored by the firmware; update the BIOS")
 }
 
 /// The EC's Fn-lock bit means the opposite on the IdeaPad-style keyboards
@@ -304,6 +322,10 @@ mod tests {
         assert_eq!(series_of("IdeaPad Gaming 3 15ACH6", "82K2"), Series::IdeaPadGaming);
         assert_eq!(series_of("Lenovo Y9000P IAX10", ""), Series::LegionLegacy);
         assert_eq!(series_of("ThinkPad X1", "21HM"), Series::Unknown);
+        // Machine types LenovoLegionToolkit 2.34 added.
+        for (mt, s) in [("83Q6", Series::Legion5), ("83VK", Series::Legion5), ("83V9", Series::Legion7)] {
+            assert_eq!(series_of("", mt), s, "{mt}");
+        }
         for (m, g) in [("Legion Pro 7 16AFR10H", 10), ("Legion 5 15ARH05H", 5), ("LOQ 15IRH8", 8), ("Legion Go 8APU1", 1),
                        ("Legion Y540-15IRH", 0), ("Legion 5 Pro 16ACH6H", 6), ("Y9000P IRX9", 9), ("ThinkBook 16p G4+", 4),
                        ("Legion Slim 7 Gen 7", 7), ("", 0)] {
@@ -318,5 +340,38 @@ mod tests {
         assert_eq!(custom_mode_needs_bios(&parse_bios("SMCN19WW")), None);
         assert!(fn_lock_inverted(Series::IdeaPadGaming));
         assert!(!fn_lock_inverted(Series::LegionPro7) && !fn_lock_inverted(Series::Loq));
+    }
+
+    #[test]
+    fn rgb_firmware_quirk() {
+        let mk = |model: &str, mt: &str, bios: &str| Info {
+            model: model.into(), machine_type: mt.into(), series: series_of(model, mt),
+            generation: generation_of(model), bios: parse_bios(bios) };
+        assert!(rgb_firmware_controlled(&mk("Legion 7 16ACHg6", "82N6", "GKCN58WW")).is_some());
+        assert!(rgb_firmware_controlled(&mk("Legion 5 Pro 16ACH6H", "82JQ", "GKCN50WW")).is_some());
+        assert!(rgb_firmware_controlled(&mk("Legion 5 Pro 16ACH6H", "82JQ", "GKCN54WW")).is_none());
+        assert!(rgb_firmware_controlled(&mk("Legion 7 16IAX10", "83V9", "Q7CN10WW")).is_none());
+        assert!(rgb_firmware_controlled(&mk("Legion Pro 7 16AFR10H", "83RU", "SMCN19WW")).is_none());
+        assert!(rgb_firmware_controlled(&mk("Legion 5 15ACH6", "82JW", "")).is_none());
+        // GKCN without a readable version: no claim either way.
+        assert!(rgb_firmware_controlled(&mk("Legion 5 Pro 16ACH6H", "82JQ", "GKCN")).is_none());
+    }
+
+    #[test]
+    fn new_machine_types_and_overdrive() {
+        let mk = |model: &str, mt: &str| Info {
+            model: model.into(), machine_type: mt.into(), series: series_of(model, mt),
+            generation: generation_of(model), bios: Bios::default() };
+        // 83V9 is a Legion 7 now, so the Gen 10+ Over Drive rule reaches it (it was "Legion" before).
+        assert!(overdrive_capability_untrusted(&mk("Legion 7 16IAX10", "83V9")));
+        assert!(overdrive_capability_untrusted(&mk("Legion Pro 7 16AFR10H", "83RU")));
+        assert!(!overdrive_capability_untrusted(&mk("Legion 7 16ACHg6", "82N6")));
+        assert!(!overdrive_capability_untrusted(&mk("Legion 5 15AHP10", "83VK")));
+        assert!(!overdrive_capability_untrusted(&mk("Legion 5 15IRX10", "83Q6")));
+        // Lower-case or padded DMI machine types still match the table.
+        assert_eq!(series_of("", " 83v9 "), Series::Legion7);
+        assert_eq!(series_of("", "83q6xxxx"), Series::Legion5);
+        // The new Legion 5 machine types keep the Legion Fn-lock meaning.
+        assert!(!fn_lock_inverted(series_of("", "83VK")) && !fn_lock_inverted(series_of("", "83Q6")));
     }
 }
