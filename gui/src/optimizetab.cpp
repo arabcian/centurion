@@ -9,6 +9,8 @@
 #include "abverify.h"
 #include "insights.h"
 #include "optimizetab.h"
+#include <QResizeEvent>
+#include <QTabBar>
 #include "abcoverage.h"
 #include "profilediff.h"
 #include "frametime.h"
@@ -370,6 +372,31 @@ static QLabel *muted(const QString &t) {
     l->setWordWrap(true);
     return l;
 }
+
+// The two action groups retain their order when the available row becomes narrow.
+class AdaptiveActionRows final : public QWidget {
+public:
+    AdaptiveActionRows() : first(new QHBoxLayout), second(new QHBoxLayout),
+        groups(new QBoxLayout(QBoxLayout::LeftToRight, this)) {
+        setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+        groups->setContentsMargins(0, 0, 0, 0);
+        groups->setSpacing(theme::GAP_S);
+        first->setSpacing(theme::GAP_XS);
+        second->setSpacing(theme::GAP_XS);
+        groups->addLayout(first, 1);
+        groups->addLayout(second);
+    }
+    QHBoxLayout *first;
+    QHBoxLayout *second;
+protected:
+    void resizeEvent(QResizeEvent *event) override {
+        QWidget::resizeEvent(event);
+        const int natural = first->sizeHint().width() + second->sizeHint().width() + groups->spacing();
+        groups->setDirection(event->size().width() < natural ? QBoxLayout::TopToBottom : QBoxLayout::LeftToRight);
+    }
+private:
+    QBoxLayout *groups;
+};
 
 OptimizeTab::OptimizeTab(QWidget *parent) : QWidget(parent) {
     // Before anything (a login scene) applies a preset by name.
@@ -1037,49 +1064,87 @@ void OptimizeTab::buildUi() {
         pl->setColumnStretch(4, 0);
         pl->setColumnStretch(0, 1);
 
-        auto *presetLine = new QHBoxLayout;
-        presetLine->setSpacing(theme::GAP_XS);
-        for (QWidget *w : {static_cast<QWidget *>(presetCombo_),
-                           static_cast<QWidget *>(bLoad), static_cast<QWidget *>(applySaved), static_cast<QWidget *>(bSave),
-                           static_cast<QWidget *>(gameBtn_),
-                           static_cast<QWidget *>(bootBtn_), static_cast<QWidget *>(bootClear_)})
-            presetLine->addWidget(w);
-        // Destructive last, set apart from the safe actions.
-        presetLine->addSpacing(theme::GAP_M);
-        presetLine->addWidget(bDel);
-        presetLine->setStretch(0, 1);
-        pl->addLayout(presetLine, 0, 0);
+        auto *workflowTabs = new QTabBar;
+        workflowTabs->setExpanding(false);
+        workflowTabs->setUsesScrollButtons(false);
+        workflowTabs->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
+        workflowTabs->setDocumentMode(true);
+        workflowTabs->addTab(pbox->title());
+        workflowTabs->addTab(tr("Autotune"));
+        auto *workflowHeader = new QHBoxLayout;
+        workflowHeader->setSpacing(theme::GAP_M);
+        workflowHeader->addWidget(workflowTabs);
+        workflowHeader->addWidget(calLabel_, 1);
+        root->addLayout(workflowHeader);
+
+        auto *preset = new QWidget;
+        auto *presetPage = new QVBoxLayout(preset);
+        presetPage->setContentsMargins(0, 0, 0, 0);
+        presetPage->setSpacing(theme::GAP_XS);
+        pbox->setTitle({});
+        pbox->setSizePolicy(QSizePolicy::Expanding,QSizePolicy::Fixed);
+        pbox->setStyleSheet(QStringLiteral("QGroupBox#box_purple { padding: %1px %2px; }")
+                             .arg(theme::GAP_XS).arg(theme::GAP_S));
+        pl->setContentsMargins(0, 0, 0, 0);
+        pl->addWidget(preset, 0, 0);
+
+        auto *presetLine = new AdaptiveActionRows;
+        presetLine->first->addWidget(presetCombo_, 1);
+        presetLine->first->addWidget(bLoad);
+        presetLine->first->addWidget(applySaved);
+        presetLine->first->addWidget(bSave);
+        presetLine->second->addWidget(gameBtn_);
+        presetLine->second->addWidget(bootBtn_);
+        presetLine->second->addWidget(bootClear_);
+        presetLine->second->addSpacing(theme::GAP_M);
+        presetLine->second->addWidget(bDel);
+        presetPage->addWidget(presetLine);
         auto *presetInfo = new QHBoxLayout;
         presetInfo->addWidget(summary, 1);
         presetInfo->addWidget(bootLabel_);
-        pl->addLayout(presetInfo, 1, 0);
+        presetPage->addLayout(presetInfo);
 
-        auto *separator = new QFrame;
-        separator->setFrameShape(QFrame::HLine);
-        separator->setObjectName(QStringLiteral("expInlineDivider"));
-        pl->addWidget(separator, 2, 0);
-        // Hide the advanced Autotune toolchain until the user needs it.
-        // Calibration status stays visible even while closed. The original
-        // controls remain in the layout (no mirrored/duplicated state).
+        auto *autoPage = new QWidget;
+        auto *autoLayout = new QVBoxLayout(autoPage);
+        autoLayout->setContentsMargins(theme::GAP_XS, 0, theme::GAP_XS, 0);
+        autoLayout->setSpacing(theme::GAP_XS);
+        pl->addWidget(autoPage, 0, 0);
+        autoPage->hide();
+        auto *mainActions = new AdaptiveActionRows;
+        auto *advanced = new AdaptiveActionRows;
+        int index = 0;
+        while (auto *item = autoRow->takeAt(0)) {
+            if (auto *control = item->widget()) {
+                if (index < 4) mainActions->first->addWidget(control, qobject_cast<QComboBox *>(control) ? 1 : 0);
+                else if (index < 7) mainActions->second->addWidget(control);
+                else if (index < 9) advanced->first->addWidget(control);
+                else advanced->second->addWidget(control);
+            }
+            ++index;
+            delete item;
+        }
+        delete autoRow;
+        autoBtn_->setObjectName(QStringLiteral("btnAccent"));
+        autoLayout->addWidget(mainActions);
         auto *showAuto = new QToolButton;
         showAuto->setObjectName(QStringLiteral("expDisclosure"));
         showAuto->setText(tr("AUTOTUNE  ·  Goals, custom weights and calibration"));
         showAuto->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
         showAuto->setArrowType(Qt::RightArrow);
         showAuto->setCheckable(true);
-        auto toggleAuto = [autoRow, showAuto](bool expanded) {
-            for (int i = 0; i < autoRow->count(); ++i)
-                if (QWidget *control = autoRow->itemAt(i)->widget())
-                    control->setVisible(expanded);
-            showAuto->setArrowType(expanded ? Qt::DownArrow : Qt::RightArrow);
-        };
-        connect(showAuto, &QToolButton::toggled, this, toggleAuto);
-        pl->addWidget(showAuto, 3, 0);
-        pl->addLayout(autoRow, 4, 0);
-        autoBtn_->setObjectName(QStringLiteral("btnAccent"));
-        pl->addWidget(calLabel_, 5, 0);
-        toggleAuto(false);
-        pl->setVerticalSpacing(3);
+        autoLayout->addWidget(showAuto);
+        autoLayout->addWidget(advanced);
+        advanced->hide();
+        connect(showAuto, &QToolButton::toggled, advanced, [advanced,showAuto](bool open) {
+            advanced->setVisible(open);
+            showAuto->setArrowType(open ? Qt::DownArrow : Qt::RightArrow);
+        });
+        // Keep the existing controls and their signal connections when switching tabs.
+        pl->setVerticalSpacing(theme::GAP_XS);
+        connect(workflowTabs, &QTabBar::currentChanged, pbox, [preset, autoPage](int index) {
+            preset->setVisible(index == 0);
+            autoPage->setVisible(index == 1);
+        });
         root->addWidget(pbox);
     } else {
         root->addWidget(pbox);

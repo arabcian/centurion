@@ -10782,6 +10782,10 @@ P2/P5'te bırakabilir), çekirdek ve VRAM saat kilitleri, güç sınırı, Power
 </context>
     <context>
         <name>OptimizeTab</name>
+        <message>
+            <source>Autotune</source>
+            <translation>Otomatik Ayar</translation>
+        </message>
         <message><source>No synthetic load prediction for these recorded conditions.</source><translation>Bu kayıtlı koşullar için sentetik yük tahmini bulunamadı.</translation></message>
         <message><source>Matched results use two reference launches with the same recorded conditions. The synthetic load prediction is shown in model units. Game results show frame-time change in percent.</source><translation>Eşleşen sonuçlar, aynı kayıtlı koşullarda başlatılan iki referans oturumu kullanır. Sentetik yük tahmini model birimleriyle gösterilir. Oyun sonuçları kare süresi değişimini yüzde olarak gösterir.</translation></message>
         <message><source>Session ID</source><translation>Oturum kimliği</translation></message>
