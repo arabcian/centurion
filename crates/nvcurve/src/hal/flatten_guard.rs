@@ -116,7 +116,7 @@ mod tests {
                   delta_khz: delta, domain: Domain::Gpu }
     }
     fn st(points: Vec<VfPoint>) -> CurveState {
-        CurveState { points, timestamp: 0.0, gpu_name: String::new(), domain_source: "flags" }
+        CurveState { points, timestamp: 0.0, gpu_name: String::new(), domain_source: "flags", base_note: String::new() }
     }
     #[test]
     fn healthy_flatten_and_small_drift() {

@@ -60,7 +60,8 @@ pub fn curve_json(gpu_name: &str, state: &CurveState, voltage: Option<u32>) -> V
         // NOT the stock clock where the driver clamps the point; the GUI edits against this.
         "base_kHz": p.base_khz,
     })).collect();
-    json!({"gpu": gpu_name, "current_voltage_uV": voltage, "vf_curve": pts, "domain_source": state.domain_source})
+    json!({"gpu": gpu_name, "current_voltage_uV": voltage, "vf_curve": pts, "domain_source": state.domain_source,
+           "base_note": state.base_note})
 }
 
 /// Read the curve, retrying briefly if the driver is still settling after a write.

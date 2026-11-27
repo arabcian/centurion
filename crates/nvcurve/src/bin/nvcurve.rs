@@ -125,7 +125,8 @@ fn print_curve(s: &CurveState, voltage: Option<u32>, full: bool) {
     let mut parts = vec![format!("{gpu_n} GPU core points")];
     if mem_n > 0 { parts.push(format!("{mem_n} memory points")); }
     parts.push(format!("{} total", gpu_n + mem_n));
-    println!("Curve: {}  (domains from {})\n", parts.join(", "), s.domain_source);
+    println!("Curve: {}  (domains from {})", parts.join(", "), s.domain_source);
+    println!("Base clocks: {}\n", s.base_note);
 
     let current = voltage.and_then(|v| s.points.iter().position(|p| p.volt_uv > 0 && (p.volt_uv as i64 - v as i64).abs() < 10_000));
     let mut prev = None;

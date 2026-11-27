@@ -501,7 +501,7 @@ mod tests {
                 volt_uv: 710_000, delta_khz: 0, domain: Domain::Gpu },
             VfPoint { index: 2, freq_khz: 2_000_000, base_khz: None,
                 volt_uv: 0, delta_khz: 400_000, domain: Domain::Memory },
-        ], timestamp: 0.0, gpu_name: String::new(), domain_source: "flags" }
+        ], timestamp: 0.0, gpu_name: String::new(), domain_source: "flags", base_note: String::new() }
     }
     #[test]
     fn preparation_clears_memory_and_stale_ct_in_one_table() {

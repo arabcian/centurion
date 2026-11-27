@@ -36,6 +36,11 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions follo
   Ultra CPUs. The Intel tab's spin boxes follow the CPU's floor.
 
 ### Changed
+- nvcurve: the curve readback now says whether the driver's offset-free base clocks (V3 tuples) are in use and, if
+  not, why: the driver refused the request, reports no tuples, or the V1 cross-check rejected them (with the points
+  that disagree). Shown as `Base clocks:` in `nvcurve read`, as `base_note` in its JSON and in the helper's result
+  files, and in the V/F history entry of each apply/reset. Before, a missing base only showed up as a silent `null`
+  (history: "Unknown"). The cross-check itself is unchanged.
 - 61 rows that neither calibration nor Autotune touch and no built-in preset sets (network latency and buffering, the
   Wi-Fi/Bluetooth rows, elevator and discard fine tuning, NUMA/KSM/khugepaged internals, unmeasured scheduler feature
   bits) moved off the Optimizations tab to three System tools pages: Network tuning, Storage tuning and Kernel tuning.
