@@ -14,6 +14,7 @@
 #include "sleeppage.h"
 #include "klogpage.h"
 #include "kernelparamspage.h"
+#include "lazywidget.h"
 #include "dgpupage.h"
 #include "netpage.h"
 #include "overviewpage.h"
@@ -294,13 +295,19 @@ HealthTab::HealthTab(QWidget *parent) : QWidget(parent) {
     addPage(general, overview_, tr("System Overview"), QStringLiteral("overview"));
     auto *monitor = new QWidget;
     addPage(problems, monitor, tr("Events & Alerts"), QStringLiteral("monitor"));
-    addPage(problems, new HealthEvidencePage, tr("Evidence Lab"), QStringLiteral("evidence"));
-    investigations_ = new AdvancedHealthPage;
-    addPage(problems, investigations_, tr("Investigations"), QStringLiteral("investigations"));
-    investigations_->setTargetLabel([this](const QString &target) { return targetLabel(target); });
-    connect(investigations_, &AdvancedHealthPage::openTarget, this, [this](const QString &target) { navigateTo(target); });
-    connect(overview_, &OverviewPage::triage, this, [this](const QString &category) {
-        showPage(investigations_);
+    // Pages with no background duty are built when first opened: under the application style sheet
+    // every widget costs memory for as long as the program runs, and most sessions never open these.
+    addPage(problems, new LazyWidget([] { return new HealthEvidencePage; }), tr("Evidence Lab"), QStringLiteral("evidence"));
+    auto *investigationsPage = new LazyWidget([this] {
+        investigations_ = new AdvancedHealthPage;
+        investigations_->setTargetLabel([this](const QString &target) { return targetLabel(target); });
+        connect(investigations_, &AdvancedHealthPage::openTarget, this, [this](const QString &target) { navigateTo(target); });
+        return investigations_;
+    });
+    addPage(problems, investigationsPage, tr("Investigations"), QStringLiteral("investigations"));
+    connect(overview_, &OverviewPage::triage, this, [this, investigationsPage](const QString &category) {
+        showPage(investigationsPage);
+        investigationsPage->content();  // built now if the window is not showing it
         investigations_->startTriage(category);
     });
     boot_ = new BootPage;
@@ -315,9 +322,8 @@ HealthTab::HealthTab(QWidget *parent) : QWidget(parent) {
     addPage(advanced, curves, tr("Curve Stability"), QStringLiteral("curves"));
     klog_ = new KlogPage;
     addPage(advanced, klog_, tr("Kernel Log"), QStringLiteral("klog"));
-    addPage(advanced, new KernelParamsPage, tr("Kernel Parameters"), QStringLiteral("kernelparams"));
-    auto *sleep = new SleepPage;
-    addPage(hardware, sleep, tr("Sleep & Wake"), QStringLiteral("sleep"));
+    addPage(advanced, new LazyWidget([] { return new KernelParamsPage; }), tr("Kernel Parameters"), QStringLiteral("kernelparams"));
+    addPage(hardware, new LazyWidget([] { return new SleepPage; }), tr("Sleep & Wake"), QStringLiteral("sleep"));
     if (BatteryPage::present()) {
         auto *battery = new BatteryPage;
         connect(battery, &BatteryPage::dgpuAwake, this, &HealthTab::dgpuAwake);
@@ -504,7 +510,7 @@ HealthTab::HealthTab(QWidget *parent) : QWidget(parent) {
         else if (target == QLatin1String("battery")) page = findChild<BatteryPage *>();
         else if (target == QLatin1String("cooling")) page = cooling_;
         else if (target == QLatin1String("dgpu")) page = findChild<DgpuPage *>();
-        else if (target == QLatin1String("sleep")) page = findChild<SleepPage *>();
+        else if (target == QLatin1String("sleep")) page = pageByKey(target);
         else if (target == QLatin1String("klog")) page = klog_;
         else if (target == QLatin1String("tools")) {
             showToolCatalog();
@@ -1253,6 +1259,10 @@ QWidget *HealthTab::toolButton(const Tool &t, bool featured) {
 
 void HealthTab::rebuildToolCatalog() {
     if (!toolScroll_ || !toolSearch_) return;
+    // Its cards are a few hundred widgets: built only where they can be seen. Hidden (another page, a
+    // tool, the window in the tray), the catalog is marked stale and built when it is shown (eventFilter).
+    if (!toolScroll_->isVisible()) { toolCatalogStale_ = true; return; }
+    toolCatalogStale_ = false;
     const QString query = toolSearch_->text().trimmed();
     const int width = std::max(toolScroll_->viewport()->width(), 300);
     // A compact list has room for real explanations. Four columns of labels were hard to scan.
@@ -1496,6 +1506,8 @@ void HealthTab::rebuildToolCatalog() {
 }
 
 bool HealthTab::eventFilter(QObject *watched, QEvent *event) {
+    if (toolScroll_ && watched == toolScroll_->viewport() && event->type() == QEvent::Show && toolCatalogStale_)
+        rebuildToolCatalog();
     if (toolScroll_ && watched == toolScroll_->viewport() && event->type() == QEvent::Resize &&
         (std::clamp(std::max(toolScroll_->viewport()->width(), 300) / 480, 1, 2) != toolColumns_ ||
          std::clamp(std::max(toolScroll_->viewport()->width(), 300) / 390, 1, 3) != toolFeaturedColumns_))

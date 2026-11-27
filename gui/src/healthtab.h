@@ -166,6 +166,7 @@ private:
     QPushButton *toolPin_ = nullptr;
     QScrollArea *toolScroll_ = nullptr;
     QWidget *toolCatalog_ = nullptr;
+    bool toolCatalogStale_ = true;  // asked to rebuild while hidden: rebuilt when shown
     int toolColumns_ = 0;
     int toolFeaturedColumns_ = 0;
     QString toolFilter_ = QStringLiteral("all");  // all, safe, changes, recent, pinned

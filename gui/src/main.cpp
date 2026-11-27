@@ -9,6 +9,7 @@
 // ask the running copy to show its window. A second launch with --window
 // raises the running one, without it exits quietly; if the lock cannot be
 // taken for any other reason the program refuses to start.
+#include "combopopupdefer.h"
 #include "dbusapi.h"
 #include "i18n.h"
 #include "mainwindow.h"
@@ -295,6 +296,7 @@ int main(int argc, char **argv) {
         theme::load(); i18n::install(app);
         app.installEventFilter(new NoComboWheel(&app));
         app.installEventFilter(new SpinSelectAll(&app));
+        app.installEventFilter(new ComboPopupDefer(&app));
         return simulation::runRealShell(app);
     }
     // Dispatch before settings, device checks, sockets, tray or MainWindow.
@@ -323,6 +325,7 @@ int main(int argc, char **argv) {
     app.setQuitOnLastWindowClosed(false);  // the window is a view onto a tray app
     app.installEventFilter(new NoComboWheel(&app));  // deliberate, see NoComboWheel — keep it
     app.installEventFilter(new SpinSelectAll(&app));
+    app.installEventFilter(new ComboPopupDefer(&app));  // before any widget: see combopopupdefer.h
 
     const QStringList args = app.arguments();
     if (args.contains("--version") || args.contains("-V")) { std::printf("centurion %s\n", CENTURION_VERSION); return 0; }

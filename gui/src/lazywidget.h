@@ -15,16 +15,25 @@ public:
         l->setContentsMargins(0, 0, 0, 0);
     }
 
+    /// The real widget, built now if it was never shown (for a caller that must talk to it first).
+    QWidget *content() {
+        build();
+        return content_;
+    }
+
 protected:
     void showEvent(QShowEvent *e) override {
-        if (make_) {
-            QWidget *w = make_();
-            make_ = nullptr;
-            layout()->addWidget(w);
-        }
+        build();
         QWidget::showEvent(e);
     }
 
 private:
+    void build() {
+        if (!make_) return;
+        content_ = make_();
+        make_ = nullptr;
+        layout()->addWidget(content_);
+    }
     std::function<QWidget *()> make_;
+    QWidget *content_ = nullptr;
 };

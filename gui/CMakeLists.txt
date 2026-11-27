@@ -32,7 +32,7 @@ find_package(Qt6 6.4 OPTIONAL_COMPONENTS LinguistTools)
 set(CENTURION_HELPER_DIR "/usr/libexec/centurion" CACHE PATH "Installed root helper directory")
 
 add_executable(centurion
-    src/main.cpp
+    src/main.cpp         src/combopopupdefer.h
     src/simulation.cpp   src/simulation.h
     src/simulation_shell.cpp src/simulation_shell.h src/simulationguard.h
     src/telemetrycache.h src/sensorincarnation.h src/telemetrybroker.h src/telemetryservice.cpp src/telemetryservice.h
@@ -370,6 +370,16 @@ if(CENTURION_BUILD_TESTS)
     target_compile_definitions(centurion-navigationtargets-test PRIVATE QT_NO_KEYWORDS)
     add_test(NAME navigation-targets COMMAND centurion-navigationtargets-test)
     set_tests_properties(navigation-targets PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+    add_executable(centurion-lazywidget-test tests/lazywidget_test.cpp src/lazywidget.h)
+    target_link_libraries(centurion-lazywidget-test PRIVATE Qt6::Widgets)
+    target_compile_definitions(centurion-lazywidget-test PRIVATE QT_NO_KEYWORDS)
+    add_test(NAME lazywidget COMMAND centurion-lazywidget-test)
+    set_tests_properties(lazywidget PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+    add_executable(centurion-combopopupdefer-test tests/combopopupdefer_test.cpp src/combopopupdefer.h)
+    target_link_libraries(centurion-combopopupdefer-test PRIVATE Qt6::Widgets)
+    target_compile_definitions(centurion-combopopupdefer-test PRIVATE QT_NO_KEYWORDS)
+    add_test(NAME combopopupdefer COMMAND centurion-combopopupdefer-test)
+    set_tests_properties(combopopupdefer PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
     add_executable(centurion-theme-runtime-test tests/theme_runtime_test.cpp src/theme.cpp src/theme.h)
     target_link_libraries(centurion-theme-runtime-test PRIVATE Qt6::Widgets)
     target_compile_definitions(centurion-theme-runtime-test PRIVATE QT_NO_KEYWORDS)
