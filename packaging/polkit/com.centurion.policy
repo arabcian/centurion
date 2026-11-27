@@ -185,11 +185,11 @@
     <annotate key="org.freedesktop.policykit.exec.allow_gui">true</annotate>
   </action>
   <action id="com.centurion.tune.admin">
-    <description>Set the Centurion unlock PIN</description>
-    <description xml:lang="tr">Centurion kilit PIN'ini belirle</description>
-    <message>Authentication is required to set the unlock PIN</message>
-    <message xml:lang="tr">Kilit PIN'ini belirlemek için kimlik doğrulama gerekiyor</message>
-    <!-- The password every time (see the rules file): the PIN is what lets the window write new values without one. -->
+    <description>Change what Centurion applies at every boot (boot preset, boot calibration, wake sources, wireless power lock, unlock PIN)</description>
+    <description xml:lang="tr">Centurion'ın her açılışta uyguladıklarını değiştir (açılış ön ayarı, açılış kalibrasyonu, uyandırma kaynakları, kablosuz güç kilidi, kilit PIN'i)</description>
+    <message>Authentication is required to change the boot preset, boot calibration, wake sources, the wireless power lock or the unlock PIN</message>
+    <message xml:lang="tr">Açılış ön ayarını, açılış kalibrasyonunu, uyandırma kaynaklarını, kablosuz güç kilidini veya kilit PIN'ini değiştirmek için kimlik doğrulama gerekiyor</message>
+    <!-- The password every time (see the rules file): these persist and are applied as root at every boot. -->
     <defaults><allow_any>auth_admin</allow_any><allow_inactive>auth_admin</allow_inactive><allow_active>auth_admin</allow_active></defaults>
     <annotate key="org.freedesktop.policykit.exec.path">@LIBEXEC@/tune-admin-helper</annotate>
     <annotate key="org.freedesktop.policykit.exec.allow_gui">true</annotate>

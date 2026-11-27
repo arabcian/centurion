@@ -58,15 +58,14 @@
  * always gets AUTH_ADMIN (the password every time, no keep window), for wheel members at the machine too.
  * The runtime-only actions stay in sysadmin-helper (above).
  *
- * Exception: tune-admin-helper (com.centurion.tune.admin) sets the unlock PIN, the one thing that decides
- * whether the window may write new values without a password. It always gets AUTH_ADMIN.
+ * Exception: tune-admin-helper (com.centurion.tune.admin) changes what root applies at every boot (boot
+ * preset, boot calibration, wake sources, wireless power lock) and sets the unlock PIN. It always gets AUTH_ADMIN.
  *
  * Unlock PIN: the helpers that put a new value on the hardware or the kernel (tune-helper, intel-uv-helper,
  * ryzen-co-helper, amdgpu-helper, legion-gpu-helper, legion-profile-helper, nvcurve-root-helper,
  * fwattr-helper) stay password-free here, but refuse those writes themselves unless the Centurion window
- * that runs them was unlocked with the user's PIN (centurion_helpers::unlock). That includes what root applies
- * at every boot (boot preset, preset store, boot calibration, wake sources, wireless power lock: tune-helper).
- * Reads, stored presets (tune-profile-helper) and the boot services are not affected.
+ * that runs them was unlocked with the user's PIN (centurion_helpers::unlock). That includes the preset store
+ * (preset_save / preset_delete in tune-helper). Reads, stored presets (tune-profile-helper) and the boot services are not affected.
  *
  * Single tier (no install-time choice): a wheel or sudo admin, local and
  * active, runs the helpers without a password. There is no longer a "security

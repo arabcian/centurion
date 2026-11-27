@@ -32,9 +32,9 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions follo
 - Scene files are opened with the owning user's file-system identity (`setfsuid`), so a symlinked `~/.config` or
   `scenes` directory cannot make root read a file the user cannot.
 - CI: every `uses:` in the workflow is pinned to a commit SHA (tag or branch noted in a comment).
-- New `tune-admin-helper` (polkit `com.centurion.tune.admin`, the administrator password every time): only the
-  unlock PIN. Boot preset, preset store, boot calibration, wake sources and the wireless power lock stay in
-  `tune-helper`: no password, but refused unless the window is unlocked with the PIN, like every other new value.
+- New `tune-admin-helper` (polkit `com.centurion.tune.admin`, the administrator password every time): boot preset,
+  boot calibration, wake sources, wireless power lock and the unlock PIN. The preset store stays in `tune-helper`:
+  no password, but refused unless the window is unlocked with the PIN, like every other new value.
 - `sysadmin-helper` split: configuration files, module load/unload and NVIDIA driver options moved to
   `sysadmin-config-helper` (polkit `com.centurion.sysadmin.config`, the password every time); runtime actions stay.
   Added lines may no longer use modprobe `install`/`remove` (except `/bin/false`/`/bin/true`), udev

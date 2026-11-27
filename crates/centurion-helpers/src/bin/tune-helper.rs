@@ -117,11 +117,12 @@ const PRESET_DIR: &str = "/etc/centurion/presets";
 fn profile_role() -> bool { env!("CARGO_BIN_NAME") == "tune-profile-helper" }
 fn admin_role() -> bool { env!("CARGO_BIN_NAME") == "tune-admin-helper" }
 
-/// Only the unlock PIN itself needs the administrator password: through pkexec only tune-admin-helper serves it
-/// (com.centurion.tune.admin: the password every time). The boot preset, preset store, boot calibration, wake
-/// sources and wireless power lock go through tune-helper like every other new value: password-free in polkit,
-/// refused unless the window was unlocked with the PIN (see the gate below).
-const ADMIN_OPS: &[&str] = &["pin_set"];
+/// Ops that change what root applies at every boot (boot preset, boot calibration, wake sources, wireless power
+/// lock) and the unlock PIN: through pkexec only tune-admin-helper serves them (com.centurion.tune.admin: the
+/// administrator password every time); root callers without pkexec (centurion-calibrate, the boot service) still
+/// reach them through tune-helper. The preset store (preset_save/preset_delete) goes through tune-helper like
+/// every other new value: password-free in polkit, refused unless the window was unlocked with the PIN.
+const ADMIN_OPS: &[&str] = &["set_boot", "calibrate_on_boot", "wakeup_set", "set_wireless_pm_lock", "pin_set"];
 
 /// The unlock PIN's own ops (centurion_helpers::unlock), served by every role.
 const UNLOCK_OPS: &[&str] = &["pin_status", "unlock", "lock"];
@@ -1948,6 +1949,15 @@ mod tests {
         assert!(valid_receipt_boot("01234567-89ab-cdef-0123-456789abcdef"));
         for id in ["", "01234567", "00000000-0000-0000-0000-000000000000", "01234567-89ab-cdef-0123-456789abcdez"] {
             assert!(!valid_receipt_boot(id));
+        }
+    }
+    #[test]
+    fn boot_ops_need_the_password_and_the_preset_store_the_pin() {
+        for op in ["set_boot", "calibrate_on_boot", "wakeup_set", "set_wireless_pm_lock", "pin_set"] {
+            assert!(ADMIN_OPS.contains(&op), "{op} must need the administrator password (tune-admin-helper)");
+        }
+        for op in ["preset_save", "preset_delete"] {
+            assert!(!ADMIN_OPS.contains(&op) && !PROFILE_OPS.contains(&op), "{op} must stay in tune-helper, behind the PIN");
         }
     }
     #[test]
