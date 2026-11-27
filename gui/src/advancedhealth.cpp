@@ -271,9 +271,11 @@ void AdvancedHealthPage::run() {
             QList<diag::Report> reports;
             for (const QString &c : codes) reports << investigations::reportFor(c, data);
             view_->setReport(advanceddiagnostics::triage(label, reports));
-            showRelated(category_->currentData().toString());
+            showRelated(toolcatalog::relatedFor(category_->currentData().toString()));
         } else {
             view_->setReport(investigations::reportFor(code, data));
+            // H01 counts faults per boot: the boots and their fault kinds are on Boot History.
+            if (code == QStringLiteral("H01")) showRelated({"page:boot", "page:monitor", "page:curves"});
         }
         gpuQuery_->setEnabled(code == QStringLiteral("H16"));
         message_->setText(failed.isEmpty() ? QString() : tr("Not available: %1. The report says Unknown where that data was needed.").arg(failed.join(QStringLiteral("; "))));
@@ -290,7 +292,7 @@ void AdvancedHealthPage::startTriage(const QString &category) {
     run();
 }
 
-void AdvancedHealthPage::showRelated(const QString &category) {
+void AdvancedHealthPage::showRelated(const QStringList &targets) {
     auto *row = static_cast<QGridLayout *>(related_->layout());
     while (QLayoutItem *item = row->takeAt(0)) {
         delete item->widget();
@@ -300,7 +302,7 @@ void AdvancedHealthPage::showRelated(const QString &category) {
     title->setProperty("role", "muted");
     row->addWidget(title, 0, 0, 1, 3);
     int links = 0;
-    for (const QString &target : toolcatalog::relatedFor(category)) {
+    for (const QString &target : targets) {
         const QString name = targetLabel_ ? targetLabel_(target) : QString();
         if (name.isEmpty()) continue;  // not on this system (no dGPU, no battery …)
         auto *b = new QPushButton(name);

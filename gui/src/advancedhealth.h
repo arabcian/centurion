@@ -42,7 +42,7 @@ Q_SIGNALS:
     void openTarget(const QString &target);
 
 private:
-    void showRelated(const QString &category);
+    void showRelated(const QStringList &targets);
     void updateMode();
     void run();
     void activeGpuQuery();
