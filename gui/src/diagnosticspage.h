@@ -9,7 +9,6 @@
 
 class AdvancedHealthPage;
 class BootPage;
-class HealthEvidencePage;
 class QTabWidget;
 
 class DiagnosticsPage : public QWidget {
@@ -27,6 +26,5 @@ public:
 private:
     QTabWidget *tabs_;
     BootPage *boots_;
-    HealthEvidencePage *evidence_;
     AdvancedHealthPage *findings_;
 };

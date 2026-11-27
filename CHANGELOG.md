@@ -60,9 +60,9 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions follo
   Wi-Fi/Bluetooth rows, elevator and discard fine tuning, NUMA/KSM/khugepaged internals, unmeasured scheduler feature
   bits) moved off the Optimizations tab to three System tools pages: Network tuning, Storage tuning and Kernel tuning.
   Same keys, presets, Restore originals and boot defaults; only the page and its own Apply checked button differ.
-- Memory: the tray app uses about half the memory it did (anonymous memory 59 → 31 MB at idle on a test machine,
-  RSS 107 → 78 MB). Under the application style sheet every widget is costly for as long as the program runs, so
-  Health builds Evidence Lab, Investigations, Kernel Parameters and Sleep & Wake when they are first opened, and the
+- Memory: the tray app uses about half the memory it did (anonymous memory 60 → 33 MB at idle on a test machine,
+  RSS 107 → 80 MB). Under the application style sheet every widget is costly for as long as the program runs, so
+  Health builds Diagnostics → This Boot, Kernel Parameters and Sleep & Wake when they are first opened, and the
   System tools catalog only while it is on screen; a combo box gets its popup (nine widgets) when it is first shown
   instead of when the window is built. Pages look and behave the same.
 
