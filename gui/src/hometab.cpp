@@ -727,7 +727,8 @@ HomeTab::HomeTab(QWidget *parent) : QWidget(parent), handler_(pp::primaryHandler
             lastVisible=visible; lastColumns=columns;
             for (const auto &entry : panels) if (entry.second) cells->removeWidget(entry.second);
             for (int i=0; i<visible.size(); ++i)
-                cells->addWidget(visible[i],i/columns,i%columns,1,columns==2 && i==visible.size()-1 && i%2==0 ? 2:1);
+                cells->addWidget(visible[i],i/columns,i%columns,1,columns==2 && i==visible.size()-1 && i%2==0 ? 2:1,
+                                 experimental ? Qt::AlignTop : Qt::Alignment{});
             cells->setColumnStretch(0,1); cells->setColumnStretch(1,columns==2?1:0);
             const int rows = int(visible.size()+columns-1)/columns;
             for (int i=0; i<5; ++i) cells->setRowStretch(i,experimental ? (i==rows?1:0) : (i==(visible.size()-1)/columns?1:0));
@@ -837,7 +838,20 @@ HomeTab::HomeTab(QWidget *parent) : QWidget(parent), handler_(pp::primaryHandler
 QGroupBox *HomeTab::buildHardwareBox() {
     auto *box = new QGroupBox(tr("Hardware"));
     box->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Expanding);
-    auto *g = new QGridLayout(box);
+    QTabWidget *sections = nullptr;
+    QGridLayout *g = nullptr;
+    if (theme::experimentalEnabled()) {
+        auto *outer = new QVBoxLayout(box);
+        outer->setContentsMargins(0, 0, 0, 0);
+        sections = new QTabWidget;
+        sections->setDocumentMode(true);
+        outer->addWidget(sections);
+        auto *system = new QWidget;
+        sections->addTab(system, tr("System"));
+        g = new QGridLayout(system);
+    } else {
+        g = new QGridLayout(box);
+    }
     g->setContentsMargins(6, 2, 6, 4);
     g->setHorizontalSpacing(10);
     g->setVerticalSpacing(6);
@@ -902,6 +916,17 @@ QGroupBox *HomeTab::buildHardwareBox() {
             h->addWidget(btn);
             g->addWidget(w, row - 1, 1);
         }
+    }
+    if (sections) {
+        g->setColumnStretch(1, 1);
+        g->setRowStretch(row, 1);
+        auto *platform = new QWidget;
+        sections->addTab(platform, tr("Platform && Firmware"));
+        g = new QGridLayout(platform);
+        g->setContentsMargins(theme::GAP_XS, theme::GAP_XS, theme::GAP_XS, theme::GAP_XS);
+        g->setHorizontalSpacing(theme::GAP_S);
+        g->setVerticalSpacing(theme::GAP_XS);
+        row = 0;
     }
     add(tr("Scheduler"), sysinfo::schedulerSummary());
     add(tr("CPU layout"), sysinfo::cpuLayout());

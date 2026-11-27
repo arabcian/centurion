@@ -2587,6 +2587,10 @@ Kernel uptime: %2
     <context>
         <name>HomeTab</name>
         <message>
+            <source>Platform &amp;&amp; Firmware</source>
+            <translation>Platform ve Aygıt Yazılımı</translation>
+        </message>
+        <message>
             <source>Set or change unlock PIN…</source>
             <translation>Kilit PIN'ini belirle veya değiştir…</translation>
         </message>
