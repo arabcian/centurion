@@ -3,6 +3,7 @@
 #include "diagsources.h"
 #include "eventinfo.h"
 #include "klogview.h"
+#include "kmsgwake.h"
 #include "privileged.h"
 #include "theme.h"
 
@@ -77,8 +78,9 @@ KlogPage::KlogPage(QWidget *parent) : QWidget(parent) {
     v->setContentsMargins(8, 6, 8, 6);
 
     auto *top = new QHBoxLayout;
-    auto *about = new QLabel(QStringLiteral("Kernel messages of level warning or worse, saved across reboots "
-                                            "(the kernel's own ring buffer is lost at every boot)."));
+    auto *about = new QLabel(QStringLiteral("Kernel messages of level warning or worse, plus the hardware faults Centurion recognises "
+                                            "(NVIDIA Xid, machine checks, PCIe, NVMe, …) even when the kernel logged them at a lower level "
+                                            "(shown as WARN), saved across reboots (the kernel's own ring buffer is lost at every boot)."));
     about->setWordWrap(true);
     about->setProperty("role", "muted");
     v->addWidget(about);
@@ -289,6 +291,7 @@ void KlogPage::drainKmsg() {
         char *end = nullptr;
         const long pri = std::strtol(buf, &end, 10);
         if (end != buf && (pri & 7) <= 4) relevant = true;
+        else if (kmsgwake::wakes(buf)) relevant = true;  // hardware faults the kernel logged below warning (NVIDIA Xid)
     }
     if (relevant) debounce_->start();
 }
@@ -408,7 +411,7 @@ void KlogPage::updateInfo() {
     QString s = QStringLiteral("Saved log: %1 · %2 KiB").arg(a.absoluteFilePath()).arg((sz + 1023) / 1024);
     if (needsRoot_) s += QStringLiteral("\nKernel log is restricted (kernel.dmesg_restrict=1): captured through pkexec when this page is opened or on Refresh, "
                                         "not in the background. sysctl kernel.dmesg_restrict=0 enables continuous capture.");
-    else s += QStringLiteral("\nCapturing continuously (a scan runs only when the kernel logs a warning or error).");
+    else s += QStringLiteral("\nCapturing continuously (a scan runs only when the kernel logs a warning, an error or a recognised hardware fault).");
     s += QLatin1Char('\n') + tr("%1 displayed row(s).").arg(displayedRows_);
     if (tailLimited_) s += QLatin1Char(' ') + tr("Showing at most the newest %1 matching records before grouping. Refine the filter to see older records.").arg(MAX_SHOWN_LINES);
     if (hiddenMuted_) s += QLatin1Char('\n') + tr("%1 muted line(s) hidden — right-click a line to unmute its message.").arg(hiddenMuted_);

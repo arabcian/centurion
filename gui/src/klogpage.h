@@ -1,10 +1,11 @@
 #pragma once
-// Health → Kernel log: every kernel message of level warning or worse, saved
+// Health → Kernel log: every kernel message of level warning or worse, plus the hardware faults
+// health.rs::classify recognises at any level (NVIDIA Xid is logged below warning), saved
 // across boots. Source: `tune-helper {"op":"klog","since":N}` (reads /dev/kmsg).
 //
 // Capture is event-driven: while the app runs, /dev/kmsg is watched with a
 // socket notifier and the helper is started only after a warning-or-worse
-// record appeared (debounced) — no periodic process spawns. If the kernel log
+// record or a recognised hardware fault (kmsgwake.h) appeared (debounced) — no periodic process spawns. If the kernel log
 // is restricted (dmesg_restrict=1) it is read through pkexec only when the
 // page is shown or "Refresh" is pressed, never in the background.
 // The log file survives reboots until cleared; the ring buffer does not.
