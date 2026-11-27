@@ -23,6 +23,7 @@ Environment=NVCURVE_LOG=info
 ExecStart=@BINDIR@/nvcurve autoload
 # The nvidia module / device nodes can appear after this unit on some boots.
 Restart=on-failure
+RestartPreventExitStatus=70
 RestartSec=3
 NoNewPrivileges=yes
 PrivateTmp=yes

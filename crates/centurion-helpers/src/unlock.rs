@@ -86,11 +86,13 @@ fn write_private(p: &str, body: &[u8]) -> Result<(), String> {
 
 /// Reads a root-owned 0600 file (no symlink).
 fn read_private(p: &str) -> Option<Value> {
+    let limit = if p == APPROVED_FILE { 8 * 1024 * 1024 } else { 4096 };
     let f = std::fs::OpenOptions::new().read(true).custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC).open(p).ok()?;
     let m = f.metadata().ok()?;
-    if !m.is_file() || m.uid() != 0 || m.mode() & 0o077 != 0 || m.len() > 4096 { return None; }
+    if !m.is_file() || m.uid() != 0 || m.mode() & 0o077 != 0 || m.len() > limit { return None; }
     let mut s = String::new();
-    (&f).take(4096).read_to_string(&mut s).ok()?;
+    (&f).take(limit + 1).read_to_string(&mut s).ok()?;
+    if s.len() as u64 > limit { return None; }
     serde_json::from_str(&s).ok()
 }
 
@@ -164,6 +166,9 @@ enum Verdict { Allow, Approve(String) }
 fn decide(pin_set: bool, grant: Option<&Value>, uid: u32, chain: impl Fn(i32, u64) -> bool, req: &Value,
           approved: impl Fn(&str) -> bool) -> Result<Verdict, &'static str> {
     if !pin_set { return Err("no unlock PIN is set: set one in Centurion (the lock button), then unlock to write new values"); }
+    // The root-owned approval belongs to the authenticated uid and survives GUI restarts.
+    // A manual apply can request approval too: replay an existing entry before checking the PIN grant.
+    if req["scene"] == true && approved(&payload_digest(req)) { return Ok(Verdict::Allow); }
     let Some(g) = grant else { return Err("Centurion is locked: unlock it with your PIN (the lock button) to write new values") };
     let (Some(gpid), Some(gstart), Some(guid)) = (g["pid"].as_i64(), g["start"].as_u64(), g["uid"].as_u64()) else {
         return Err("Centurion is locked: unlock it with your PIN");
@@ -178,8 +183,7 @@ fn decide(pin_set: bool, grant: Option<&Value>, uid: u32, chain: impl Fn(i32, u6
     }
     let d = payload_digest(req);
     if req["approve"] == true && window_open { return Ok(Verdict::Approve(d)); }
-    if approved(&d) { Ok(Verdict::Allow) }
-    else { Err("this scene step has values that were not approved yet: apply the scene (or profile) once from the unlocked Centurion window") }
+    Err("this scene step has values that were not approved yet: apply the scene (or profile) once from the unlocked Centurion window")
 }
 
 fn approved_list(uid: u32) -> Vec<String> {
@@ -189,8 +193,13 @@ fn approved_list(uid: u32) -> Vec<String> {
 
 fn approve(uid: u32, d: String) -> Result<(), String> {
     let _l = crate::helper_lock(LOCK_NAME)?;
-    let mut all = read_private(APPROVED_FILE).filter(Value::is_object).unwrap_or_else(|| json!({}));
-    let mut list = approved_list(uid);
+    let mut all = match read_private(APPROVED_FILE).filter(Value::is_object) {
+        Some(store) => store,
+        None if !std::path::Path::new(APPROVED_FILE).try_exists().map_err(|e| e.to_string())? => json!({}),
+        None => return Err("existing scene approvals could not be read".into()),
+    };
+    let mut list: Vec<String> = all[uid.to_string()].as_array().into_iter().flatten()
+        .filter_map(|value| value.as_str().map(str::to_owned)).collect();
     list.retain(|x| *x != d);
     list.push(d);
     if list.len() > MAX_APPROVED { list.drain(..list.len() - MAX_APPROVED); }
@@ -367,6 +376,10 @@ mod tests {
         // Later, automatically or with the window closed: accepted because it was approved.
         assert_eq!(decide(true, Some(&closed), 1000, gui, &step, known), Ok(Verdict::Allow));
         assert_eq!(decide(true, Some(&open), 1000, gui, &step, known), Ok(Verdict::Allow));
+        assert_eq!(decide(true, None, 1000, gui, &step, known), Ok(Verdict::Allow));
+        assert_eq!(decide(true, None, 1000, gui, &user_started, known), Ok(Verdict::Allow));
+        assert!(decide(true, None, 1000, gui, &edited, known).is_err());
+        assert!(decide(true, None, 1001, gui, &step, none).is_err());
         // Someone edited the file: new values, not approved, refused even while the window is open.
         assert!(decide(true, Some(&closed), 1000, gui, &edited, known).is_err());
         assert!(decide(true, Some(&open), 1000, gui, &edited, known).is_err());

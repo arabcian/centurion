@@ -20,16 +20,19 @@ class QPushButton;
 class QScrollArea;
 
 namespace ryzen {
-struct PhysCore { QList<int> cpus; std::optional<int> highestPerf; };
+struct PhysCore { QList<int> cpus; std::optional<int> highestPerf; std::optional<int> coreId; };  // coreId: topology/core_id
 struct Layout {
     int ccdCount = 0;
     QMap<int, QList<PhysCore>> cores;  // per CCD, ascending logical-CPU order
     QSet<int> parked;                  // CCDs parked by Optimizations (from tune-helper's park record)
     QMap<int, int> l3Kib;              // per CCD: L3 size (KiB) - hardware identity, e.g. the V-Cache die
+    QList<int> offline;                // present CPUs that are offline and not part of a parked CCD
 };
 /// CPUs of the CCD parked by Optimizations, if the park is still in effect.
 QList<int> parkedCpus();
 Layout detect();
+/// Empty when each core's list position is its SMU slot (CO Search relies on it); else why it is not.
+QString slotMappingProblem(const Layout &layout);
 QString profilesDir();
 }
 

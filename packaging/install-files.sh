@@ -41,10 +41,11 @@ sed "s|@LIBEXEC@|$LIBEXEC|g" packaging/polkit/com.centurion.policy > "$DESTDIR$P
 [[ $EUID -eq 0 ]] && chown root:root "$DESTDIR$PREFIX/share/polkit-1/actions/com.centurion.policy"; chmod 0644 "$DESTDIR$PREFIX/share/polkit-1/actions/com.centurion.policy"
 sed -e "s|@LIBEXEC@|$LIBEXEC|g" packaging/polkit/49-centurion.rules > "$DESTDIR$POLKIT_RULESDIR/49-centurion.rules"
 [[ $EUID -eq 0 ]] && chown root:root "$DESTDIR$POLKIT_RULESDIR/49-centurion.rules"; chmod 0644 "$DESTDIR$POLKIT_RULESDIR/49-centurion.rules"
-# Keyboard lighting: uaccess on the Spectrum controller's hidraw node.
+# Keyboard lighting goes through lighting-helper (pkexec); there is deliberately no uaccess rule on the
+# controller's hidraw node any more. Drop the rule an older version installed.
 UDEVDIR=${UDEVDIR:-$PREFIX/lib/udev/rules.d}
 install -d "${own[@]}" -m 0755 "$DESTDIR$UDEVDIR"
-install "${own[@]}" -m 0644 packaging/udev/70-centurion-lighting.rules "$DESTDIR$UDEVDIR/"
+rm -f "$DESTDIR$UDEVDIR/70-centurion-lighting.rules"
 sed -e "s|@LIBEXEC@|$LIBEXEC|g" packaging/udev/90-centurion-dgpu.rules > "$DESTDIR$UDEVDIR/90-centurion-dgpu.rules"
 chmod 0644 "$DESTDIR$UDEVDIR/90-centurion-dgpu.rules"
 if [[ -z "$DESTDIR" ]] && command -v udevadm >/dev/null; then

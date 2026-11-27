@@ -70,9 +70,6 @@ pub const TICKS_PER_MV: f64 = 1.024;
 pub const UV_MIN_MV: f64 = -200.0;
 /// Core Ultra parts: Intel's own limit for these is much shallower; nothing below this is written there.
 pub const UV_MIN_MV_CORE_ULTRA: f64 = -50.0;
-/// Range of the signed 11-bit offset field (-1024 ticks). Only used to write back a value read from the
-/// CPU (rollback), never for a requested one.
-const ENCODE_MIN_MV: f64 = -1000.0;
 
 /// The floor for a CPU, from its name in /proc/cpuinfo: Core Ultra -> UV_MIN_MV_CORE_ULTRA, else UV_MIN_MV.
 pub fn uv_floor_for(cpu_name: &str) -> f64 {
@@ -160,12 +157,6 @@ pub fn mv_to_ticks_ex(mv: f64, allow_positive: bool) -> Result<i64, String> {
     Ok((mv * TICKS_PER_MV).round() as i64)
 }
 
-/// Ticks of a value read back from the CPU, for a rollback: the whole field, not the request floor.
-fn restore_ticks(mv: f64) -> Result<i64, String> {
-    if !mv.is_finite() || !(ENCODE_MIN_MV..=999.0).contains(&mv) { return Err(format!("{mv} mV is outside the offset field")); }
-    Ok((mv * TICKS_PER_MV).round() as i64)
-}
-
 pub fn encode_offset(ticks: i64) -> u64 { ((ticks as u64) & 0x7FF) << 21 }
 
 pub fn uv_write_cmd(plane: u64, ticks: i64) -> u64 {
@@ -186,10 +177,12 @@ pub fn mb_status(resp: u64) -> u64 { (resp >> 32) & 0xFF }
 /// Offset in mV from a mailbox response. Only the low 32 bits carry data
 /// (throttled masks them; undervolt.py only strips the plane bits, which is
 /// wrong if the response status byte is non-zero).
-pub fn decode_mv(resp: u64) -> f64 {
+pub fn decode_mv(resp: u64) -> f64 { offset_ticks(resp) as f64 / TICKS_PER_MV }
+
+/// Signed 11-bit offset field (ticks) of a mailbox response.
+pub fn offset_ticks(resp: u64) -> i64 {
     let x = (((resp & 0xFFFF_FFFF) >> 21) & 0x7FF) as i64;
-    let t = if x >= 0x400 { x - 0x800 } else { x };
-    t as f64 / TICKS_PER_MV
+    if x >= 0x400 { x - 0x800 } else { x }
 }
 
 pub fn amps_to_icc_field(a: f64) -> Result<u64, String> {
@@ -424,7 +417,10 @@ impl Msr {
     fn oc_cmd(&self, cmd: u64) -> io::Result<u64> {
         self.wait_idle(MSR_OC_MAILBOX, 1 << 63)?;
         self.write(MSR_OC_MAILBOX, cmd)?;
-        self.wait_idle(MSR_OC_MAILBOX, 1 << 63)
+        // The command is already sent here: a timeout now must not read as "nothing written".
+        self.wait_idle(MSR_OC_MAILBOX, 1 << 63).map_err(|e| if e.kind() == io::ErrorKind::TimedOut {
+            io::Error::new(io::ErrorKind::TimedOut, "mailbox did not complete the command (bit 63 stays set) — result unknown")
+        } else { e })
     }
     /// One OC-mailbox round trip, atomic against every other user of this
     /// lock (GUI helper, daemon, CLI).
@@ -444,7 +440,7 @@ impl Msr {
         let r = self.oc_cmd(cmd)?;
         // A rejected write: report its status instead of a read-back that would look unchanged.
         let back = if mb_status(r) != 0 { r } else { self.oc_cmd(read)? };
-        Ok(Rmw::Done { cur, cmd, back })
+        Ok(Rmw::Done { cmd, back })
     }
     /// flock() on the msr device descriptor: separate opens (separate
     /// processes) conflict, so this serialises mailbox transactions system-wide
@@ -458,20 +454,10 @@ pub enum Rmw {
     Absent(u64),
     /// `build` refused after seeing this read response: nothing was written.
     Vetoed(u64),
-    Done { cur: u64, cmd: u64, back: u64 },
+    Done { cmd: u64, back: u64 },
 }
 
 fn modprobe_msr() -> bool { crate::modprobe("msr") }
-
-/// throttled's set_msr_allow_writes(): writes stay allowed with "default"
-/// but every 0x150 write then logs a kernel warning.
-pub fn ensure_allow_writes() -> Option<String> {
-    let p = Path::new("/sys/module/msr/parameters/allow_writes");
-    let cur = std::fs::read_to_string(p).ok()?.trim().to_owned();
-    if cur == "on" { return Some(cur); }
-    let _ = crate::sysfs_write(p, b"on");
-    Some(std::fs::read_to_string(p).ok()?.trim().to_owned())
-}
 
 pub fn lockdown() -> Option<String> {
     let s = std::fs::read_to_string("/sys/kernel/security/lockdown").ok()?;
@@ -904,12 +890,13 @@ pub fn read_status() -> Value {
         out["error"] = json!("not an Intel CPU");
         return out;
     }
-    out["allow_writes"] = json!(ensure_allow_writes());
     let msr = match Msr::open(true) {
         Ok(m) => m,
         Err(e) => { out["ok"] = json!(false); out["error"] = json!(format!("/dev/cpu/0/msr: {}", err_str(&e))); return out; }
     };
 
+    // Opening the device may have loaded msr. Report the active kernel policy after that.
+    out["allow_writes"] = json!(read_trim(Path::new("/sys/module/msr/parameters/allow_writes")).ok());
     out["oc_lock"] = match msr.read(MSR_FLEX_RATIO) {
         Ok(v) => json!({"locked": (v >> 20) & 1 == 1, "raw": format!("{v:#018x}")}),
         Err(e) => json!({"error": err_str(&e)}),
@@ -1107,6 +1094,66 @@ fn turbo_stock(cur: u64) -> Result<u64, String> {
     Ok(cur)
 }
 
+/// Firmware's PL1/PL2, TCC offset, BD PROCHOT and IccMax as first seen this boot, noted just before
+/// this tool first writes them. A power-source switch or a reset can then put back what a profile
+/// changed but the next one does not name. /run is cleared on reboot, like the registers.
+const STOCK_FILE: &str = "/run/centurion/intel-stock.json";
+
+pub fn stock_load() -> Value {
+    crate::read_root_file(STOCK_FILE, 16 * 1024).and_then(|s| serde_json::from_str::<Value>(&s).ok())
+        .filter(Value::is_object).unwrap_or_else(|| json!({}))
+}
+
+/// Records `val` at `key` (or `key.sub`) unless this boot already has a value there: the first one
+/// seen is the firmware's.
+fn stock_note(key: &str, sub: Option<&str>, val: Value) {
+    let mut s = stock_load();
+    let slot = match sub {
+        None => &mut s[key],
+        Some(k) => { if !s[key].is_object() { s[key] = json!({}); } &mut s[key][k] }
+    };
+    if !slot.is_null() { return; }
+    *slot = val;
+    if crate::secure_dir("/run/centurion").is_ok() {
+        let _ = crate::write_root_file(STOCK_FILE, s.to_string().as_bytes());
+    }
+}
+
+fn stock_note_pl(raw: u64, u: Units) {
+    let (a, b, _) = decode_pl(raw, u);
+    for (k, t) in [("pl1", a), ("pl2", b)] {
+        // A term firmware left disabled cannot be put back by writing a limit: not recorded.
+        if t.enabled { stock_note(k, None, json!({"watts": t.watts, "seconds": t.seconds, "clamp": t.clamp})); }
+    }
+}
+
+/// The fields of `stock` as a profile that puts them back. `wanted` = only the fields that profile
+/// sets (a source switch); None = everything recorded (reset). Never touches a power limit that
+/// `wanted` locked: that one cannot be written again before reset.
+pub fn stock_profile(stock: &Value, wanted: Option<&Profile>) -> Profile {
+    let mut p = Profile::default();
+    let want = |f: fn(&Profile) -> bool| wanted.map_or(true, f);
+    let pl = |k: &str| -> Option<PlReq> {
+        let t = &stock[k];
+        Some(PlReq { watts: t["watts"].as_f64()?, seconds: Some(t["seconds"].as_f64()?), clamp: Some(t["clamp"].as_bool()?) })
+    };
+    if !wanted.is_some_and(|w| w.lock_power) {
+        if want(|w| w.pl1.is_some()) { p.pl1 = pl("pl1"); }
+        if want(|w| w.pl2.is_some()) { p.pl2 = pl("pl2"); }
+    }
+    if want(|w| w.tjoffset.is_some()) { p.tjoffset = stock["tcc"].as_u64(); }
+    if want(|w| w.disable_bdprochot.is_some()) { p.disable_bdprochot = stock["bdprochot_disabled"].as_bool(); }
+    for &k in ICC_PLANES {
+        let (Some(a), Some(idx)) = (stock["icc"][k].as_f64(), plane_index(k)) else { continue };
+        if wanted.map_or(true, |w| w.iccmax.iter().any(|i| i.0 == k)) { p.iccmax.push((k, idx, a)); }
+    }
+    p
+}
+
+fn pkg_power_limit_locked() -> bool {
+    Msr::open(false).ok().and_then(|m| m.read(MSR_PKG_POWER_LIMIT).ok()).is_some_and(|v| v >> 63 == 1)
+}
+
 // ── sysfs / powercap writes (kernel-validated) ─────────────────────────────
 
 const RAPL_PKG: &str = "/sys/class/powercap/intel-rapl:0";
@@ -1221,7 +1268,6 @@ fn apply_ex(p: &Profile, rollback: bool) -> Value {
     if cpu_id().map(|c| c.vendor) != Some("GenuineIntel".into()) {
         return json!({"ok": false, "error": "not an Intel CPU"});
     }
-    ensure_allow_writes();
     let msr = match Msr::open(true) {
         Ok(m) => m,
         Err(e) => return json!({"ok": false, "error": format!("/dev/cpu/0/msr: {}", err_str(&e))}),
@@ -1237,10 +1283,13 @@ fn apply_ex(p: &Profile, rollback: bool) -> Value {
             let floor = uv_floor_mv();
             if mv < floor { return Err(format!("{mv} mV is below this CPU's {floor} mV floor — not written")); }
             let ticks = mv_to_ticks_ex(mv, p.allow_positive)?;
-            let (cmd, back) = match msr.mailbox_rmw(uv_read_cmd(idx), |cur| Some(uv_write_cmd_keep(idx, ticks, cur))).map_err(|e| err_str(&e))? {
+            let (cmd, back) = match msr.mailbox_rmw(uv_read_cmd(idx), |cur| {
+                prior = Some(cur);
+                Some(uv_write_cmd_keep(idx, ticks, cur))
+            }).map_err(|e| err_str(&e))? {
                 Rmw::Absent(st) if ticks == 0 => return Ok(format!("not present on this CPU (status {st:#04x}) — skipped")),
                 Rmw::Absent(st) => return Err(format!("mailbox status {st:#04x} on read: domain not present or refused — nothing written")),
-                Rmw::Done { cur, cmd, back } => { prior = Some(cur); (cmd, back) }
+                Rmw::Done { cmd, back, .. } => (cmd, back),
                 Rmw::Vetoed(_) => unreachable!("voltage write is never vetoed"),
             };
             if mb_status(back) != 0 {
@@ -1287,7 +1336,10 @@ fn apply_ex(p: &Profile, rollback: bool) -> Value {
             Ok(format!("{:.2} A", back as f64 / 4.0))
         })();
         // `prior` is also set when the build closure vetoed: only keep it if a write happened.
-        if let (Some(c), true) = (prior, r.is_ok() || !r.as_ref().err().is_some_and(|e| e.contains("nothing written"))) { undo.push((format!("iccmax.{k}"), Undo::Icc(idx, c))); }
+        if let (Some(c), true) = (prior, r.is_ok() || !r.as_ref().err().is_some_and(|e| e.contains("nothing written"))) {
+            stock_note("icc", Some(k), json!((c & ICC_MAX_FIELD) as f64 / 4.0));
+            undo.push((format!("iccmax.{k}"), Undo::Icc(idx, c)));
+        }
         all &= step(&mut results, format!("iccmax.{k}"), r);
     }
 
@@ -1309,6 +1361,7 @@ fn apply_ex(p: &Profile, rollback: bool) -> Value {
             // throttled keeps the trip point ≥ 40 °C.
             if tjmax > 0 && tjmax.saturating_sub(off) < 40 { return Err(format!("offset {off} would put the target below 40 °C (TjMax {tjmax})")); }
             let new = (cur & !(0x3Fu64 << 24)) | (off << 24);
+            stock_note("tcc", None, json!((cur >> 24) & 0x3F));
             prior = Some(cur);
             msr.write(MSR_TEMPERATURE_TARGET, new).map_err(|e| err_str(&e))?;
             let back = (msr.read(MSR_TEMPERATURE_TARGET).map_err(|e| err_str(&e))? >> 24) & 0x3F;
@@ -1325,6 +1378,7 @@ fn apply_ex(p: &Profile, rollback: bool) -> Value {
             let units = decode_units(msr.read(MSR_RAPL_POWER_UNIT).map_err(|e| err_str(&e))?);
             let cur = msr.read(MSR_PKG_POWER_LIMIT).map_err(|e| err_str(&e))?;
             if cur >> 63 == 1 { return Err("MSR_PKG_POWER_LIMIT is locked by firmware until reset".into()); }
+            stock_note_pl(cur, units);
             let mut v = cur;
             if let Some(t) = &p.pl1 { v = encode_pl_term(v, false, t.watts, t.seconds, units)?; }
             if let Some(t) = &p.pl2 { v = encode_pl_term(v, true, t.watts, t.seconds, units)?; }
@@ -1368,6 +1422,7 @@ fn apply_ex(p: &Profile, rollback: bool) -> Value {
         let r = (|| {
             let cur = msr.read(MSR_POWER_CTL).map_err(|e| err_str(&e))?;
             let new = if dis { cur & !1 } else { cur | 1 };
+            stock_note("bdprochot_disabled", None, json!(cur & 1 == 0));
             prior = Some(cur);
             msr.write(MSR_POWER_CTL, new).map_err(|e| err_str(&e))?;
             let back = msr.read(MSR_POWER_CTL).map_err(|e| err_str(&e))? & 1;
@@ -1587,13 +1642,12 @@ fn apply_ex(p: &Profile, rollback: bool) -> Value {
     let mut rolled = Vec::new();
     for (what, u) in undo.into_iter().rev() {
         let r: Result<String, String> = match u {
-            Undo::Volt(idx, cur) => restore_ticks(decode_mv(cur)).and_then(|t| {
-                match msr.mailbox_rmw(uv_read_cmd(idx), |c| Some(uv_write_cmd_keep(idx, t, c))).map_err(|e| err_str(&e))? {
-                    Rmw::Done { back, .. } if mb_status(back) == 0 && back & 0xFFFF_FFFF == cur & 0xFFFF_FFFF => Ok(format!("{:.2} mV restored", decode_mv(cur))),
-                    Rmw::Done { back, .. } => Err(format!("readback {:.2} mV, wanted {:.2} mV", decode_mv(back), decode_mv(cur))),
-                    _ => Err("mailbox refused the undo".into()),
-                }
-            }),
+            Undo::Volt(idx, cur) => match msr.mailbox_rmw(uv_read_cmd(idx), |c| Some(uv_write_cmd_keep(idx, offset_ticks(cur), c))).map_err(|e| err_str(&e)) {
+                Ok(Rmw::Done { back, .. }) if mb_status(back) == 0 && back & 0xFFFF_FFFF == cur & 0xFFFF_FFFF => Ok(format!("{:.2} mV restored", decode_mv(cur))),
+                Ok(Rmw::Done { back, .. }) => Err(format!("readback {:.2} mV, wanted {:.2} mV", decode_mv(back), decode_mv(cur))),
+                Ok(_) => Err("mailbox refused the undo".into()),
+                Err(e) => Err(e),
+            },
             Undo::Icc(idx, cur) => match msr.mailbox_rmw(icc_read_cmd(idx), |_| Some(icc_write_cmd(idx, cur & ICC_MAX_FIELD))).map_err(|e| err_str(&e)) {
                 Ok(Rmw::Done { back, .. }) if mb_status(back) == 0 && back & ICC_MAX_FIELD == cur & ICC_MAX_FIELD => Ok(format!("{:.2} A restored", (cur & ICC_MAX_FIELD) as f64 / 4.0)),
                 Ok(_) => Err("readback differs after undo".into()),
@@ -1740,10 +1794,18 @@ pub fn restore_pl(raw: u64, caps: (Option<f64>, Option<f64>)) -> Result<(), Stri
 }
 
 /// Stock voltage: every plane this CPU has back to 0 mV (the Arrow Lake-only planes are not
-/// written on other CPUs: those OC-mailbox domains do not exist there). IccMax, TCC and power
-/// limits have no knowable "stock" (firmware programs them), so reset leaves them.
+/// written on other CPUs: those OC-mailbox domains do not exist there). IccMax, TCC, BD PROCHOT and
+/// the power limits are firmware-programmed: they go back to the value this tool first saw this boot.
 pub fn reset_profile() -> Profile {
-    Profile { voltage: cpu_planes().map(|&(k, i, _)| (k, i, 0.0)).collect(), ..Default::default() }
+    let mut p = Profile { voltage: cpu_planes().map(|&(k, i, _)| (k, i, 0.0)).collect(), ..Default::default() };
+    // What this boot's profiles changed of the firmware's own PL1/PL2, TCC, BD PROCHOT and IccMax
+    // (recorded before the first write) goes back too; a locked power limit is left out, it cannot be written.
+    let stock = stock_profile(&stock_load(), None);
+    if !pkg_power_limit_locked() { p.pl1 = stock.pl1; p.pl2 = stock.pl2; }
+    p.tjoffset = stock.tjoffset;
+    p.disable_bdprochot = stock.disable_bdprochot;
+    p.iccmax = stock.iccmax;
+    p
 }
 
 /// Undervolt-protection probe (CVE-2019-11157 / UVP): the OC Lock bit does not
@@ -1755,7 +1817,6 @@ pub fn probe_uv_lock() -> Value {
     if cpu_id().map(|c| c.vendor) != Some("GenuineIntel".into()) {
         return json!({"ok": false, "error": "not an Intel CPU"});
     }
-    ensure_allow_writes();
     let msr = match Msr::open(true) {
         Ok(m) => m,
         Err(e) => return json!({"ok": false, "error": format!("/dev/cpu/0/msr: {}", err_str(&e))}),
@@ -1763,28 +1824,33 @@ pub fn probe_uv_lock() -> Value {
     let oc_lock = msr.read(MSR_FLEX_RATIO).ok().map(|v| (v >> 20) & 1 == 1);
     if !uv_map_verified() { return json!({"ok": false, "error": uv_map_refusal(), "oc_lock": oc_lock}); }
     let plane = 0u64;  // CPU Core
-    let cur = match msr.mailbox(uv_read_cmd(plane)) {
-        Ok(r) if (r >> 32) & 0xFF != 0 => return json!({"ok": true, "uv_locked": true, "oc_lock": oc_lock,
-            "message": format!("OC mailbox read refused (status {:#04x}) — no voltage control on this CPU/BIOS", (r >> 32) & 0xFF)}),
+    // Keep the test and its undo in one mailbox transaction so another writer cannot interleave.
+    let _lock = match msr.txn() {
+        Ok(lock) => lock,
+        Err(e) => return json!({"ok": false, "error": format!("mailbox lock: {}", err_str(&e)), "oc_lock": oc_lock}),
+    };
+    let read = uv_read_cmd(plane);
+    let cur = match msr.oc_cmd(read) {
+        Ok(r) if mb_status(r) != 0 => return json!({"ok": true, "uv_locked": true, "oc_lock": oc_lock,
+            "message": format!("OC mailbox read refused (status {:#04x}) — no voltage control on this CPU/BIOS", mb_status(r))}),
         Ok(r) => r,
         Err(e) => return json!({"ok": false, "error": format!("mailbox read: {}", err_str(&e)), "oc_lock": oc_lock}),
     };
-    let raw = (((cur & 0xFFFF_FFFF) >> 21) & 0x7FF) as i64;
-    let ticks = if raw >= 0x400 { raw - 0x800 } else { raw };
+    let ticks = offset_ticks(cur);
     let test = if ticks < 0 { ticks + 1 } else if ticks > 0 { ticks - 1 } else { -1 };
-    // Ratio/target/mode bits (20:0) are carried over from the read in both writes.
     let cmd = uv_write_cmd_keep(plane, test, cur);
-    let back = msr.mailbox_rmw(uv_read_cmd(plane), |c| Some(uv_write_cmd_keep(plane, test, c)));
-    // Always restore, whatever happened.
-    let restore = msr.mailbox_rmw(uv_read_cmd(plane), |c| Some(uv_write_cmd_keep(plane, ticks, c)));
-    let restored = matches!(restore, Ok(Rmw::Done { cmd: rc, back: rb, .. }) if mb_status(rb) == 0 && rb & 0xFFFF_FFFF == rc & 0xFFFF_FFFF);
+    let back = msr.oc_cmd(cmd).and_then(|r| if mb_status(r) == 0 { msr.oc_cmd(read) } else { Ok(r) });
+    // A timeout can occur after the command was accepted, so also restore on error.
+    let _ = msr.oc_cmd(uv_write_cmd_keep(plane, ticks, cur));
+    let restore = msr.oc_cmd(read);
+    let restored = matches!(restore, Ok(rb) if mb_status(rb) == 0 && rb & 0xFFFF_FFFF == cur & 0xFFFF_FFFF);
     let back = match back {
-        Ok(Rmw::Done { back, .. }) => back,
-        Ok(Rmw::Vetoed(_)) => unreachable!("probe write is never vetoed"),
-        Ok(Rmw::Absent(st)) => return json!({"ok": true, "uv_locked": true, "oc_lock": oc_lock, "restored": restored,
-            "message": format!("OC mailbox read refused (status {st:#04x}) — nothing written")}),
-        Err(e) => return json!({"ok": false, "error": format!("mailbox write: {}", err_str(&e)), "oc_lock": oc_lock, "restored": restored}),
+        Ok(back) => back,
+        Err(e) => return json!({"ok": false, "error": format!("mailbox write or readback: {}", err_str(&e)), "oc_lock": oc_lock, "restored": restored}),
     };
+    if !restored {
+        return json!({"ok": false, "error": "mailbox probe could not verify the original offset was restored", "oc_lock": oc_lock, "restored": false});
+    }
     let status = (back >> 32) & 0xFF;
     let accepted = status == 0 && back & 0xFFFF_FFFF == cmd & 0xFFFF_FFFF;
     json!({
@@ -1833,13 +1899,9 @@ mod tests {
         assert_eq!(decode_mv(0xf0000000), -125.0);
         // status byte set: undervolt.py would mis-decode this, throttled/us not
         assert_eq!(decode_mv(0x0000_00FF_F9A0_0000), decode_mv(0xF9A0_0000));
-        for mv in (UV_MIN_MV as i64..=0).map(|x| x as f64) {
-            let t = mv_to_ticks(mv).unwrap();
-            assert_eq!(restore_ticks(decode_mv(encode_offset(t))).unwrap(), t);
-        }
-        for mv in (-1000..=0).map(|x| x as f64) {
-            let t = restore_ticks(mv).unwrap();
-            assert_eq!(restore_ticks(decode_mv(encode_offset(t))).unwrap(), t);
+        // Rollback must round-trip even firmware offsets outside the profile limits.
+        for ticks in -1024..=1023 {
+            assert_eq!(offset_ticks(encode_offset(ticks)), ticks);
         }
         assert!(mv_to_ticks(1.0).is_err() && mv_to_ticks(-200.5).is_err() && mv_to_ticks(-300.0).is_err());
     }

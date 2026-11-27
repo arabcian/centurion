@@ -47,6 +47,7 @@ private:
     void load();
     void apply();
     void refreshTable();
+    bool busy_ = false;
     void setBusy(bool b);
     void status(const QString &msg, const char *color = nullptr);
     void takeReply(const QJsonObject &j);

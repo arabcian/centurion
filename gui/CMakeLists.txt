@@ -255,7 +255,11 @@ elseif(CENTURION_PGO STREQUAL "use")
             # moc output lives under each build dir, so its functions' source
             # locations differ between the two builds; GCC then drops the
             # profile for that glue code (harmless) instead of failing.
-            -Wno-coverage-mismatch)
+            -Wno-coverage-mismatch
+            # The training run is multithreaded, so racing counter updates can
+            # leave the profile flow-inconsistent ("corrupted profile info");
+            # let GCC smooth it instead of failing the build.
+            -fprofile-correction)
     endif()
 elseif(NOT CENTURION_PGO STREQUAL "")
     message(FATAL_ERROR "CENTURION_PGO must be '', 'generate' or 'use'")
@@ -326,6 +330,13 @@ if(CENTURION_BUILD_TESTS)
         CENTURION_HELPER_DIR="/nonexistent-centurion-test" CENTURION_VERSION="fixture" CENTURION_PRIVILEGED_FIXTURE)
     add_test(NAME privileged-lifecycle COMMAND centurion-privileged-lifecycle-test)
     set_tests_properties(privileged-lifecycle PROPERTIES TIMEOUT 80)
+
+    add_executable(centurion-unlock-test tests/unlock_test.cpp src/unlock.cpp src/unlock.h
+        src/kernelparamspage.cpp src/kernelparamspage.h)
+    target_link_libraries(centurion-unlock-test PRIVATE Qt6::Widgets)
+    target_compile_definitions(centurion-unlock-test PRIVATE QT_NO_KEYWORDS CENTURION_HELPER_DIR="/nonexistent-centurion-test")
+    add_test(NAME unlock COMMAND centurion-unlock-test)
+    set_tests_properties(unlock PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 10)
 
     add_executable(centurion-simulation-visual-test tests/simulation_visual_test.cpp
         src/simulation.cpp src/simulation.h src/theme.cpp src/theme.h src/charts.cpp src/charts.h
@@ -448,6 +459,9 @@ if(CENTURION_BUILD_TESTS)
     target_link_libraries(centurion-coevidence-test PRIVATE Qt6::Core)
     target_compile_definitions(centurion-coevidence-test PRIVATE QT_NO_KEYWORDS)
     add_test(NAME coevidence COMMAND centurion-coevidence-test)
+    add_executable(centurion-slotmap-test tests/slotmap_test.cpp src/slotmap.h)
+    target_compile_features(centurion-slotmap-test PRIVATE cxx_std_17)
+    add_test(NAME slotmap COMMAND centurion-slotmap-test)
     add_executable(centurion-klogview-test tests/klogview_test.cpp src/klogview.cpp src/klogview.h)
     target_link_libraries(centurion-klogview-test PRIVATE Qt6::Core)
     target_compile_definitions(centurion-klogview-test PRIVATE QT_NO_KEYWORDS)

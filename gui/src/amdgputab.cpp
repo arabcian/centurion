@@ -1,3 +1,4 @@
+#include "unlock.h"
 #include "navigationtargets.h"
 #include "amdgputab.h"
 #include "fieldverify.h"
@@ -241,6 +242,10 @@ AmdGpuTab::AmdGpuTab(QWidget *parent) : QWidget(parent) {
     connect(resetBtn_, &QPushButton::clicked, this, &AmdGpuTab::resetCard);
     connect(applyBtn_, &QPushButton::clicked, this, [this] { apply(collect(), true); });
     outer->addLayout(bottom);
+    connect(&unlock::Manager::instance(), &unlock::Manager::changed, this, [this] { setBusy(busy_); });
+    applyBtn_->setEnabled(unlock::Manager::instance().unlocked());
+    uvBtn_->setEnabled(unlock::Manager::instance().unlocked());
+    presetCombo_->setEnabled(unlock::Manager::instance().unlocked());
 
     auto *st = new QHBoxLayout;
     status_ = muted({});
@@ -335,6 +340,7 @@ void AmdGpuTab::rebuildForm() {
     zeroRpm_ = nullptr;
 
     form_ = new QWidget;
+    form_->setEnabled(!busy_ && unlock::Manager::instance().unlocked());
     auto *v = new QVBoxLayout(form_);
     v->setContentsMargins(0, 0, 0, 0);
     // Experimental keeps the dynamic firmware-dependent controls intact, but
@@ -746,7 +752,12 @@ void AmdGpuTab::frequencyOverview() {
 
 void AmdGpuTab::setBusy(bool b) {
     busy_ = b;
-    for (QPushButton *w : {applyBtn_, resetBtn_, uvBtn_}) w->setEnabled(!b);
+    const bool canEdit = !b && unlock::Manager::instance().unlocked();
+    applyBtn_->setEnabled(canEdit);
+    uvBtn_->setEnabled(canEdit);
+    presetCombo_->setEnabled(canEdit);
+    if (form_) form_->setEnabled(canEdit);
+    resetBtn_->setEnabled(!b);
     cardCombo_->setEnabled(!b && !trialBar_->isVisible());
 }
 

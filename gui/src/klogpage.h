@@ -70,7 +70,7 @@ private:
     quint64 focusSeq_ = 0;
     bool needsRoot_ = false, busy_ = false, shownOnce_ = false;
     QSet<QString> muted_;                 // normalized messages hidden by the user (gui.ini klog/muted)
-    QHash<QString, QString> rowKey_;      // text of each rendered row → its message key (for the menu)
-    QHash<QString, QString> rowMsg_;      // text of each rendered row → the kernel message itself
+    struct RowMessage { QString key, message; };
+    QHash<QString, RowMessage> rowMessages_;  // rendered line → context menu data
     int hiddenMuted_ = 0;                 // rows left out by the mute list in the last render
 };

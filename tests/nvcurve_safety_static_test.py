@@ -80,7 +80,7 @@ class Invariants(unittest.TestCase):
 
     def test_rollback_of_known_nvml_and_ct(self):
         a=src('crates/nvcurve/src/profiles/apply.rs')
-        self.assertIn('revert_profile(g, idx, &previous',a)
+        self.assertIn('revert_profile(g, target, &previous',a)
         self.assertIn('vfcurve::restore_offsets_verified(g, previous)',a)
         for phrase in ['old_power','old_mem','changed_locks','its core cap cannot be restored','previous VRAM clock-lock range cannot be restored','Final verification:']:
             self.assertIn(phrase,a)
@@ -92,12 +92,12 @@ class Invariants(unittest.TestCase):
         # No VRAM-lock reset and no NVML power-limit default on an apply that does not ask for them.
         self.assertNotIn('reset_mem_locked_clocks',body)
         self.assertNotIn('.or(power.default_power_limit_w)',body)
-        # Unchanged CT points are not re-sent; the core cap is the last NVML write.
+        # Unchanged CT points are not re-sent; the core cap must be active before the new curve.
         self.assertIn('let changes = changed_points(&deltas, &previous_offsets);',body)
-        self.assertLess(body.index('limits::set_power_limit(wanted, idx)'),body.index('limits::set_gpu_locked_clocks(0, max, idx)'))
+        self.assertLess(body.index('limits::set_gpu_locked_clocks(0, max, idx)'),body.index('vfcurve::write_prepared_offsets(g, &changes'))
         # A rollback that changed the core cap goes to stock, never to the old curve uncapped.
         rev=a[a.index('fn revert_profile('):a.index('pub fn apply_profile(')]
-        self.assertLess(rev.index('crate::ops::reset_vf_offsets_verified(idx as usize, None)'),rev.index('limits::reset_gpu_locked_clocks(idx)'))
+        self.assertLess(rev.index('crate::ops::reset_vf_offsets_verified(t.nvapi, None)'),rev.index('limits::reset_gpu_locked_clocks(idx)'))
 
     def test_register_probe_on_by_default_and_locked(self):
         for f in ['crates/nvcurve/src/hal/sensors.rs','crates/nvcurve/src/bin/nvcurve-sensors.rs',

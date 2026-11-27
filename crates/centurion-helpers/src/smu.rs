@@ -195,11 +195,19 @@ fn parse_lockdown(t: &str) -> Option<bool> {
     Some(sel != "[none]")
 }
 
-/// ryzen_smu >= 0.1.7 (same floor as RyzenAdj's osdep_linux.c).
-fn kmod_usable() -> bool {
-    let Ok(v) = std::fs::read_to_string(format!("{KMOD_DIR}/drv_version")) else { return false };
+/// Oldest ryzen_smu this tool talks to. The driver serialises its global `smu_args`/status/smn slots
+/// per process only from 0.1.9 on (its CHANGES-0.1.9.md): older versions let another SMU client
+/// that writes in between turn our command into one with the wrong arguments or answer. Our own flock
+/// covers only tools that take it too, so those versions are refused.
+const MIN_DRIVER: (u32, u32, u32) = (0, 1, 9);
+
+fn driver_version_ok(v: &str) -> bool {
     let n: Vec<u32> = v.trim().split('.').map(|p| p.parse().unwrap_or(0)).collect();
-    n.len() == 3 && (n[0], n[1], n[2]) >= (0, 1, 7)
+    n.len() == 3 && (n[0], n[1], n[2]) >= MIN_DRIVER
+}
+
+fn kmod_usable() -> bool {
+    std::fs::read_to_string(format!("{KMOD_DIR}/drv_version")).is_ok_and(|v| driver_version_ok(&v))
 }
 
 fn open_lock() -> Result<File, String> {
@@ -229,10 +237,10 @@ impl Bus {
         }
         if lockdown_active() == Some(true) {
             return Err("kernel lockdown is active (Secure Boot): user-space PCI config writes are blocked; \
-                        load a signed ryzen_smu >= 0.1.7".into());
+                        load a signed ryzen_smu >= 0.1.9".into());
         }
         let dev = OpenOptions::new().read(true).write(true).custom_flags(libc::O_CLOEXEC).open(PCI_CFG).map_err(|e| format!(
-            "no SMN access: ryzen_smu >= 0.1.7 not loaded and {PCI_CFG}: {e} \
+            "no SMN access: ryzen_smu >= 0.1.9 not loaded and {PCI_CFG}: {e} \
              (kernel lockdown / Secure Boot blocks PCI config writes; load ryzen_smu)"))?;
         let mut id = [0u8; 12];
         dev.read_exact_at(&mut id, 0).map_err(|e| format!("{PCI_CFG}: {e}"))?;
@@ -345,7 +353,7 @@ fn selftest<S: Smn>(s: &mut S, mb: Mbox, timeout: Duration) -> Result<(), String
     s.wr(mb.rsp, 0).map_err(e)?;
     s.wr(mb.arg, TEST_ARG).map_err(e)?;
     if s.rd(mb.arg).map_err(e)? != TEST_ARG {
-        return Err("SMN window is not writable (Secure Boot / lockdown?): load ryzen_smu >= 0.1.7".into());
+        return Err("SMN window is not writable (Secure Boot / lockdown?): load ryzen_smu >= 0.1.9".into());
     }
     match mailbox(s, mb, TEST_MSG, TEST_ARG, timeout) {
         Ok(RSP_OK) => Ok(()),
@@ -401,7 +409,7 @@ pub struct DriverMb { args: File, cmd: File, lock: File }
 
 impl DriverMb {
     fn open(spec: &Spec) -> Result<DriverMb, String> {
-        if !kmod_usable() { return Err("ryzen_smu >= 0.1.7 not loaded".into()); }
+        if !kmod_usable() { return Err("ryzen_smu >= 0.1.9 not loaded".into()); }
         let code: u32 = std::fs::read_to_string(format!("{KMOD_DIR}/codename")).ok()
             .and_then(|t| t.trim().parse().ok()).ok_or("ryzen_smu: codename unreadable")?;
         let want = driver_codename(spec.family);
@@ -548,6 +556,15 @@ impl Smu {
 mod tests {
     use super::*;
     use std::collections::HashMap;
+
+    #[test]
+    fn driver_floor_is_the_per_process_ownership_release() {
+        assert!(driver_version_ok("0.1.9\n"));
+        assert!(driver_version_ok("0.2.0"));
+        assert!(!driver_version_ok("0.1.8"));
+        assert!(!driver_version_ok("0.1.7"));   // no ownership check: another client's args could be used
+        assert!(!driver_version_ok("garbage"));
+    }
 
     /// Fake SMU: answers `rsp` for the configured opcodes, records every message sent.
     struct Fake { regs: HashMap<u32, u32>, mb: Mbox, ok_ops: Vec<u32>, silent: bool, sent: Vec<(u32, u32)> }
