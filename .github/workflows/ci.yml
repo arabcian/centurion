@@ -13,6 +13,7 @@ jobs:
       - run: cargo test --workspace --locked
       - run: cargo clippy --workspace --all-targets --locked -- -D warnings
       - run: python3 tests/nvcurve_safety_static_test.py
+      - run: python3 tests/gentoo_manifest_static_test.py
 
   deny:
     runs-on: ubuntu-24.04

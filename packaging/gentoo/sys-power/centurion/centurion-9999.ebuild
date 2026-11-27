@@ -16,7 +16,7 @@ LICENSE="GPL-3+"
 # Dependent crate licenses
 LICENSE+=" Apache-2.0 MIT Unicode-3.0"
 SLOT="0"
-IUSE="lto +netguard pgo test +xkb"
+IUSE="acpi-call backup diagnostics kde lto mqtt +netguard nettools nvidia pgo ryzen-smu sensors test vulkan X +xkb"
 RESTRICT="!test? ( test )"
 
 DEPEND="
@@ -24,10 +24,49 @@ DEPEND="
 	dev-qt/qtsvg:6
 	xkb? ( x11-libs/libxkbcommon )
 "
+# Optional tools from the Gentoo repository are USE flags; the program finds them at
+# runtime and works without them. Tools that only other overlays carry (zenpower3,
+# zenergy, wlr-randr, brightnessctl, MangoHud) are used when installed: see pkg_postinst.
 RDEPEND="
 	${DEPEND}
 	sys-auth/polkit
+	acpi-call? ( sys-power/acpi_call )
+	backup? (
+		app-arch/pigz
+		app-arch/zstd
+		app-crypt/age
+	)
+	diagnostics? (
+		dev-util/vulkan-tools
+		sys-apps/dmidecode
+		sys-apps/fwupd
+		sys-apps/memtester
+		sys-apps/nvme-cli
+		sys-apps/pciutils
+		sys-apps/smartmontools
+		sys-apps/usbutils
+		sys-boot/mokutil
+		sys-power/cpupower
+		sys-process/numactl
+		x11-apps/mesa-progs
+	)
+	kde? ( kde-plasma/libkscreen )
+	mqtt? ( app-misc/mosquitto )
 	netguard? ( net-firewall/nftables )
+	nettools? (
+		net-analyzer/traceroute
+		net-misc/whois
+		net-wireless/iw
+		sys-apps/ethtool
+	)
+	nvidia? ( x11-drivers/nvidia-drivers )
+	ryzen-smu? ( app-admin/ryzen_smu )
+	sensors? ( sys-apps/lm-sensors )
+	vulkan? ( media-libs/vulkan-loader )
+	X? (
+		x11-apps/setxkbmap
+		x11-apps/xrandr
+	)
 "
 BDEPEND="
 	dev-qt/qttools:6[linguist]
@@ -141,11 +180,13 @@ src_install() {
 	}
 
 	exeinto /usr/libexec/${PN}
-	doexe "${r}"/{legion-profile-helper,fwattr-helper,ryzen-co-helper,tune-helper,tune-profile-helper,intel-uv-helper,legion-gpu-helper,legion-firmware-helper,lighting-helper,amdgpu-helper,nvcurve-sensors,legion-ec-sensors,health-reader,centurion-boot-guard,netguard-helper,backup-helper,sysadmin-helper,sysadmin-config-helper,tune-admin-helper}
+	doexe "${r}"/{legion-profile-helper,fwattr-helper,ryzen-co-helper,tune-helper,tune-profile-helper,intel-uv-helper,legion-gpu-helper,legion-firmware-helper,lighting-helper,amdgpu-helper,nvcurve-sensors,legion-ec-sensors,health-reader,centurion-boot-guard,backup-helper,sysadmin-helper,sysadmin-config-helper,tune-admin-helper}
+	use netguard && doexe "${r}"/netguard-helper
 	exeopts -m0700
 	doexe "${r}"/nvcurve-root-helper
 	exeopts -m0755
-	dobin "${r}"/{nvcurve,centurion-gamemode,centurion-intel-uv,centurion-autotune,centurion-calibrate,centurion-netguard,centurion-display,centurion-export,centurion-cooltest,centurion-gpustress,centurion-cpustress}
+	dobin "${r}"/{nvcurve,centurion-gamemode,centurion-intel-uv,centurion-autotune,centurion-calibrate,centurion-display,centurion-export,centurion-cooltest,centurion-gpustress,centurion-cpustress}
+	use netguard && dobin "${r}"/centurion-netguard
 	_centurion_subst packaging/centurion-safe-mode "${T}"/centurion-safe-mode
 	dobin "${T}"/centurion-safe-mode
 
@@ -163,9 +204,10 @@ src_install() {
 	insinto /etc/logrotate.d
 	newins packaging/logrotate/centurion centurion
 
-	local s
-	for s in nvcurve-autoload centurion-tune centurion-intel-uv centurion-intel-uv-daemon \
-		centurion-boot-guard centurion-netguard centurion-calibrate-boot; do
+	local s services=( nvcurve-autoload centurion-tune centurion-intel-uv centurion-intel-uv-daemon
+		centurion-boot-guard centurion-calibrate-boot )
+	use netguard && services+=( centurion-netguard )
+	for s in "${services[@]}"; do
 		_centurion_subst packaging/openrc/${s} "${T}"/${s}.initd
 		newinitd "${T}"/${s}.initd ${s}
 		_centurion_subst packaging/systemd/${s}.service "${T}"/${s}.service
@@ -219,7 +261,7 @@ pkg_postinst() {
 	elog "  centurion-tune             Optimizations boot preset (⏻ Apply at boot)"
 	elog "  centurion-intel-uv         Intel undervolt boot/resume profile"
 	elog "  centurion-intel-uv-daemon  AC/battery switch, periodic re-apply, hwphint"
-	elog "  centurion-netguard         Health → Network (IP blacklist, Wine/.exe guard)"
+	use netguard && elog "  centurion-netguard         Health → Network (IP blacklist, Wine/.exe guard)"
 	elog "  OpenRC:  rc-update add <name> default   (centurion-tune / -intel-uv: boot)"
 	elog "  systemd: systemctl enable <name>.service"
 	elog "centurion-calibrate-boot is one-shot: scheduling it from Autotune adds it to the"
@@ -228,29 +270,11 @@ pkg_postinst() {
 	elog "  the machine is not asked for a password."
 	elog "Lutris hooks: /usr/bin/centurion-gamemode PRE / POST / RUN (Game launch sub-tab)."
 
-	optfeature "GPU power limits, Custom fan curve, GPU mode and EC sensors" sys-power/acpi_call
-	optfeature "the NVIDIA tab (NvAPI / NVML)" x11-drivers/nvidia-drivers
-	optfeature "the Ryzen tab under Secure Boot / lockdown (needs ryzen_smu >= 0.1.9)" app-admin/ryzen_smu
+	# Not in the Gentoo repository: used when installed from another overlay (e.g. ::guru).
 	optfeature "extra AMD CPU sensors (overlays, e.g. ::guru)" sys-kernel/zenpower3 sys-kernel/zenergy
-	optfeature "faster Health → Backup compression" app-arch/pigz
-	optfeature "zstd Backup compression" app-arch/zstd
-	optfeature "xz Backup compression" app-arch/xz-utils
-	optfeature "Scenes → refresh rate on X11" x11-apps/xrandr
-	optfeature "Scenes → refresh rate on KDE Plasma" kde-plasma/libkscreen
 	optfeature "Scenes → refresh rate on wlroots compositors (::guru)" gui-apps/wlr-randr
 	optfeature "Scenes → screen brightness without logind (::guru)" app-misc/brightnessctl
 	optfeature "the active scene / power profile in games (::guru)" games-util/mangohud
-	optfeature "keyboard legends from the X11 layout" x11-apps/setxkbmap
-	optfeature "System tools → DMI" sys-apps/dmidecode
-	optfeature "System tools → disk health" sys-apps/smartmontools sys-apps/nvme-cli
-	optfeature "System tools → sensors" sys-apps/lm-sensors
-	optfeature "System tools → cpupower" sys-power/cpupower
-	optfeature "System tools → PCI devices" sys-apps/pciutils
-	optfeature "System tools → USB devices" sys-apps/usbutils
-	optfeature "System tools → NUMA" sys-process/numactl
-	optfeature "Health → Curve stability → GPU test (Vulkan loader)" media-libs/vulkan-loader
-	optfeature "System tools → Vulkan info" dev-util/vulkan-tools
-	optfeature "System tools → OpenGL info" x11-apps/mesa-progs
 }
 
 pkg_postrm() {

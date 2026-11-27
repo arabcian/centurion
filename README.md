@@ -213,12 +213,10 @@ Build (`cargo build --release`, `cmake -S gui -B gui/build …`), then
 
 ### Gentoo
 
-```sh
-./make-dist.sh    # → dist/centurion-2.0.0.tar.xz (crates vendored, builds offline)
-```
-
-Copy the tarball into your `DISTDIR` and emerge the ebuild from
-`packaging/gentoo/sys-power/centurion/` in a local overlay.
+Put `packaging/gentoo/sys-power/centurion/` into a local overlay and emerge the live
+ebuild (`centurion-9999`, built from git). Optional tools from the Gentoo repository
+are USE flags (see `metadata.xml`); tools from other overlays (zenpower3, zenergy,
+wlr-randr, brightnessctl, MangoHud) are used when they are installed.
 
 ### After installing
 
