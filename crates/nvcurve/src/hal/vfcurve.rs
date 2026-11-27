@@ -83,13 +83,15 @@ const V3_SIZE: usize = V3_HEADER + 255 * V3_STRIDE;
 const V3_BASE_SUPPORTED: usize = 0x24;
 const V3_BASE_FREQ: usize = 12;
 
-pub fn read_base_freqs(gpu: Gpu) -> Option<Vec<u32>> {
+/// Err carries the reason the tuples are missing; it ends up in `CurveState::base_note`.
+pub fn read_base_freqs(gpu: Gpu) -> Result<Vec<u32>, String> {
     // 88 844 bytes: the version word is MAKE_NVAPI_VERSION's (see nvapi::version_word).
     // Without these tuples every base falls back to freq − delta, which is wrong on
     // capped tops and on points the driver holds ~1000 MHz below stock.
-    let mask = get_boost_mask(gpu).ok()?;
-    let d = nvcall(fid::GET_VFP_CURVE, gpu, V3_SIZE, 3, |b| b.bytes_mut()[4..36].copy_from_slice(&mask)).ok()?;
-    parse_v3_base(d.bytes())
+    let mask = get_boost_mask(gpu).map_err(|e| format!("GetClockBoostMask failed: {e}"))?;
+    let d = nvcall(fid::GET_VFP_CURVE, gpu, V3_SIZE, 3, |b| b.bytes_mut()[4..36].copy_from_slice(&mask))
+        .map_err(|e| format!("GetVFPCurve v3 request failed: {e}"))?;
+    parse_v3_base(d.bytes()).ok_or_else(|| "the driver reports no base tuples (bVfTupleBaseSupported = 0)".to_owned())
 }
 
 pub fn parse_v3_base(d: &[u8]) -> Option<Vec<u32>> {
@@ -188,6 +190,7 @@ fn merge(vfp: &[(u32, u32)], ct: &[(i32, u32)], info: Option<&[PointInfo]>, base
     CurveState {
         points, timestamp: now_secs(), gpu_name: gpu_name.to_owned(),
         domain_source: if from_info.is_some() { "point-info" } else { "flags" },
+        base_note: String::new(),
     }
 }
 
@@ -202,11 +205,19 @@ pub fn read_curve_with_raw_ct(gpu: Gpu, gpu_name: &str) -> Result<(CurveState, B
     let raw = read_clock_table_raw(gpu)?;
     let info = get_point_info(gpu).ok();
     let base = read_base_freqs(gpu);
-    let mut state = merge(&vfp, &parse_ct_entries(raw.bytes()), info.as_deref(), base.as_deref(), gpu_name);
-    if state.points.iter().any(|p| p.base_khz.is_some()) && !v3_agrees(&state) {
-        log::warn!("V3 base tuples disagree with the V/F status on unmodified points — ignored, freq − delta is used");
+    let mut state = merge(&vfp, &parse_ct_entries(raw.bytes()), info.as_deref(), base.as_deref().ok(), gpu_name);
+    state.base_note = if let Err(e) = &base {
+        format!("unavailable: {e}")
+    } else if !state.points.iter().any(|p| p.base_khz.is_some()) {
+        "unavailable: every V3 base tuple is 0".into()
+    } else if !v3_agrees(&state) {
+        let why = v3_disagreement(&state);
+        log::warn!("V3 base tuples disagree with the V/F status on unmodified points — ignored, freq − delta is used ({why})");
         for p in &mut state.points { p.base_khz = None; }
-    }
+        format!("unavailable: V3 rejected by the V1 cross-check ({why})")
+    } else {
+        "V3 base tuples in use".into()
+    };
     Ok((state, raw))
 }
 
@@ -225,6 +236,24 @@ fn v3_agrees(state: &CurveState) -> bool {
     let independent: std::collections::HashSet<_> = anchors.iter().map(|p| p.freq_khz).collect();
     independent.len() >= 2 && anchors.iter().all(|p| p.base_khz.is_some_and(|b|
         (i64::from(b) - i64::from(p.freq_khz)).abs() <= V3_AGREE_KHZ))
+}
+
+/// Why `v3_agrees` said no, for the log and `base_note` only — the decision itself stays in `v3_agrees`.
+fn v3_disagreement(state: &CurveState) -> String {
+    let gpu = || state.points.iter().filter(|p| p.domain == Domain::Gpu && p.freq_khz > 0);
+    let top = gpu().map(|p| p.freq_khz).max().unwrap_or(0);
+    let anchors: Vec<&VfPoint> = gpu().filter(|p| p.delta_khz == 0 && p.freq_khz < top).collect();
+    let distinct: std::collections::HashSet<_> = anchors.iter().map(|p| p.freq_khz).collect();
+    if distinct.len() < 2 {
+        return format!("{} zero-offset point(s) below the top plateau at {} distinct frequency(ies), 2 needed",
+                       anchors.len(), distinct.len());
+    }
+    let bad: Vec<&&VfPoint> = anchors.iter()
+        .filter(|p| !p.base_khz.is_some_and(|b| (i64::from(b) - i64::from(p.freq_khz)).abs() <= V3_AGREE_KHZ)).collect();
+    let shown: Vec<String> = bad.iter().take(4).map(|p| format!("point {} V1 {} vs V3 {} kHz", p.index, p.freq_khz,
+        p.base_khz.map_or_else(|| "none".to_owned(), |b| b.to_string()))).collect();
+    format!("{} of {} zero-offset anchors differ from V3 by more than {V3_AGREE_KHZ} kHz, e.g. {}",
+            bad.len(), anchors.len(), shown.join("; "))
 }
 
 // ── Writers ─────────────────────────────────────────────────────────────────
@@ -617,7 +646,7 @@ mod tests {
     fn v3_base_checked_against_unmodified_points() {
         let pt = |index: usize, freq: u32, base: Option<u32>, delta: i32| VfPoint {
             index, freq_khz: freq, base_khz: base, volt_uv: 700_000 + index as u32 * 5_000, delta_khz: delta, domain: Domain::Gpu };
-        let st = |points| CurveState { points, timestamp: 0.0, gpu_name: String::new(), domain_source: "point-info" };
+        let st = |points| CurveState { points, timestamp: 0.0, gpu_name: String::new(), domain_source: "point-info", base_note: String::new() };
         // agrees on the stock low points; the capped top (V1 clamped at 2500) is not judged
         let good = st(vec![pt(0, 800_000, Some(800_000), 0), pt(1, 900_000, Some(907_500), 0),
                            pt(2, 2_500_000, Some(2_640_000), 0), pt(3, 2_500_000, Some(2_700_000), 150_000)]);
@@ -639,6 +668,43 @@ mod tests {
     }
 
     #[test]
+    fn v3_rejection_names_its_reason() {
+        let pt = |index: usize, freq: u32, base: Option<u32>, delta: i32| VfPoint {
+            index, freq_khz: freq, base_khz: base, volt_uv: 700_000 + index as u32 * 5_000, delta_khz: delta, domain: Domain::Gpu };
+        let st = |points| CurveState { points, timestamp: 0.0, gpu_name: String::new(), domain_source: "point-info", base_note: String::new() };
+        let one_anchor = st(vec![pt(0, 800_000, Some(800_000), 0), pt(1, 900_000, Some(900_000), 100_000),
+                                 pt(2, 2_500_000, Some(2_640_000), 0)]);
+        assert!(v3_disagreement(&one_anchor).contains("1 distinct frequency(ies), 2 needed"));
+        let bad = st(vec![pt(0, 800_000, Some(17), 0), pt(1, 900_000, Some(907_500), 0), pt(2, 2_500_000, None, 0)]);
+        assert!(v3_disagreement(&bad).contains("1 of 2 zero-offset anchors"));
+        assert!(v3_disagreement(&bad).contains("point 0 V1 800000 vs V3 17 kHz"));
+        // a zero base is dropped at merge (None): the reason must say "none", not hide it
+        let missing = st(vec![pt(0, 800_000, None, 0), pt(1, 900_000, Some(900_000), 0), pt(2, 2_500_000, None, 0)]);
+        assert!(v3_disagreement(&missing).contains("point 0 V1 800000 vs V3 none kHz"));
+    }
+
+    #[test]
+    fn v3_gate_on_a_real_applied_profile_shape() {
+        // RTX 5080 Laptop, post-apply read of 2026-11-27: points 0-27 idle at 180 MHz with no offset,
+        // 28-33 stock, 34+ carry +355 MHz and a flat 2887 MHz top. The gate must pass when V3 matches
+        // V1 on the zero-offset points, and name the 180 MHz points when V3 has no base for them.
+        let curve = |idle_base: Option<u32>| {
+            let mut v = Vec::new();
+            for i in 0..28 { v.push(VfPoint { index: i, freq_khz: 180_000, base_khz: idle_base, volt_uv: 450_000 + i as u32 * 5_000, delta_khz: 0, domain: Domain::Gpu }); }
+            for (k, f) in [285_000u32, 465_000, 652_000, 832_000, 1_020_000, 1_342_000].into_iter().enumerate() {
+                v.push(VfPoint { index: 28 + k, freq_khz: f, base_khz: Some(f), volt_uv: 625_000 + k as u32 * 5_000, delta_khz: 0, domain: Domain::Gpu });
+            }
+            for i in 34..127 { v.push(VfPoint { index: i, freq_khz: 2_887_000, base_khz: Some(2_900_000), volt_uv: 900_000, delta_khz: 100_000, domain: Domain::Gpu }); }
+            CurveState { points: v, timestamp: 0.0, gpu_name: String::new(), domain_source: "point-info", base_note: String::new() }
+        };
+        assert!(v3_agrees(&curve(Some(180_000))));
+        let no_idle_base = curve(None);
+        assert!(!v3_agrees(&no_idle_base));
+        assert!(v3_disagreement(&no_idle_base).contains("28 of 34 zero-offset anchors"));
+        assert!(v3_disagreement(&no_idle_base).contains("point 0 V1 180000 vs V3 none kHz"));
+    }
+
+    #[test]
     fn flatten_uses_live_base() {
         // RTX 5080 read after a stale flatten at point 72 → 2752 MHz: the base moved, the top ran 8–23 MHz high
         let pt = |index: usize, freq: u32, base: Option<u32>, delta: i32, domain: Domain| VfPoint {
@@ -649,7 +715,7 @@ mod tests {
             pt(75, 2_760_000, Some(2_520_000), 240_000, Domain::Gpu),
             pt(126, 2_775_000, Some(3_157_000), -390_000, Domain::Gpu),
             pt(127, 405_000, Some(405_000), 0, Domain::Memory),
-        ], timestamp: 0.0, gpu_name: String::new(), domain_source: "point-info" };
+        ], timestamp: 0.0, gpu_name: String::new(), domain_source: "point-info", base_note: String::new() };
         let d = flatten_deltas(&st, 72, 2752).unwrap();
         assert_eq!(d.len(), 3);                       // 71 below the anchor and the memory point untouched
         assert_eq!(d[&72], 300_000);
@@ -679,7 +745,7 @@ mod tests {
             index: 0, freq_khz: freq, base_khz: base, volt_uv: 700_000, delta_khz: delta, domain: Domain::Gpu };
         // base known: 225 MHz → floor −224 MHz
         let st = CurveState { points: vec![pt(200_000, -25_000, Some(225_000))], timestamp: 0.0,
-                              gpu_name: String::new(), domain_source: "flags" };
+                              gpu_name: String::new(), domain_source: "flags", base_note: String::new() };
         let mut d = PointDeltas::new();
         d.insert(0, -270_000);
         let notes = clamp_to_floor(&mut d, &st);
@@ -694,7 +760,7 @@ mod tests {
         assert!(clamp_to_floor(&mut ok, &st).is_empty());
         // a sub-1-MHz base must never flip a negative delta positive
         let bad = CurveState { points: vec![pt(500, 0, Some(500))], timestamp: 0.0,
-                               gpu_name: String::new(), domain_source: "flags" };
+                               gpu_name: String::new(), domain_source: "flags", base_note: String::new() };
         let mut neg = PointDeltas::new();
         neg.insert(0, -50_000);
         clamp_to_floor(&mut neg, &bad);

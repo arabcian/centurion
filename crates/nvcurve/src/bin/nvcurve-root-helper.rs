@@ -206,7 +206,11 @@ fn op_apply_named_profile(p: &Obj) -> OpResult {
 }
 
 fn op_reset_gpu_curve(p: &Obj) -> OpResult {
-    let msg = ops::reset_gpu_curve_verified(0)?;
+    let msg = if p.get("origin").and_then(Value::as_str) == Some("trial") {
+        ops::reset_trial_verified(0)?
+    } else {
+        ops::reset_gpu_curve_verified(0)?
+    };
     refresh_result(RESET_RESULT, p);
     Ok(msg)
 }

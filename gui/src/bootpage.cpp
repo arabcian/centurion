@@ -13,6 +13,7 @@
 #include <QDateTime>
 #include <QDialog>
 #include <QDialogButtonBox>
+#include <QFrame>
 #include <QSet>
 #include <QApplication>
 #include <QClipboard>
@@ -30,6 +31,7 @@
 #include <QPlainTextEdit>
 #include <QPushButton>
 #include <QRegularExpression>
+#include <QSignalBlocker>
 #include <QSplitter>
 #include <QScrollBar>
 #include <QTreeWidget>
@@ -102,6 +104,20 @@ BootPage::BootPage(QWidget *parent) : QWidget(parent) {
     connect(bRefresh, &QPushButton::clicked, this, &BootPage::reload);
     top->addWidget(bRefresh);
     root->addLayout(top);
+
+    // Set when a finding about boots was clicked: which rows below are the ones it is about.
+    highlightBar_ = new QFrame;
+    highlightBar_->setVisible(false);
+    theme::setLiveSheet(highlightBar_, [] { return QStringLiteral("QFrame{background:%1;border:1px solid %2;border-radius:6px}QLabel{border:none}").arg(theme::BG2, theme::WARN); });
+    auto *highlightRow = new QHBoxLayout(highlightBar_);
+    highlightRow->setContentsMargins(8, 4, 8, 4);
+    highlightText_ = new QLabel;
+    highlightText_->setWordWrap(true);
+    highlightRow->addWidget(highlightText_, 1);
+    auto *bClearHighlight = new QPushButton(tr("Clear highlight"));
+    connect(bClearHighlight, &QPushButton::clicked, this, [this] { highlight_.clear(); applyHighlight(false); });
+    highlightRow->addWidget(bClearHighlight);
+    root->addWidget(highlightBar_);
 
     auto *tools = new QHBoxLayout;
     tools->addWidget(new QLabel(tr("Show:")));
@@ -251,6 +267,8 @@ void BootPage::apply(const QJsonObject &r) {
     if (!pick && list_->topLevelItemCount()) pick = list_->topLevelItem(0);
     list_->blockSignals(false);
     applyFilter();
+    applyHighlight(selectHighlight_);
+    selectHighlight_ = false;
     patterns_->setText(patterns(false));
     if (retainedMatches != 1) retained = nullptr;
     if (retained && !retained->isHidden()) list_->setCurrentItem(retained);
@@ -405,6 +423,44 @@ void BootPage::applyFilter() {
             if (!list_->topLevelItem(i)->isHidden()) first = list_->topLevelItem(i);
         list_->setCurrentItem(first);   // none: the detail of a hidden boot must not stay on screen
         if (!first) { bKlog_->setEnabled(false); detail_->setPlainText(list_->topLevelItemCount() ? tr("No recorded boot matches this filter.") : QString()); }
+    }
+}
+
+void BootPage::highlightBoots(const QStringList &bootIds, const QString &why) {
+    highlight_ = QSet<QString>(bootIds.cbegin(), bootIds.cend());
+    highlightWhy_ = why;
+    if (filter_ && filter_->currentData().toString() != QLatin1String("all")) {
+        // A filter must not hide the boots that were asked for; the saved choice is not touched.
+        const QSignalBlocker blocker(filter_);
+        filter_->setCurrentIndex(filter_->findData(QStringLiteral("all")));
+        applyFilter();
+    }
+    if (list_->topLevelItemCount()) applyHighlight(true);
+    else selectHighlight_ = true;
+    if (!age_.isValid() || age_.elapsed() > 30000) reload();
+}
+
+void BootPage::applyHighlight(bool select) {
+    QColor tint{QLatin1String(theme::WARN)};
+    tint.setAlpha(70);
+    int shown = 0;
+    QTreeWidgetItem *first = nullptr;
+    for (int i = 0; i < list_->topLevelItemCount(); ++i) {
+        QTreeWidgetItem *it = list_->topLevelItem(i);
+        const QString id = it->data(0, ROLE_BOOT).toString();
+        const bool on = !id.isEmpty() && highlight_.contains(id);
+        for (int c = 0; c < list_->columnCount(); ++c) it->setBackground(c, on ? QBrush(tint) : QBrush());
+        if (on) { ++shown; if (!first) first = it; }
+    }
+    highlightBar_->setVisible(!highlight_.isEmpty());
+    if (highlight_.isEmpty()) return;
+    QString text = tr("%1 boot(s) highlighted: %2").arg(shown).arg(highlightWhy_);
+    if (shown < highlight_.size() && list_->topLevelItemCount())
+        text += QLatin1Char(' ') + tr("(%1 no longer in the recorded history)").arg(highlight_.size() - shown);
+    highlightText_->setText(text);
+    if (select && first) {
+        list_->setCurrentItem(first);
+        list_->scrollToItem(first, QAbstractItemView::PositionAtCenter);
     }
 }
 

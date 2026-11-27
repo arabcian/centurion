@@ -122,7 +122,13 @@ Report bootRegression(const QJsonArray &boots, const QJsonObject &legacy, const 
         return r;
     }
 
-    struct Group { QString version; int boots = 0, unclean = 0; double hours = 0, cleanHours = 0, faults = 0; qint64 first = 0, last = 0; };
+    struct Group {
+        QString version;
+        int boots = 0, unclean = 0;
+        double hours = 0, cleanHours = 0, faults = 0;
+        qint64 first = 0, last = 0;
+        QStringList uncleanIds, faultIds;  // the boots behind `unclean` and `faults`
+    };
     const QList<std::pair<const char *, QString>> fields = {
         {"kernel", tr("Kernel")}, {"nvidia", tr("NVIDIA driver")}, {"bios", tr("BIOS")}, {"microcode", tr("CPU microcode")}};
     bool compared = false, flagged = false;
@@ -137,7 +143,12 @@ Report bootRegression(const QJsonArray &boots, const QJsonObject &legacy, const 
             g.last = f.start;
             ++g.boots;
             g.hours += f.hours;
-            if (f.unclean) ++g.unclean; else { g.cleanHours += f.hours; g.faults += f.faults; }
+            if (f.unclean) { ++g.unclean; g.uncleanIds << f.id; }
+            else {
+                g.cleanHours += f.hours;
+                g.faults += f.faults;
+                if (f.faults > 0) g.faultIds << f.id;
+            }
         }
         if (by.isEmpty()) continue;
         QList<Group> groups = by.values();
@@ -167,7 +178,8 @@ Report bootRegression(const QJsonArray &boots, const QJsonObject &legacy, const 
             r.add(rowLevel, tr("More unclean shutdowns since the %1 changed to %2").arg(label.toLower(), nw.version),
                   tr("%1 unclean ends in %2 h with %3, against %4 in %5 h with %6. The chance of a split this uneven by luck: %7.")
                       .arg(nw.unclean).arg(num(nw.hours)).arg(nw.version).arg(old.unclean).arg(num(old.hours)).arg(old.version).arg(pct(p)),
-                  tr("Open Boot history for those boots. If a curve or undervolt was active, test at stock first; booting the previous version confirms or clears it."));
+                  tr("Open Boot history for those boots. If a curve or undervolt was active, test at stock first; booting the previous version confirms or clears it."))
+                .bootIds = nw.uncleanIds;
         }
         const double pf = upperTail(int(nw.faults), int(nw.faults + old.faults), nw.cleanHours / std::max(1e-9, nw.cleanHours + old.cleanHours));
         if (nw.cleanHours > 0 && old.cleanHours > 0 && nw.faults >= 3 && pf < 0.05) {
@@ -176,7 +188,8 @@ Report bootRegression(const QJsonArray &boots, const QJsonObject &legacy, const 
             r.add(Level::Review, tr("More hardware faults since the %1 changed to %2").arg(label.toLower(), nw.version),
                   tr("%1 faults in %2 clean hours with %3, against %4 in %5 h with %6 (chance by luck: %7).")
                       .arg(nw.faults).arg(num(nw.cleanHours)).arg(nw.version).arg(old.faults).arg(num(old.cleanHours)).arg(old.version).arg(pct(pf)),
-                  tr("Events & alerts lists them by kind; Curve stability shows whether they follow a curve rather than the update."));
+                  tr("Click Review to see the boots these faults happened in; Curve stability shows whether they follow a curve rather than the update."))
+                .bootIds = nw.faultIds;
         }
         for (int i = 0; i < groups.size(); ++i) addRow(groups[i], i == groups.size() - 1 ? rowLevel : Level::Info);
         r.tables << t;
@@ -1027,7 +1040,7 @@ Report triage(const QString &label, const QList<Report> &checks) {
         t.add({c.code + QStringLiteral(" · ") + c.title, diag::levelName(c.verdict()), c.headline()}, c.verdict());
         for (const diag::Finding &f : c.findings)
             if (f.level == Level::Attention || f.level == Level::Review || f.level == Level::Unknown)
-                r.findings << diag::Finding{f.level, c.code + QStringLiteral(" · ") + f.title, f.detail, f.action, f.fixLabel, f.fix};
+                r.findings << diag::Finding{f.level, c.code + QStringLiteral(" · ") + f.title, f.detail, f.action, f.fixLabel, f.fix, f.bootIds};
     }
     r.tables << t;
     // "No problem" only when some check could actually read its sources; all-Unknown stays Unknown.

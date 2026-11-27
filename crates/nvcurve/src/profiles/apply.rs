@@ -162,10 +162,17 @@ struct Changed {
     memory_lock: bool,
 }
 
+/// The two index spaces of one card. The NVAPI index (`ops::reset_*`, `gpu::get_gpu`) and the NVML index
+/// (`hal::limits`) agree only on a single-GPU machine: passing one where the other is expected resets the
+/// other card. Rollback takes this struct so each call picks its own.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Target { nvapi: usize, nvml: u32 }
+
 /// Best-effort rollback, not an ACID guarantee. Clock lock readback is not
 /// exposed by NVML, so preexisting lock values cannot be reconstructed.
-fn revert_profile(g: Gpu, idx: u32, previous: &vfcurve::PointDeltas,
+fn revert_profile(g: Gpu, t: Target, previous: &vfcurve::PointDeltas,
                   old_mem: Option<i32>, old_power: Option<u32>, changed_locks: &Changed) -> String {
+    let idx = t.nvml;
     let mut errors = Vec::new();
     // Restore NVML memory offset BEFORE any old memory-domain CT offsets;
     // reversing this order could transiently double the VRAM overclock.
@@ -180,7 +187,7 @@ fn revert_profile(g: Gpu, idx: u32, previous: &vfcurve::PointDeltas,
         // The previous core cap cannot be read back, so the previous curve cannot come back as it
         // ran: one that relied on its cap would return uncapped (its high-voltage points overclocked)
         // right as the game loads. Stock is the only curve that is safe without a cap.
-        match crate::ops::reset_vf_offsets_verified(idx as usize, None) {
+        match crate::ops::reset_vf_offsets_verified(t.nvapi, None) {
             Ok(_) => match limits::reset_gpu_locked_clocks(idx) {
                 Ok(()) => errors.push("V/F curve returned to STOCK, not to the previous curve (its core cap cannot be restored)".into()),
                 Err(e) => errors.push(format!("V/F curve at stock, core cap release failed: {e}")),
@@ -312,6 +319,14 @@ pub fn validate_profile_draft(gpu_index: usize, p: &ProfileData, cfg: &Config,
         "scope": "read_only_preflight_not_stability_or_apply_guarantee"}))
 }
 
+/// `profile apply --dry-run`: the read-only preflight of exactly the apply that would run (profile
+/// validation, GPU identity, curve and mask reads). Writes nothing; returns the preflight's warnings.
+pub fn dry_run_profile(gpu_index: usize, name: &str, cfg: &Config) -> Result<Vec<String>, String> {
+    let path = profile_path(&cfg.profile_dir, name).ok_or("invalid profile name")?;
+    let p = load_profile(&path)?;
+    preflight_profile(gpu_index, &p, cfg, None, &mut Vec::new()).map(|prepared| prepared.warnings)
+}
+
 /// Single attempt. Caller must hold `ops::gpu_write_lock` across the call.
 /// Validation failures never write to the GPU. A write/readback failure
 /// triggers one best-effort rollback; repeated retries on an Xid GPU are unsafe.
@@ -341,11 +356,26 @@ pub fn apply_profile_checked(gpu_index: usize, name: &str, cfg: &Config,
     if gpu::get_gpu(gpu_index).map_err(|e| e.to_string())?.0 != g {
         return Err("GPU handle changed before profile write".into());
     }
+    let target = Target { nvapi: gpu_index, nvml: idx };
     let mut changed_locks = Changed::default();
+    // The core cap goes in BEFORE the curve it belongs to: a curve that relies on its cap (flatten, high
+    // points raised) must never run, even for a moment, under the old cap or none. The cap of the curve
+    // being replaced is unreadable, so a failure from here on returns to stock (see revert_profile).
+    // A profile without a cap releases the old one at the end instead: the new curve then runs under the
+    // old, tighter limit until then.
+    let cap = p.gpu_clock_cap_mhz.map(|v| (v + p.gpu_clock_comp_mhz.unwrap_or(0)) as u32);
+    if let Some(max) = cap {
+        changed_locks.core_lock = true; // setter can partially succeed
+        if let Err(e) = limits::set_gpu_locked_clocks(0, max, idx) {
+            let rollback = revert_profile(g, target, &previous, old_mem, old_power, &changed_locks);
+            out.errors.push(format!("core clock cap failed before the curve was written: {e}; {rollback}"));
+            return Ok(out);
+        }
+    }
     let (rc, reason) = if changes.is_empty() { (0, String::new()) }
                        else { vfcurve::write_prepared_offsets(g, &changes, raw.bytes()) };
     if rc != 0 {
-        let rollback = revert_profile(g, idx, &previous, old_mem, old_power, &changed_locks);
+        let rollback = revert_profile(g, target, &previous, old_mem, old_power, &changed_locks);
         out.errors.push(format!("CT write failed {rc}: {reason}; {rollback}"));
         return Ok(out);
     }
@@ -357,7 +387,7 @@ pub fn apply_profile_checked(gpu_index: usize, name: &str, cfg: &Config,
         _ => None,
     };
     if let Some(e) = first_error {
-        let rollback = revert_profile(g, idx, &previous, old_mem, old_power, &changed_locks);
+        let rollback = revert_profile(g, target, &previous, old_mem, old_power, &changed_locks);
         out.errors.push(format!("{e}; {rollback}"));
         return Ok(out);
     }
@@ -386,12 +416,8 @@ pub fn apply_profile_checked(gpu_index: usize, name: &str, cfg: &Config,
                 limits::set_power_limit(wanted, idx)?;
             }
         }
-        // Core cap last: a failure in any step above rolls back without touching the cap.
-        let cap = p.gpu_clock_cap_mhz.map(|v| (v + p.gpu_clock_comp_mhz.unwrap_or(0)) as u32);
-        if let Some(max) = cap {
-            changed_locks.core_lock = true;
-            limits::set_gpu_locked_clocks(0, max, idx)?;
-        } else {
+        // A profile with a cap set it before the curve (above); one without releases the old cap last.
+        if cap.is_none() {
             match limits::reset_gpu_locked_clocks(idx) {
                 Ok(()) => changed_locks.core_lock = true,
                 Err(e) if e.contains("Not Supported") || e.contains("not found") => {},
@@ -401,7 +427,7 @@ pub fn apply_profile_checked(gpu_index: usize, name: &str, cfg: &Config,
         Ok(())
     })();
     if let Err(e) = apply_limits {
-        let rollback = revert_profile(g, idx, &previous, old_mem, old_power, &changed_locks);
+        let rollback = revert_profile(g, target, &previous, old_mem, old_power, &changed_locks);
         out.errors.push(format!("NVML apply failure: {e}; {rollback}"));
         return Ok(out);
     }
@@ -424,7 +450,7 @@ pub fn apply_profile_checked(gpu_index: usize, name: &str, cfg: &Config,
         wanted.and_then(|w| (got != Some(w)).then(|| format!("power limit mismatch: requested {w}, read {got:?}")))
     });
     if let Some(e) = final_error {
-        let rollback = revert_profile(g, idx, &previous, old_mem, old_power, &changed_locks);
+        let rollback = revert_profile(g, target, &previous, old_mem, old_power, &changed_locks);
         out.errors.push(format!("Final verification: {e}; {rollback}"));
         return Ok(out);
     }
@@ -450,6 +476,30 @@ pub fn apply_with_retry(gpu_index: usize, name: &str, cfg: &Config, _max_retries
     }
 }
 
+/// Exit status of `run_autoload` when a GPU write failed. The systemd unit lists it in
+/// RestartPreventExitStatus=: a failed write is never repeated by a restart.
+pub const AUTOLOAD_WRITE_FAILED: i32 = 70;
+const AUTOLOAD_FAILURE_FILE: &str = "/run/centurion/nvcurve-autoload-failed";
+
+/// How one autoload apply ended.
+#[derive(Debug, PartialEq)]
+enum Autoload {
+    Applied,
+    /// Nothing reached the GPU (validation, driver not ready yet): trying again later is harmless.
+    NotWritten(String),
+    /// A write was sent and failed (rolled back or not): this boot must not send another.
+    WriteFailed(String),
+}
+
+fn autoload_one(idx: usize, prof: &str, cfg: &Config) -> Autoload {
+    match apply_profile(idx, prof, cfg) {
+        Ok(out) if out.errors.is_empty() => Autoload::Applied,
+        // apply_profile returns Ok with errors only from the write phase onwards.
+        Ok(out) => Autoload::WriteFailed(out.errors.join("; ")),
+        Err(e) => Autoload::NotWritten(e),
+    }
+}
+
 /// Boot-time autoload (caller holds GPU write lock). Returns exit status.
 pub fn run_autoload(cfg: &Config) -> i32 {
     if unsafe { libc::geteuid() } != 0 {
@@ -458,6 +508,13 @@ pub fn run_autoload(cfg: &Config) -> i32 {
     }
     if cfg.auto_load_profiles.is_empty() {
         info!("No auto-load profiles configured.");
+        return 0;
+    }
+    // The same check the systemd unit and the OpenRC script make, for every way in (CLI, helper):
+    // a tripped boot guard, or a GPU write that already failed this boot, means no further write.
+    if let Some(why) = centurion_helpers::bootguard::should_skip().or_else(||
+        centurion_helpers::read_root_file(AUTOLOAD_FAILURE_FILE, 4096)) {
+        warn!("Auto-load skipped — {why}");
         return 0;
     }
     let gpus = match gpu::discover_gpus() {
@@ -480,12 +537,25 @@ pub fn run_autoload(cfg: &Config) -> i32 {
             (None, None) => warn!("Auto-load: no GPU found with key {key:?} — skipping"),
         }
     }
-    let mut failed = 0usize;
+    let (mut failed, mut write_failed) = (0usize, Vec::new());
     for (&idx, &(key, prof)) in &plan {
         info!("Auto-loading profile {prof:?} on GPU {idx} ({key})");
-        if !apply_with_retry(idx, prof, cfg, 1) { failed += 1; }
+        match autoload_one(idx, prof, cfg) {
+            Autoload::Applied => info!("Autoload: profile '{prof}' applied and verified on GPU {idx}"),
+            Autoload::NotWritten(e) => { failed += 1; warn!("Autoload failed on GPU {idx} before any write, no retry here: {e}"); }
+            Autoload::WriteFailed(e) => { failed += 1; error!("Autoload: GPU {idx} write failed: {e}"); write_failed.push(format!("GPU {idx}: {e}")); }
+        }
     }
     crate::hal::monitoring::shutdown_nvml();
+    if !write_failed.is_empty() {
+        // Quarantine: nothing writes to a GPU that just failed a write again this boot (a restart of the
+        // unit, `nvcurve autoload`, the helper) until the machine reboots.
+        let reason = format!("a GPU write of the boot-time profile failed ({})", write_failed.join("; "));
+        if let Err(e) = centurion_helpers::secure_dir("/run/centurion").and_then(|()|
+            centurion_helpers::write_root_file(AUTOLOAD_FAILURE_FILE, b"a GPU write of the boot-time profile failed this boot")) { warn!("could not record the failed write in the boot guard: {e}"); }
+        error!("Auto-load: {failed} profile(s) failed, no further autoload writes this boot: {reason}");
+        return AUTOLOAD_WRITE_FAILED;
+    }
     if failed > 0 { error!("Auto-load: {failed} profile(s) failed"); 1 } else { 0 }
 }
 
@@ -501,7 +571,7 @@ mod tests {
                 volt_uv: 710_000, delta_khz: 0, domain: Domain::Gpu },
             VfPoint { index: 2, freq_khz: 2_000_000, base_khz: None,
                 volt_uv: 0, delta_khz: 400_000, domain: Domain::Memory },
-        ], timestamp: 0.0, gpu_name: String::new(), domain_source: "flags" }
+        ], timestamp: 0.0, gpu_name: String::new(), domain_source: "flags", base_note: String::new() }
     }
     #[test]
     fn preparation_clears_memory_and_stale_ct_in_one_table() {

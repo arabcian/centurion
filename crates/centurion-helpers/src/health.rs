@@ -250,8 +250,16 @@ fn kmsg_events(since: u64) -> Result<(Vec<Value>, u64), String> {
     Ok((out, last))
 }
 
-/// Every kernel log record of level warning or worse (pri & 7 <= 4) with seq > since,
-/// continuation lines (leading space) folded into their record. Returns the newest
+/// Whether the Kernel log keeps a record: every record of level warning or worse (level <= 4), and
+/// below that only what `classify` recognises as a hardware/driver fault. The NVIDIA driver prints
+/// "NVRM: Xid" below warning level, so a level filter alone dropped Xids that the Events list showed.
+fn klog_keeps(level: u32, first_line: &str) -> bool {
+    level <= 4 || classify(first_line).is_some()
+}
+
+/// Every kernel log record of level warning or worse (pri & 7 <= 4) with seq > since, plus the
+/// lower-level records `klog_keeps` lets through (reported as level 4: the saved format ends at
+/// WARN), continuation lines (leading space) folded into their record. Returns the newest
 /// MAX_KLOG records. Err("EPERM") when the kernel log is restricted.
 fn klog_records(since: u64) -> Result<(Vec<Value>, u64), String> {
     let mut f = std::fs::OpenOptions::new().read(true).custom_flags(libc::O_NONBLOCK | libc::O_CLOEXEC)
@@ -269,13 +277,13 @@ fn klog_records(since: u64) -> Result<(Vec<Value>, u64), String> {
                 let Some(seq) = h.next().and_then(|s| s.parse::<u64>().ok()) else { continue };
                 let ts: u64 = h.next().and_then(|s| s.parse().ok()).unwrap_or(0);
                 last = last.max(seq);
-                if seq <= since || pri & 7 > 4 { continue; }
+                if seq <= since || !klog_keeps(pri & 7, body.lines().next().unwrap_or("")) { continue; }
                 // Body: the message (may span several lines), then " KEY=value" dictionary
                 // lines (leading space) that dmesg does not print either.
                 let msg: String = body.lines().take_while(|l| !l.starts_with(' ')).collect::<Vec<_>>().join(" ⏎ ")
                     .chars().take(1000).collect();
                 let msg = scrub(&msg);
-                out.push(json!({"seq": seq, "ts_us": ts, "level": pri & 7, "msg": msg}));
+                out.push(json!({"seq": seq, "ts_us": ts, "level": (pri & 7).min(4), "msg": msg}));
             }
             Err(e) if e.raw_os_error() == Some(libc::EPIPE) => continue,
             Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => break,
@@ -371,6 +379,16 @@ mod tests {
         assert_eq!(scrub("RIP: 0010:foo+0x1/0x2 ffff8881234567ab and 0xffffffffc0123456 ok"), "RIP: 0010:foo+0x1/0x2 <addr> and <addr> ok");
         assert_eq!(scrub("Bank 5: be00000000800400 IPID 0x000000000000abcd"), "Bank 5: be00000000800400 IPID 0x000000000000abcd");
         assert_eq!(scrub("ünïcode ffff"), "ünïcode ffff");
+    }
+    #[test]
+    fn klog_keeps_low_level_hardware_faults_only() {
+        let xid = "NVRM: Xid (PCI:0000:01:00): 69, pid=4242, name=game.exe, Class Error: ChId 0010";
+        for level in [0, 3, 4, 5, 6] { assert!(klog_keeps(level, xid), "Xid at level {level}"); }
+        assert!(klog_keeps(6, "NVRM: GPU0 _kgspIsHeartbeatTimedOut: heartbeat timed out"));
+        // Routine chatter below warning stays out; warning and worse is kept whatever it says.
+        assert!(!klog_keeps(6, "NVRM: loading NVIDIA UNIX Open Kernel Module"));
+        assert!(!klog_keeps(5, "usb 1-1: new high-speed USB device number 2"));
+        assert!(klog_keeps(4, "usb 1-1: new high-speed USB device number 2"));
     }
     #[test]
     fn xid_lines() {
@@ -485,8 +503,8 @@ mod tests {
     /// the D3cold wake failure was one.
     #[test]
     fn gui_wakes_for_every_classified_line() {
-        const GUI: &str = include_str!("../../../gui/src/healthtab.cpp");
-        let list = &GUI[GUI.find("KEYS[] = {").expect("KEYS in healthtab.cpp")..];
+        const GUI: &str = include_str!("../../../gui/src/kmsgwake.h");
+        let list = &GUI[GUI.find("KEYS[] = {").expect("KEYS in kmsgwake.h")..];
         let list = &list[..list.find("};").unwrap()];
         let keys: Vec<&str> = list.split('"').skip(1).step_by(2).collect();
         assert!(keys.len() > 20, "{keys:?}");
@@ -522,7 +540,7 @@ mod tests {
         ] {
             assert!(classify(msg).is_some(), "sample is not classified: {msg}");
             let record = format!("4,1234,5678901,-;{msg}\n SUBSYSTEM=pci\n");
-            assert!(keys.iter().any(|k| record.contains(k)), "healthtab.cpp KEYS never wakes the scan for: {msg}");
+            assert!(keys.iter().any(|k| record.contains(k)), "kmsgwake.h KEYS never wakes the scan for: {msg}");
         }
     }
 

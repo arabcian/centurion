@@ -119,15 +119,86 @@ impl BootConfig {
     /// leaves out. Without that, AC → battery kept the AC undervolt on every
     /// plane the battery profile did not name — and a source without any
     /// profile kept the whole previous undervolt. Power limits, IccMax, TCC
-    /// are left as they are (their stock values are the firmware's, unknown).
-    pub fn full_apply(&self, ac: bool) -> Option<Profile> {
+    /// and BD PROCHOT have no stock of their own here: see `full_apply_with`.
+    pub fn full_apply(&self, ac: bool) -> Option<Profile> { self.full_apply_with(ac, &json!({})) }
+
+    /// `full_apply`, plus the firmware's own PL1/PL2, IccMax, TCC offset and BD PROCHOT (`stock`, as
+    /// `intel_uv::stock_load` recorded them before this boot's first write) for every one of those
+    /// the *other* source sets and this one leaves out.
+    pub fn full_apply_with(&self, ac: bool, stock: &Value) -> Option<Profile> {
         let mine = self.for_source(ac);
         let other = self.for_source(!ac);
         let mut p = mine.cloned().unwrap_or_default();
         for &(k, idx, _) in other.map(|o| o.voltage.as_slice()).unwrap_or(&[]) {
             if !p.voltage.iter().any(|v| v.0 == k) { p.voltage.push((k, idx, 0.0)); }
         }
-        (mine.is_some() || !p.voltage.is_empty()).then_some(p)
+        let mut filled = false;
+        if let Some(o) = other {
+            let s = intel_uv::stock_profile(stock, Some(o));
+            if p.pl1.is_none() && s.pl1.is_some() { p.pl1 = s.pl1; filled = true; }
+            if p.pl2.is_none() && s.pl2.is_some() { p.pl2 = s.pl2; filled = true; }
+            if p.tjoffset.is_none() && s.tjoffset.is_some() { p.tjoffset = s.tjoffset; filled = true; }
+            if p.disable_bdprochot.is_none() && s.disable_bdprochot.is_some() { p.disable_bdprochot = s.disable_bdprochot; filled = true; }
+            for i in s.iccmax { if !p.iccmax.iter().any(|m| m.0 == i.0) { p.iccmax.push(i); filled = true; } }
+        }
+        (mine.is_some() || !p.voltage.is_empty() || filled).then_some(p)
+    }
+}
+
+// ── boot guard ─────────────────────────────────────────────────────────────
+// An undervolt that locks the machine up is stored in the boot file and would be applied again at the
+// next boot, forever. The guard file is written before the first apply of a boot and removed once the
+// machine has run GUARD_SETTLE after it. A boot that finds the file from an *earlier* boot for the very
+// same boot configuration was cut short: that configuration is quarantined (nothing applied) until the
+// file's content changes or the guard file is removed.
+pub const GUARD_DIR: &str = "/var/lib/centurion";
+pub const GUARD_FILE: &str = "/var/lib/centurion/intel-uv-boot-guard.json";
+const GUARD_SETTLE: Duration = Duration::from_secs(60);
+
+#[derive(Debug, PartialEq)]
+pub enum Guard { Fresh, SameBoot, Quarantine }
+
+/// `stored` = (boot id, config fingerprint) of the guard file, if any.
+pub fn guard_verdict(stored: Option<(&str, &str)>, boot_id: &str, config: &str) -> Guard {
+    match stored {
+        None => Guard::Fresh,
+        Some((b, _)) if b == boot_id => Guard::SameBoot,
+        Some((_, c)) if c != config => Guard::Fresh,
+        Some(_) => Guard::Quarantine,
+    }
+}
+
+/// FNV-1a of the boot file's bytes (stable across Rust versions, unlike DefaultHasher).
+fn fingerprint() -> Option<String> {
+    let s = crate::read_root_file(BOOT_FILE, 256 * 1024)?;
+    Some(format!("{:016x}", s.bytes().fold(0xcbf2_9ce4_8422_2325u64, |h, b| (h ^ b as u64).wrapping_mul(0x100_0000_01b3))))
+}
+
+fn read_guard() -> Option<(String, String)> {
+    let v: Value = serde_json::from_str(&crate::read_root_file(GUARD_FILE, 4096)?).ok()?;
+    Some((v["boot_id"].as_str()?.to_owned(), v["config"].as_str()?.to_owned()))
+}
+
+fn write_guard(boot_id: &str, config: &str) -> Result<(), String> {
+    crate::secure_dir(GUARD_DIR)?;
+    crate::write_root_file(GUARD_FILE, json!({"boot_id": boot_id, "config": config}).to_string().as_bytes())
+}
+
+/// Retry pacing for a full apply that failed (and was rolled back): a few tries, further apart each
+/// time, then nothing until something changes (config, power source, resume). Every try writes the
+/// hardware and puts it back, so it must not repeat every interval.
+#[derive(Default)]
+struct Retry { n: u32, at: Option<Instant>, exhausted: bool }
+impl Retry {
+    const TRIES: u32 = 3;
+    fn ready(&self) -> bool { !self.exhausted && self.at.map_or(true, |t| Instant::now() >= t) }
+    fn reset(&mut self) { *self = Retry::default(); }
+    /// True when this was the last try.
+    fn failed(&mut self, result: &Value) -> bool {
+        self.n += 1;
+        self.at = Some(Instant::now() + Duration::from_secs(30 * self.n as u64));
+        self.exhausted = self.n >= Self::TRIES || result["state"] == "unknown";
+        self.exhausted
     }
 }
 
@@ -413,6 +484,29 @@ pub fn run_daemon() -> i32 {
     let mut alarm_saved: Option<u64> = None;  // MSR_PKG_POWER_LIMIT from before the alarm (Some = active)
     let mut journal: Vec<Value> = Vec::new();
     let mut why = "boot";  // what caused the next full apply (journal)
+    let mut retry = Retry::default();       // failed full apply of the boot configuration
+    let mut hold_retry = Retry::default();  // failed full apply of a scene's profile
+    let mut last_ac: Option<bool> = None;
+    let mut quarantined: Option<String> = None;  // fingerprint of a boot file that cut an earlier boot short
+    let mut guard_settle: Option<Instant> = None;
+    if cfg.is_some() {
+        let bid = crate::bootguard::boot_id();
+        if let (Some(fp), false) = (fingerprint(), bid.is_empty()) {
+            let stored = read_guard();
+            match guard_verdict(stored.as_ref().map(|(b, c)| (b.as_str(), c.as_str())), &bid, &fp) {
+                Guard::Quarantine => {
+                    eprintln!("centurion-intel-uv: the previous boot did not outlast applying this boot configuration — NOT applying it. \
+                               Change {BOOT_FILE} or remove {GUARD_FILE} to try again");
+                    quarantined = Some(fp);
+                }
+                Guard::Fresh => match write_guard(&bid, &fp) {
+                    Ok(()) => guard_settle = Some(Instant::now() + GUARD_SETTLE),
+                    Err(e) => eprintln!("centurion-intel-uv: boot guard not written ({e}); applying anyway"),
+                },
+                Guard::SameBoot => {}
+            }
+        }
+    }
     eprintln!("centurion-intel-uv: daemon started ({}{})", if cfg.is_some() { "config loaded" } else { "no config yet" },
               if hold.is_some() { ", a scene holds the CPU profile" } else { "" });
 
@@ -421,7 +515,14 @@ pub fn run_daemon() -> i32 {
         if RELOAD.swap(false, Ordering::SeqCst) || m != stamp {
             stamp = m;
             match load_boot() {
-                Ok(c) => { cfg = c; applied = None; eprintln!("centurion-intel-uv: configuration reloaded"); }
+                Ok(c) => {
+                    cfg = c; applied = None; retry.reset(); hold_retry.reset();
+                    if quarantined.is_some() && quarantined != fingerprint() {
+                        quarantined = None;
+                        eprintln!("centurion-intel-uv: boot configuration changed — quarantine lifted");
+                    }
+                    eprintln!("centurion-intel-uv: configuration reloaded");
+                }
                 Err(e) => eprintln!("centurion-intel-uv: reload failed, keeping the old config: {e}"),
             }
         }
@@ -430,30 +531,38 @@ pub fn run_daemon() -> i32 {
             hold_stamp = hm;
             let was = hold.is_some();
             hold = load_hold();
+            hold_retry.reset();
             hold_live = true;  // the helper has just written it to the hardware itself
             match (was, hold.is_some()) {
                 (false, true) => eprintln!("centurion-intel-uv: a scene applied its own CPU profile — serving that one"),
-                (true, false) => { applied = None; eprintln!("centurion-intel-uv: scene hold ended — back to the boot configuration"); }
+                (true, false) => { applied = None; retry.reset(); eprintln!("centurion-intel-uv: scene hold ended — back to the boot configuration"); }
                 _ => {}
             }
         }
         let s = suspended_s();
-        if s - slept > 1.0 { eprintln!("centurion-intel-uv: resume detected, re-applying"); applied = None; hold_live = false; why = "resume"; }
+        if s - slept > 1.0 { eprintln!("centurion-intel-uv: resume detected, re-applying"); applied = None; hold_live = false; why = "resume"; retry.reset(); hold_retry.reset(); }
         slept = s;
 
         let interval = cfg.as_ref().map(|c| c.interval_ms).unwrap_or(5000);
         let reapply = cfg.as_ref().map(|c| c.reapply).unwrap_or(true);
         let ac = source.poll();
+        if last_ac != Some(ac) { last_ac = Some(ac); retry.reset(); }
+        if guard_settle.is_some_and(|t| Instant::now() >= t) { let _ = std::fs::remove_file(GUARD_FILE); guard_settle = None; }
         if let Some(held) = &hold {
             // The scene engine switches scenes with the power source; the daemon only keeps the scene's profile alive.
             if let Some(p) = held {
                 if !hold_live {
-                    let result = intel_uv::apply(p);
-                    report("SCENE", &result, true);
-                    record_transition(&mut journal, if why == "resume" { "resume" } else { "scene" }, if ac { "AC" } else { "BATTERY" }, &result);
-                    why = "scene";
-                    hold_live = fully_applied(&result);
-                } else if reapply {
+                    if hold_retry.ready() {
+                        let result = intel_uv::apply_atomic(p);
+                        report("SCENE", &result, true);
+                        record_transition(&mut journal, if why == "resume" { "resume" } else { "scene" }, if ac { "AC" } else { "BATTERY" }, &result);
+                        why = "scene";
+                        if fully_applied(&result) { hold_live = true; hold_retry.reset(); }
+                        else if hold_retry.failed(&result) {
+                            eprintln!("centurion-intel-uv: the scene's profile was not applied — not retrying until a resume or a new scene");
+                        }
+                    }
+                } else if reapply && !hold_retry.exhausted {
                     let part = intel_uv::periodic_part(p);
                     if intel_uv::has_periodic(&part) {
                         report("SCENE", &intel_uv::apply(&part), true);
@@ -461,22 +570,28 @@ pub fn run_daemon() -> i32 {
                 }
                 for l in hwp.update(&p.hwphint) { eprintln!("centurion-intel-uv: hwphint: {l}"); }
             }
-            // A scene reset (None) needs no full profile write; a failed
-            // scene apply remains pending until hardware confirms success.
+            // A scene reset (None) needs no full profile write; a failed scene apply is retried a few
+            // times (each one rolled back), then left.
             if held.is_none() { hold_live = true; }
-        } else if let Some(c) = &cfg {
+        } else if let (Some(c), None) = (&cfg, &quarantined) {
             let src = if ac { "AC" } else { "BATTERY" };
             match c.for_source(ac) {
-                Some(_) if applied != Some(ac) => {
+                Some(_) if applied != Some(ac) && retry.ready() => {
                     if applied.is_some() { eprintln!("centurion-intel-uv: power source → {src}"); if why != "resume" { why = "power source"; } }
-                    if let Some(full) = c.full_apply(ac) {
-                        let result = intel_uv::apply(&full);
+                    if let Some(full) = c.full_apply_with(ac, &intel_uv::stock_load()) {
+                        // All or nothing: a step that fails puts back the ones already written.
+                        let result = intel_uv::apply_atomic(&full);
                         report(src, &result, true);
                         record_transition(&mut journal, why, src, &result);
                         why = "power source";
-                        if fully_applied(&result) { applied = Some(ac); }
+                        if fully_applied(&result) { applied = Some(ac); retry.reset(); }
+                        else if retry.failed(&result) {
+                            eprintln!("centurion-intel-uv: {src}: profile not applied — not retrying until the configuration, power source or a resume changes");
+                        }
                     } else { applied = Some(ac); }
                 }
+                // Waiting for the next try, or given up: no periodic writes of a profile that is not in force.
+                Some(_) if applied != Some(ac) || retry.exhausted => {}
                 Some(p) => {
                     if c.reapply {
                         let part = intel_uv::periodic_part(p);
@@ -487,14 +602,15 @@ pub fn run_daemon() -> i32 {
                     for l in hwp.update(&p.hwphint) { eprintln!("centurion-intel-uv: hwphint: {l}"); }
                 }
                 None => {
-                    if applied != Some(ac) {
-                        match c.full_apply(ac) {
-                            // Only the other source's voltage planes, back to 0 mV.
+                    if applied != Some(ac) && retry.ready() {
+                        match c.full_apply_with(ac, &intel_uv::stock_load()) {
+                            // The other source's voltage planes back to 0 mV, its power/TCC/BD PROCHOT/IccMax to firmware's.
                             Some(reset) => {
-                                eprintln!("centurion-intel-uv: no profile for {src} — voltage offsets back to 0 mV");
-                                let result = intel_uv::apply(&reset);
+                                eprintln!("centurion-intel-uv: no profile for {src} — back to the firmware's values");
+                                let result = intel_uv::apply_atomic(&reset);
                                 report(src, &result, true);
-                                if fully_applied(&result) { applied = Some(ac); }
+                                if fully_applied(&result) { applied = Some(ac); retry.reset(); }
+                                else { retry.failed(&result); }
                             }
                             None => {
                                 eprintln!("centurion-intel-uv: no profile for {src}, nothing applied");
@@ -508,9 +624,14 @@ pub fn run_daemon() -> i32 {
         // Temperature alarm, after the re-apply above so that its lower limits are the ones that stay.
         // The saved limits are written back capped by the profile in force *now* (config reload, source
         // change or scene hold while the alarm was on), so the restore never goes above either.
-        let active = match &hold { Some(h) => h.as_ref(), None => cfg.as_ref().and_then(|c| c.for_source(ac)) };
+        let active = match &hold {
+            Some(h) if hold_live && !hold_retry.exhausted => h.as_ref(),
+            None if quarantined.is_none() && applied == Some(ac) && !retry.exhausted =>
+                cfg.as_ref().and_then(|c| c.for_source(ac)),
+            _ => None,
+        };
         let caps = (active.and_then(|p| p.pl1.as_ref()).map(|t| t.watts), active.and_then(|p| p.pl2.as_ref()).map(|t| t.watts));
-        match cfg.as_ref().and_then(|c| c.alarm.clone()) {
+        match cfg.as_ref().filter(|_| quarantined.is_none()).and_then(|c| c.alarm.clone()) {
             Some(a) => {
                 // An unreadable temperature changes nothing: an active alarm stays active (and enforced).
                 match intel_uv::package_temp().and_then(|t| alarm_transition(alarm_saved.is_some(), t, &a).map(|on| (t, on))) {
@@ -540,6 +661,7 @@ pub fn run_daemon() -> i32 {
         }
         // A power-source change waiting out its debounce: look again as soon as it can be committed.
         let nap = source.pending().map_or(interval, |d| (d.as_millis() as u64 + 50).min(interval));
+        let nap = guard_settle.map_or(nap, |t| nap.min(t.saturating_duration_since(Instant::now()).as_millis() as u64 + 50));
         wait(rd, nap);
     }
     eprintln!("centurion-intel-uv: daemon stopped");
@@ -548,11 +670,20 @@ pub fn run_daemon() -> i32 {
 
 /// One-shot boot/resume apply for the source that is active now.
 pub fn apply_boot() -> Value {
+    if let Some(reason) = crate::refuse_during_calibration() { return reason; }
+    if let Some(reason) = crate::bootguard::should_skip() {
+        return json!({"ok": true, "message": format!("boot profile skipped: {reason}")});
+    }
+    if let (Some((boot, config)), Some(current)) = (read_guard(), fingerprint()) {
+        if guard_verdict(Some((&boot, &config)), &crate::bootguard::boot_id(), &current) == Guard::Quarantine {
+            return json!({"ok": true, "message": format!("boot profile quarantined; change {BOOT_FILE} or remove {GUARD_FILE}")});
+        }
+    }
     match load_boot() {
         Ok(None) => json!({"ok": true, "message": "no boot profile set"}),
         Err(e) => json!({"ok": false, "error": e}),
-        Ok(Some(c)) => match c.full_apply(on_ac()) {
-            Some(p) => intel_uv::apply(&p),
+        Ok(Some(c)) => match c.full_apply_with(on_ac(), &intel_uv::stock_load()) {
+            Some(p) => intel_uv::apply_atomic(&p),
             None => json!({"ok": true, "message": format!("no profile for {}", if on_ac() { "AC" } else { "battery" })}),
         },
     }
@@ -602,6 +733,51 @@ mod tests {
         let none = parse_boot(&json!({"ac": {"power": {"pl1": {"watts": 45}}}, "battery": null})).unwrap();
         assert!(none.full_apply(false).is_none());  // nothing to undo
     }
+    #[test]
+    fn source_switch_restores_firmware_power_fields() {
+        let c = parse_boot(&json!({"ac": {"power": {"pl1": {"watts": 90}, "pl2": {"watts": 120}}, "tjoffset": 5, "disable_bdprochot": true,
+                                        "iccmax": {"core": 150}, "voltage": {"core": -50}},
+                                   "battery": {"voltage": {"core": -40}}})).unwrap();
+        let stock = json!({"pl1": {"watts": 28.0, "seconds": 28.0, "clamp": true}, "pl2": {"watts": 64.0, "seconds": 0.0025, "clamp": false},
+                           "tcc": 0, "bdprochot_disabled": false, "icc": {"core": 120.0}});
+        let bat = c.full_apply_with(false, &stock).unwrap();
+        assert_eq!(bat.pl1.as_ref().map(|t| t.watts), Some(28.0));
+        assert_eq!(bat.pl2.as_ref().map(|t| t.watts), Some(64.0));
+        assert_eq!((bat.tjoffset, bat.disable_bdprochot), (Some(0), Some(false)));
+        assert_eq!(bat.iccmax.iter().map(|i| (i.0, i.2)).collect::<Vec<_>>(), vec![("core", 120.0)]);
+        // The battery profile's own value wins; without a recorded stock nothing is invented.
+        let own = parse_boot(&json!({"ac": {"power": {"pl1": {"watts": 90}}}, "battery": {"power": {"pl1": {"watts": 15}}}})).unwrap();
+        assert_eq!(own.full_apply_with(false, &stock).unwrap().pl1.map(|t| t.watts), Some(15.0));
+        assert!(c.full_apply_with(false, &json!({})).unwrap().pl1.is_none());
+        // A locked power limit cannot be written again.
+        let locked = parse_boot(&json!({"ac": {"power": {"pl1": {"watts": 90}}, "lock_power": true}, "battery": null})).unwrap();
+        assert!(locked.ac.as_ref().is_some_and(|p| p.lock_power));
+        assert!(locked.full_apply_with(false, &stock).is_none());
+    }
+
+    #[test]
+    fn boot_guard_verdicts() {
+        assert_eq!(guard_verdict(None, "b2", "c"), Guard::Fresh);
+        assert_eq!(guard_verdict(Some(("b2", "c")), "b2", "c"), Guard::SameBoot);   // daemon restarted in the same boot
+        assert_eq!(guard_verdict(Some(("b1", "c")), "b2", "c"), Guard::Quarantine); // earlier boot never finished with this config
+        assert_eq!(guard_verdict(Some(("b1", "old")), "b2", "new"), Guard::Fresh);   // the config was changed since
+    }
+
+    #[test]
+    fn retry_gives_up_after_three() {
+        let mut r = Retry::default();
+        assert!(r.ready());
+        assert!(!r.failed(&json!({"state": "original"})) && !r.ready());
+        r.at = None;
+        assert!(!r.failed(&json!({"state": "original"})));
+        r.at = None;
+        assert!(r.failed(&json!({"state": "original"})) && r.exhausted);
+        r.reset();
+        assert!(r.failed(&json!({"state": "unknown"})) && !r.ready());
+        r.reset();
+        assert!(r.ready() && !r.exhausted);
+    }
+
     #[test]
     fn alarm_parse_and_hysteresis() {
         let c = parse_boot(&json!({"voltage": {"core": -50}, "daemon": {"alarm": {"temp_c": 92, "pl1_w": 25, "pl2_w": 35}}})).unwrap();

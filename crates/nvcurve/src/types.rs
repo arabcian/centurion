@@ -46,6 +46,10 @@ pub struct CurveState {
     /// How GPU/memory points were told apart: "point-info" (the driver's
     /// per-point type + voltage-based flag) or "flags" (legacy heuristic).
     pub domain_source: &'static str,
+    /// Whether the V3 base tuples are in use, and if not, why (driver refused the
+    /// request, reports no tuples, or the V1 cross-check rejected them). Empty only
+    /// for a state that did not come from a driver read.
+    pub base_note: String,
     pub timestamp: f64,
     pub gpu_name: String,
 }

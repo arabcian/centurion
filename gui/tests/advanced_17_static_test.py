@@ -9,13 +9,14 @@ a=read('gui/src/advanceddiagnostics.cpp')
 h=read('gui/src/advancedhealth.cpp')
 s=read('gui/src/systools.cpp')
 t=read('gui/src/healthtab.cpp')
+dp=read('gui/src/diagnosticspage.cpp')
 c=read('gui/CMakeLists.txt')
 r=read('crates/centurion-helpers/src/health_nvme.rs')
 reader=read('crates/centurion-helpers/src/bin/health-reader.rs')
 ids=['H01','H06','H10','H12','H13','H15','H16','H17','H18','S04','S07','S08','S10','S11','S13','S15','S18']
 checks={f'{id} wired': (id in (h+a) if id[0]=='H' else id in (s+a)) for id in ids}
 checks.update({
-    'investigation page registered': 'new AdvancedHealthPage' in t,
+    'investigation page registered': 'new AdvancedHealthPage' in dp and 'new DiagnosticsPage' in t,
     'advanced source built': 'src/advanceddiagnostics.cpp' in c and 'src/advancedhealth.cpp' in c,
     'fixture test configured': 'centurion-advanceddiagnostics-test' in c,
     'NVMe helper registered': 'pub mod health_nvme;' in read('crates/centurion-helpers/src/lib.rs') and 'Some("nvme_deep")' in reader,

@@ -115,9 +115,20 @@ QWidget *findingCard(const diag::Finding &f, DiagReportView *view) {
     bold.setBold(true);
     title->setFont(bold);
     head->addWidget(title, 1);
-    auto *badge = new QLabel(diag::levelName(f.level));
-    badge->setStyleSheet(QStringLiteral("color:%1;font-weight:600").arg(color(f.level)));
-    head->addWidget(badge, 0, Qt::AlignTop);
+    if (f.bootIds.isEmpty()) {
+        auto *badge = new QLabel(diag::levelName(f.level));
+        badge->setStyleSheet(QStringLiteral("color:%1;font-weight:600").arg(color(f.level)));
+        head->addWidget(badge, 0, Qt::AlignTop);
+    } else {
+        // The level badge of a finding about boots is a link to exactly those boots.
+        auto *badge = new QPushButton(diag::levelName(f.level) + QStringLiteral(" ›"));
+        badge->setFlat(true);
+        badge->setCursor(Qt::PointingHandCursor);
+        badge->setStyleSheet(QStringLiteral("QPushButton{color:%1;font-weight:600;border:none;background:transparent;text-decoration:underline}").arg(color(f.level)));
+        badge->setToolTip(QCoreApplication::translate("diag", "Show these %1 boot(s) in Boot History.").arg(f.bootIds.size()));
+        QObject::connect(badge, &QPushButton::clicked, view, [view, ids = f.bootIds, why = f.title] { Q_EMIT view->showBoots(ids, why); });
+        head->addWidget(badge, 0, Qt::AlignTop);
+    }
     col->addLayout(head);
     if (!f.detail.isEmpty()) col->addWidget(text(f.detail, "dim"));
     if (!f.action.isEmpty()) col->addWidget(text(QStringLiteral("→ ") + f.action));

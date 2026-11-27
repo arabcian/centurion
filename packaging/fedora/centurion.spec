@@ -132,7 +132,6 @@ fi
 %{_sysconfdir}/xdg/autostart/centurion.desktop
 %{_datadir}/polkit-1/actions/com.centurion.policy
 %{_datadir}/polkit-1/rules.d/49-centurion.rules
-%{_udevrulesdir}/70-centurion-lighting.rules
 %{_udevrulesdir}/90-centurion-dgpu.rules
 %{_unitdir}/*.service
 %{_prefix}/lib/systemd/system-sleep/centurion-sleep-log

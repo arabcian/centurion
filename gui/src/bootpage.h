@@ -11,9 +11,11 @@
 // after a confirmation; the flight recorder's interval runs `tune-helper {"op":"flight_interval"}`.
 #include <QElapsedTimer>
 #include <QJsonObject>
+#include <QSet>
 #include <QWidget>
 
 class QComboBox;
+class QFrame;
 class QLabel;
 class QPlainTextEdit;
 class QPushButton;
@@ -24,6 +26,8 @@ class BootPage : public QWidget {
 public:
     explicit BootPage(QWidget *parent = nullptr);
     void reload();
+    /// Marks these boots (their ids) in the list, selects the first and says why: a finding about them was clicked.
+    void highlightBoots(const QStringList &bootIds, const QString &why);
 
 Q_SIGNALS:
     /// After every load: the boot before this one ended unexpectedly (empty id: it did not).
@@ -44,6 +48,8 @@ private:
     static QStringList kernelLogTail(const QString &bootId, int lines);
     /// Hides rows the filter box leaves out (all / unclean / with events / with a curve).
     void applyFilter();
+    /// Tints the highlighted rows (and shows the bar above the list); `select`: also selects the first of them.
+    void applyHighlight(bool select);
     /// Patterns across all recorded boots: how often each curve state ended uncleanly, session lengths.
     QString patterns(bool everyCurve) const;   // false: only the curves flagged red (the on-screen summary)
     /// What changed from the boot recorded before `boot` (curves, events), as text lines.
@@ -66,4 +72,9 @@ private:
     bool busy_ = false;
     bool restoringWorkspace_ = false;
     QString savedBoot_;
+    QSet<QString> highlight_;
+    QString highlightWhy_;
+    bool selectHighlight_ = false;   // a highlight arrived before the list did: select its first boot once the list is built
+    QFrame *highlightBar_ = nullptr;
+    QLabel *highlightText_ = nullptr;
 };

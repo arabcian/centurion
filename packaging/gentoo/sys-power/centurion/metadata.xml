@@ -4,4 +4,16 @@
 	<maintainer type="person">
 		<name>Cihan</name>
 	</maintainer>
+	<use>
+		<flag name="acpi-call">Pull in <pkg>sys-power/acpi_call</pkg> for GPU power limits, the custom fan curve, GPU mode and EC sensors</flag>
+		<flag name="backup">Pull in <pkg>app-arch/pigz</pkg>, <pkg>app-arch/zstd</pkg> and <pkg>app-crypt/age</pkg> for fast and encrypted Health → Backups</flag>
+		<flag name="diagnostics">Pull in the tools behind Health → System tools (dmidecode, smartmontools, nvme-cli, pciutils, usbutils, cpupower, numactl, fwupd, mokutil, memtester, vulkan-tools, mesa-progs)</flag>
+		<flag name="mqtt">Pull in <pkg>app-misc/mosquitto</pkg> so centurion-export can publish to an MQTT broker</flag>
+		<flag name="netguard">Install the network guard (centurion-netguard, netguard-helper and its service) for Health → Network Protection, with <pkg>net-firewall/nftables</pkg></flag>
+		<flag name="nettools">Pull in iw, ethtool, traceroute and whois for Wi-Fi tuning and the network lookup tools</flag>
+		<flag name="nvidia">Pull in <pkg>x11-drivers/nvidia-drivers</pkg> for the GPU Curve page (NvAPI / NVML)</flag>
+		<flag name="ryzen-smu">Pull in <pkg>app-admin/ryzen_smu</pkg> so the CPU Curve page reaches the SMU under Secure Boot / lockdown</flag>
+		<flag name="sensors">Pull in <pkg>sys-apps/lm-sensors</pkg> for the sensor readout in System tools</flag>
+		<flag name="xkb">Draw the Lighting keyboard's key legends from the active XKB layout (<pkg>x11-libs/libxkbcommon</pkg>)</flag>
+	</use>
 </pkgmetadata>

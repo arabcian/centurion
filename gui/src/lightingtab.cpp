@@ -586,7 +586,7 @@ void LightingTab::buildUi() {
     root->addWidget(status_);
 
     // ── wiring ──
-    connect(elevate_, &QPushButton::clicked, this, [this] { reload(true); });
+    connect(elevate_, &QPushButton::clicked, this, [this] { grantAdmin(); });
     connect(reloadBtn_, &QPushButton::clicked, this, [this] {
         if (confirmDiscard()) reload(false);
     });
@@ -780,21 +780,38 @@ void LightingTab::reload(bool elevate) {
     setBusy(true);
     QJsonObject req{{"op", "state"}};
     if (editProfile_ >= MIN_PROFILE && editProfile_ != active_) req["profile"] = editProfile_;
-    run(req, this, [this](const privileged::Result &r) {
+    run(req, this, [this, elevate](const privileged::Result &r) {
         if (r.reached && r.json.value("ok").toBool()) {
+            if (elevate) adminGranted_ = true;
             showBanner({}, false);
             applyState(r.json);
         } else if (r.reached && r.json.value("denied").toBool()) {
-            showBanner("No access to the keyboard controller yet: the udev rule applies after the next login "
-                       "(or replug). Until then lighting goes through administrator rights.", true);
+            adminGranted_ = false;
+            showBanner("No direct access to the keyboard controller: lighting goes through administrator rights.", true);
         } else if (r.reached && r.json.contains("present") && !r.json.value("present").toBool()) {
             showBanner("The Spectrum keyboard controller is not responding.", false);
         } else {
+            adminGranted_ = false;
             showBanner("Could not read the keyboard: " + r.message(), true);
         }
         setBusy(false);
         Q_EMIT stateChanged();
-    }, elevate);
+    }, elevate || adminGranted_);
+}
+
+void LightingTab::grantAdmin() {
+    if (busy_ && ready_) return;
+    if (!confirmDiscard()) return;  // reading the keyboard again replaces the unapplied draft
+    reload(true);
+}
+
+void LightingTab::releaseAdmin() {
+    if (!adminGranted_) return;
+    adminGranted_ = false;
+    ready_ = false;  // the shown state is no longer backed by access; the draft stays until the next read
+    setBusy(busy_);
+    showBanner(tr("Administrator rights released. Use them again to read or change the keyboard."), true);
+    Q_EMIT stateChanged();
 }
 
 void LightingTab::applyState(const QJsonObject &j) {
@@ -847,7 +864,7 @@ void LightingTab::sendSet(const QJsonObject &fields, const QString &what) {
         filling_ = false;
         showStatus(what + ".", theme::OK);
         Q_EMIT stateChanged();
-    });
+    }, adminGranted_);
 }
 
 void LightingTab::activateProfile(int p) {
@@ -859,7 +876,7 @@ void LightingTab::activateProfile(int p) {
         active_ = editProfile_ = p;
         showStatus(QStringLiteral("Profile %1 active.").arg(p), theme::OK);
         reload(false);  // loads that profile's effects (and emits stateChanged)
-    });
+    }, adminGranted_);
 }
 
 void LightingTab::setBrightness(int b) {
@@ -884,7 +901,7 @@ void LightingTab::write() {
         showStatus(tr("Profile %1 sent (%2 / %3 bytes); independent readback not verified.").arg(p).arg(r.json.value("bytes").toInt()).arg(REPORT_LEN), theme::OK);
         refreshAll();
         Q_EMIT stateChanged();
-    });
+    }, adminGranted_);
 }
 
 void LightingTab::factoryReset() {
@@ -902,7 +919,7 @@ void LightingTab::factoryReset() {
         resetEditHistory();
         showStatus(QStringLiteral("Profile %1 reset to factory defaults.").arg(p), theme::OK);
         reload(false);
-    });
+    }, adminGranted_);
 }
 
 // ── editing ─────────────────────────────────────────────────────────────────

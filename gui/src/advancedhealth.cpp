@@ -23,6 +23,7 @@
 #include <QLabel>
 #include <QLineEdit>
 #include <QScrollBar>
+#include <QStandardItemModel>
 #include <QSignalBlocker>
 #include <QPlainTextEdit>
 #include <QPointer>
@@ -133,8 +134,14 @@ AdvancedHealthPage::AdvancedHealthPage(QWidget *parent) : QWidget(parent) {
     v->addWidget(help);
     auto *top = new QHBoxLayout;
     feature_ = new QComboBox;
-    for (const auto &[code, name] : features())
+    for (const auto &[code, name] : features()) {
+        if (QLatin1String(code) == QLatin1String("H06")) {  // the everyday checks above, the rest under one heading
+            feature_->addItem(QStringLiteral("── ") + tr("More checks") + QStringLiteral(" ──"), QString());
+            if (auto *model = qobject_cast<QStandardItemModel *>(feature_->model()))
+                model->item(feature_->count() - 1)->setEnabled(false);
+        }
         feature_->addItem(tr(name), QString::fromLatin1(code));
+    }
     top->addWidget(feature_, 1);
     category_ = new QComboBox;
     for (const advanceddiagnostics::TriageCategory &c : advanceddiagnostics::triageCategories())
@@ -160,6 +167,8 @@ AdvancedHealthPage::AdvancedHealthPage(QWidget *parent) : QWidget(parent) {
 
     stack_ = new QStackedWidget;
     view_ = new DiagReportView;
+    view_->setCompact(true);  // snapshot, history and evidence tools behind one "More…" menu
+    connect(view_, &DiagReportView::showBoots, this, &AdvancedHealthPage::showBoots);
     stack_->addWidget(view_);
     // H17: incidents on the left, what one means and its note on the right.
     incidentPage_ = new QWidget;
@@ -271,9 +280,11 @@ void AdvancedHealthPage::run() {
             QList<diag::Report> reports;
             for (const QString &c : codes) reports << investigations::reportFor(c, data);
             view_->setReport(advanceddiagnostics::triage(label, reports));
-            showRelated(category_->currentData().toString());
+            showRelated(toolcatalog::relatedFor(category_->currentData().toString()));
         } else {
             view_->setReport(investigations::reportFor(code, data));
+            // H01 counts faults per boot: the boots and their fault kinds are on Boot History.
+            if (code == QStringLiteral("H01")) showRelated({"page:boot", "page:monitor", "page:curves"});
         }
         gpuQuery_->setEnabled(code == QStringLiteral("H16"));
         message_->setText(failed.isEmpty() ? QString() : tr("Not available: %1. The report says Unknown where that data was needed.").arg(failed.join(QStringLiteral("; "))));
@@ -290,7 +301,7 @@ void AdvancedHealthPage::startTriage(const QString &category) {
     run();
 }
 
-void AdvancedHealthPage::showRelated(const QString &category) {
+void AdvancedHealthPage::showRelated(const QStringList &targets) {
     auto *row = static_cast<QGridLayout *>(related_->layout());
     while (QLayoutItem *item = row->takeAt(0)) {
         delete item->widget();
@@ -300,7 +311,7 @@ void AdvancedHealthPage::showRelated(const QString &category) {
     title->setProperty("role", "muted");
     row->addWidget(title, 0, 0, 1, 3);
     int links = 0;
-    for (const QString &target : toolcatalog::relatedFor(category)) {
+    for (const QString &target : targets) {
         const QString name = targetLabel_ ? targetLabel_(target) : QString();
         if (name.isEmpty()) continue;  // not on this system (no dGPU, no battery …)
         auto *b = new QPushButton(name);

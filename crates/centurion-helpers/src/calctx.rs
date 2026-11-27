@@ -148,12 +148,39 @@ fn uid_of(user: &str) -> Option<u32> {
     })
 }
 
+/// Uid and gid of a user name (or numeric uid string), from passwd.
+fn ids_of(user: &str) -> Option<(u32, u32)> {
+    std::fs::read_to_string("/etc/passwd").ok()?.lines().find_map(|l| {
+        let f: Vec<&str> = l.split(':').collect();
+        (f.len() >= 4 && (f[0] == user || f[2] == user)).then(|| Some((f[2].parse().ok()?, f[3].parse().ok()?))).flatten()
+    })
+}
+
+/// While alive, this thread's file-system checks (open, stat, path walk) run as the user, so a
+/// symlinked `~/.config` or `scenes` pointing at something the user cannot read is refused by the
+/// kernel instead of followed with root's rights. Restores root's fsuid/fsgid on drop.
+struct FsAs { uid: libc::uid_t, gid: libc::gid_t }
+impl FsAs {
+    fn user(user: &str) -> Result<FsAs, String> {
+        let (u, g) = ids_of(user).ok_or_else(|| format!("unknown user {user}"))?;
+        // setfsgid first: after the uid change root can no longer change the gid.
+        let gid = unsafe { libc::setfsgid(g) } as libc::gid_t;
+        let uid = unsafe { libc::setfsuid(u) } as libc::uid_t;
+        Ok(FsAs { uid, gid })
+    }
+}
+impl Drop for FsAs {
+    fn drop(&mut self) { unsafe { libc::setfsuid(self.uid); libc::setfsgid(self.gid); } }
+}
+
 /// A user's scene file (scenes are per user: ~/.config/centurion/scenes).
-/// The file itself must not be a symlink (root reads it).
+/// The file itself must not be a symlink (root reads it), and every directory on the way is
+/// resolved with the user's own rights.
 pub fn scene_file_for(user: &str, name: &str) -> Result<PathBuf, String> {
     if !valid_scene_name(name) { return Err(format!("invalid scene name '{name}'")); }
     let home = home_of(user).ok_or_else(|| format!("no home directory for {user}"))?;
     let p = Path::new(&home).join(".config/centurion/scenes").join(format!("{name}.json"));
+    let _as_user = FsAs::user(user)?;
     if !std::fs::symlink_metadata(&p).is_ok_and(|m| m.is_file()) {
         return Err(format!("scene \"{name}\" not found or not a regular file ({})", p.display()));
     }
@@ -168,9 +195,12 @@ pub fn read_scene_for(user: &str, name: &str) -> Result<Value, String> {
     const MAX: u64 = 1024 * 1024;
     let p = scene_file_for(user, name)?;
     let uid = uid_of(user).ok_or_else(|| format!("unknown user {user}"))?;
-    let f = std::fs::OpenOptions::new().read(true)
-        .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC | libc::O_NONBLOCK).open(&p)
-        .map_err(|e| format!("{}: {e}", p.display()))?;
+    let f = {
+        let _as_user = FsAs::user(user)?;
+        std::fs::OpenOptions::new().read(true)
+            .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC | libc::O_NONBLOCK).open(&p)
+            .map_err(|e| format!("{}: {e}", p.display()))?
+    };
     let m = f.metadata().map_err(|e| format!("{}: {e}", p.display()))?;
     if !m.is_file() || (m.uid() != uid && m.uid() != 0) || m.len() > MAX {
         return Err(format!("{}: not a regular file owned by {user} (or too large)", p.display()));

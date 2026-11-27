@@ -33,6 +33,10 @@
 #include <QLockFile>
 #include <QMessageBox>
 #include <QCheckBox>
+#include <QDialog>
+#include <QDialogButtonBox>
+#include <QTextBrowser>
+#include <QVBoxLayout>
 #include <QClipboard>
 #include <QDesktopServices>
 #include <QPushButton>
@@ -277,6 +281,71 @@ static void warnUnknownModel() {
     if (dontAsk->isChecked()) st.setValue(QStringLiteral("unknown_model/dismissed"), model);
 }
 
+/// After an update: the security changes and what to do about them. Shown the first time the window appears,
+/// until "Don't show again" is ticked; the choice is stored per note (WHATS_NEW_ID), so a later note shows again.
+static const char WHATS_NEW_ID[] = "2.0-security";
+
+static QString whatsNewSettingsPath() {
+    return QStandardPaths::writableLocation(QStandardPaths::GenericConfigLocation) + QStringLiteral("/centurion/gui.ini");
+}
+
+static void showWhatsNew(QWidget *parent) {
+    auto item = [](const QString &lead, const QString &rest) { return QStringLiteral("<li><b>%1</b> %2</li>").arg(lead.toHtmlEscaped(), rest.toHtmlEscaped()); };
+    const QString html =
+        QStringLiteral("<h3>%1</h3><ul>").arg(MainText::tr("Important")) +
+        item(MainText::tr("Unlock PIN."), MainText::tr("Writing new values (undervolt, curves, power limits, fan tables, kernel settings) now needs "
+                                                       "the window unlocked with a 4-digit PIN. Click \"Locked\" in the side bar and set your PIN once "
+                                                       "(the administrator password is asked for that). The window locks again when it is closed and "
+                                                       "after 10 minutes without use.")) +
+        item(MainText::tr("Scenes and presets."), MainText::tr("Apply each scene that runs automatically (and each one with a command) once by hand "
+                                                               "from the unlocked window. Automatic runs only use values you approved. A saved preset is "
+                                                               "approved once the same way; then Optimize → Apply preset works while locked.")) +
+        item(MainText::tr("Keyboard lighting."), MainText::tr("The old udev rule is gone. Lighting now uses administrator rights: press \"Use "
+                                                              "administrator rights\" on the Lighting page, or tray → Keyboard Lighting → Enable. "
+                                                              "They end when the window closes, or one minute after the tray menu closes.")) +
+        item(MainText::tr("Update completely."), MainText::tr("Reinstall with your usual method (your package manager, or ./install.sh) so the new "
+                                                              "helpers and polkit rules are installed together. A half-updated install refuses writes.")) +
+        QStringLiteral("</ul><h3>%1</h3><ul>").arg(MainText::tr("Also changed")) +
+        item(MainText::tr("Password every time:"), MainText::tr("boot preset, preset store, wake sources, system files (fstab, sysctl, modprobe, udev), "
+                                                                "kernel modules, driver options, firmware and backups.")) +
+        item(MainText::tr("Checks:"), MainText::tr("fstab edits are compared with your disks first; risky sysctl, modprobe and udev lines are refused.")) +
+        item(MainText::tr("Intel undervolt:"), MainText::tr("never below -200 mV (-50 mV on Core Ultra).")) +
+        item(MainText::tr("Health reader:"), MainText::tr("asks for a password unless you are an administrator at the machine.")) +
+        QStringLiteral("</ul>");
+
+    QDialog dlg(parent);
+    dlg.setWindowTitle(MainText::tr("Centurion — what's new"));
+    dlg.setMinimumSize(560, 460);
+    auto *lay = new QVBoxLayout(&dlg);
+    auto *view = new QTextBrowser;
+    view->setOpenLinks(false);
+    view->setHtml(html);
+    lay->addWidget(view, 1);
+    auto *dontAsk = new QCheckBox(MainText::tr("Don't show again"));
+    lay->addWidget(dontAsk);
+    auto *buttons = new QDialogButtonBox(QDialogButtonBox::Ok);
+    QObject::connect(buttons, &QDialogButtonBox::accepted, &dlg, &QDialog::accept);
+    lay->addWidget(buttons);
+    dlg.exec();
+    if (dontAsk->isChecked())
+        QSettings(whatsNewSettingsPath(), QSettings::IniFormat).setValue(QStringLiteral("whats_new/hidden"), QString::fromLatin1(WHATS_NEW_ID));
+}
+
+/// Calls showWhatsNew() once, when the window is first shown (also when Centurion starts in the tray).
+class WhatsNewOnShow final : public QObject {
+public:
+    using QObject::QObject;
+protected:
+    bool eventFilter(QObject *obj, QEvent *e) override {
+        if (e->type() != QEvent::Show || !obj->isWidgetType()) return false;
+        obj->removeEventFilter(this);
+        QPointer<QWidget> w = static_cast<QWidget *>(obj);
+        QTimer::singleShot(0, obj, [w] { if (w) showWhatsNew(w); });
+        deleteLater();
+        return false;
+    }
+};
+
 int main(int argc, char **argv) {
     // Internal launcher entry, never fall through to a live GUI on failure.
     for (int i=1; i<argc; ++i) if (std::strcmp(argv[i], "--simulate-shell") == 0) {
@@ -386,6 +455,9 @@ int main(int argc, char **argv) {
     }
 
     (new DbusApi(&win))->registerOnBus();
+    if (!qEnvironmentVariableIsSet("CENTURION_PGO_TRAIN") && qEnvironmentVariableIsEmpty("CENTURION_SCREENSHOT") &&
+        QSettings(whatsNewSettingsPath(), QSettings::IniFormat).value(QStringLiteral("whats_new/hidden")).toString() != QLatin1String(WHATS_NEW_ID))
+        win.installEventFilter(new WhatsNewOnShow(&win));
     installTray(&win, withWindow);
     if (withWindow) win.show();
 

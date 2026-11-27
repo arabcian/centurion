@@ -26,6 +26,7 @@ class DayBars;
 class BootPage;
 class CoolingPage;
 class CurvePage;
+class DiagnosticsPage;
 class KlogPage;
 class OverviewPage;
 class QFrame;
@@ -111,6 +112,8 @@ private:
     /// Select `page` in its group (or in the top level), so it shows wherever it sits. A System tool opens
     /// in the tool view. Null does nothing.
     void showPage(QWidget *page);
+    /// The Diagnostics page on one of its tabs (DiagnosticsPage::Tab).
+    void showDiagnostics(int tab);
 
     // System tools: one catalog page (search, pinned, recent, tools by area) and one tool view with a path
     // back; no second navigation tree.
@@ -177,7 +180,8 @@ private:
     QStringList history_;
     int historyPos_ = -1;
     bool replaying_ = false;
-    AdvancedHealthPage *investigations_ = nullptr;
+    AdvancedHealthPage *investigations_ = nullptr;   // the Findings tab of diagnostics_
+    DiagnosticsPage *diagnostics_ = nullptr;
     QLineEdit *eventSearch_ = nullptr;
     QComboBox *severityFilter_ = nullptr;
     QCheckBox *technicalEvents_ = nullptr;

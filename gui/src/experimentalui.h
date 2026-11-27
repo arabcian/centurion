@@ -10,7 +10,6 @@
 #include <QPainter>
 #include <QPainterPath>
 #include <QIcon>
-#include <QLinearGradient>
 #include <QPixmap>
 #include <QPolygonF>
 #include <QPen>
@@ -31,15 +30,51 @@ namespace experimentalui {
 // the same accent as primary actions; icons have no semantic side effects.
 inline QIcon navigationIcon(const QString &page) {
     const auto draw = [&page](const char *color) {
-        QPixmap px(36, 36);
+        QPixmap px(64, 64);
         px.setDevicePixelRatio(2.0);
         px.fill(Qt::transparent);
         QPainter p(&px);
+        p.scale(32.0 / 18, 32.0 / 18);
         p.setRenderHint(QPainter::Antialiasing);
         p.setPen(QPen(QColor(QString::fromLatin1(color)), 1.55,
                       Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
         p.setBrush(Qt::NoBrush);
-        if (page == QLatin1String("Home")) {
+        if (page == QLatin1String("Ryzen Curve") || page == QLatin1String("AMD GPU")) {
+            p.setPen(Qt::NoPen);
+            p.setBrush(QColor("#ED1C24"));
+            p.drawPolygon(QPolygonF{{2,2},{16,2},{16,16},{12,12},{12,6},{6,6}});
+            p.drawPolygon(QPolygonF{{2,7},{6,11},{6,12},{10,12},{14,16},{2,16}});
+        } else if (page == QLatin1String("NVIDIA Curve")) {
+            p.setPen(QPen(QColor("#76B900"), 1.7));
+            QPainterPath eye;
+            eye.moveTo(1,9);
+            eye.cubicTo(5,2,12,2,17,9);
+            eye.cubicTo(13,15,6,16,3,10);
+            eye.cubicTo(6,6,11,5,14,9);
+            eye.cubicTo(11,12,8,12,7,9);
+            p.drawPath(eye);
+        } else if (page == QLatin1String("Memory")) {
+            p.drawRoundedRect(QRectF(1.5,5,15,8),1,1);
+            for (int x : {4,8,12}) p.drawRect(QRectF(x,7,2,3));
+            for (int x : {4,6,8,12,14}) p.drawLine(QPointF(x,13),QPointF(x,15));
+        } else if (page == QLatin1String("GPU")) {
+            p.drawRoundedRect(QRectF(2,4,14,10),1,1);
+            p.drawEllipse(QPointF(7,9),3,3);
+            p.drawLine(QPointF(12,7),QPointF(14,7));
+        } else if (page == QLatin1String("Favorites")) {
+            p.drawPolygon(QPolygonF{{9,2},{11,6.5},{16,7},{12.3,10.5},{13.3,15.6},
+                                    {9,13.2},{4.7,15.6},{5.7,10.5},{2,7},{7,6.5}});
+        } else if (page == QLatin1String("Operations")) {
+            for (int y : {4,9,14}) {
+                p.drawPoint(QPointF(3,y));
+                p.drawLine(QPointF(6,y), QPointF(15,y));
+            }
+        } else if (page == QLatin1String("Collapse") || page == QLatin1String("Expand")) {
+            p.drawRoundedRect(QRectF(2,3,14,12), 1.5, 1.5);
+            p.drawLine(QPointF(6,3), QPointF(6,15));
+            const int x = page == QLatin1String("Collapse") ? 12 : 9;
+            p.drawPolyline(QPolygonF{{qreal(x),6},{qreal(21-x),9},{qreal(x),12}});
+        } else if (page == QLatin1String("Home")) {
             p.drawLine(QPointF(2.8, 8.8), QPointF(9, 3.2));
             p.drawLine(QPointF(9, 3.2), QPointF(15.2, 8.8));
             p.drawRoundedRect(QRectF(4.7, 8.3, 8.6, 7), 0.7, 0.7);
@@ -48,7 +83,7 @@ inline QIcon navigationIcon(const QString &page) {
             p.drawRoundedRect(QRectF(2, 3, 14, 12), 3, 3);
             p.drawPolyline(QPolygonF{QPointF(3.6, 9), QPointF(6, 9),
                 QPointF(7.5, 6), QPointF(9.5, 12), QPointF(11, 8.5), QPointF(14.5, 8.5)});
-        } else if (page == QLatin1String("Ryzen Curve") || page == QLatin1String("Intel Undervolt")) {
+        } else if (page == QLatin1String("Intel Undervolt")) {
             p.drawRoundedRect(QRectF(4.5, 4.5, 9, 9), 1.6, 1.6);
             p.drawRect(QRectF(7.2, 7.2, 3.6, 3.6));
             for (int v : {6, 10, 13}) {
@@ -57,12 +92,6 @@ inline QIcon navigationIcon(const QString &page) {
                 p.drawLine(QPointF(2, v), QPointF(4.5, v));
                 p.drawLine(QPointF(13.5, v), QPointF(16, v));
             }
-        } else if (page == QLatin1String("NVIDIA Curve") || page == QLatin1String("AMD GPU")) {
-            p.drawRoundedRect(QRectF(2, 4, 14, 10), 1.6, 1.6);
-            p.drawEllipse(QPointF(7, 9), 2.5, 2.5);
-            p.drawLine(QPointF(12, 6.5), QPointF(14.1, 6.5));
-            p.drawLine(QPointF(12, 9), QPointF(14.1, 9));
-            p.drawLine(QPointF(12, 11.5), QPointF(14.1, 11.5));
         } else if (page == QLatin1String("Optimizations")) {
             for (int y : {4, 9, 14}) p.drawLine(QPointF(2.5, y), QPointF(15.5, y));
             for (const QPointF &pos : {QPointF(6, 4), QPointF(12, 9), QPointF(8, 14)}) {
@@ -91,11 +120,13 @@ inline QIcon navigationIcon(const QString &page) {
         p.end();
         return px;
     };
-    QIcon icon;
-    icon.addPixmap(draw(theme::FG_DIM), QIcon::Normal, QIcon::Off);
-    icon.addPixmap(draw(theme::ACCENT), QIcon::Normal, QIcon::On);
-    icon.addPixmap(draw(theme::FG), QIcon::Active, QIcon::Off);
-    icon.addPixmap(draw(theme::ACCENT), QIcon::Active, QIcon::On);
+    const char *color = theme::ACCENT;
+    if (page == "Intel Undervolt") color = "#007DC3";
+    else if (page == "Health" || page == "GPU") color = theme::OK;
+    else if (page == "Memory" || page == "Scenes") color = theme::PURPLE;
+    else if (page == "Firmware" || page == "Optimizations") color = theme::INFO;
+    else if (page == "Lighting") color = theme::WARN;
+    QIcon icon(draw(color));
     return icon;
 }
 
@@ -113,7 +144,7 @@ inline QIcon searchIcon(const char *color) {
     return QIcon(px);
 }
 
-// Status dot (top bar's power-profile chip): the colour with a soft halo.
+// Status dot (top bar's power-profile chip): a plain dot in the profile's colour.
 inline QIcon dotIcon(const QColor &color) {
     QPixmap px(20, 20);
     px.setDevicePixelRatio(2.0);
@@ -121,10 +152,6 @@ inline QIcon dotIcon(const QColor &color) {
     QPainter p(&px);
     p.setRenderHint(QPainter::Antialiasing);
     p.setPen(Qt::NoPen);
-    QColor halo = color;
-    halo.setAlphaF(0.25);
-    p.setBrush(halo);
-    p.drawEllipse(QPointF(5, 5), 5, 5);
     p.setBrush(color);
     p.drawEllipse(QPointF(5, 5), 3, 3);
     p.end();
@@ -232,52 +259,27 @@ protected:
         auto draw = [&](bool cpu, const QColor &color, const QString &name) {
             QPainterPath path;
             bool inSegment = false;
-            qreal segmentStart = 0;
             std::optional<double> last;
-            // A soft wash under each unbroken run of samples, fading to the baseline.
-            QLinearGradient wash(plot.topLeft(), plot.bottomLeft());
-            QColor top = color, bottom = color;
-            top.setAlphaF(0.20);
-            bottom.setAlphaF(0.0);
-            wash.setColorAt(0, top);
-            wash.setColorAt(1, bottom);
-            QPainterPath run;
-            auto closeRun = [&](qreal endX) {
-                if (run.elementCount() < 2) { run = QPainterPath(); return; }
-                run.lineTo(endX, plot.bottom());
-                run.lineTo(segmentStart, plot.bottom());
-                run.closeSubpath();
-                p.fillPath(run, wash);
-                run = QPainterPath();
-            };
             qreal x = 0;
             qint64 previousMs = -1;
             for (const auto &sample : samples_) {
                 if (sample.ms < firstMs) continue;
                 const auto &value = cpu ? sample.cpu : sample.gpu;
-                if (!value || (previousMs >= 0 && sample.ms - previousMs > 6000)) {
-                    if (inSegment) closeRun(x);
-                    inSegment = false;
-                }
+                if (!value || (previousMs >= 0 && sample.ms - previousMs > 6000)) inSegment = false;
                 previousMs = sample.ms;
                 if (!value) continue;
                 x = plot.right() - (now - sample.ms) * plot.width() / double(rangeMs);
                 const qreal y = plot.bottom() - (std::clamp(*value, 25.0, 105.0) - 25.0) / 80.0 * plot.height();
-                if (inSegment) { path.lineTo(x, y); run.lineTo(x, y); }
-                else { path.moveTo(x, y); run.moveTo(x, y); segmentStart = x; }
+                if (inSegment) path.lineTo(x, y);
+                else path.moveTo(x, y);
                 inSegment = true;
                 last = value;
             }
-            if (inSegment) closeRun(x);
-            p.setPen(QPen(color, 1.8, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+            p.setPen(QPen(color, 1.6, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
             p.drawPath(path);
             const bool live = inSegment && !samples_.isEmpty() && now - samples_.last().ms <= 6000;
-            if (live) {  // the live reading: a dot with a halo
-                QColor halo = color;
-                halo.setAlphaF(0.25);
+            if (live) {  // the live reading: a dot
                 p.setPen(Qt::NoPen);
-                p.setBrush(halo);
-                p.drawEllipse(path.currentPosition(), 5.5, 5.5);
                 p.setBrush(color);
                 p.drawEllipse(path.currentPosition(), 2.6, 2.6);
                 p.setBrush(Qt::NoBrush);
@@ -298,7 +300,7 @@ protected:
             legendRight = label.left() - 28;
         };
         draw(false, QColor(theme::OK), QStringLiteral("GPU"));
-        draw(true, QColor(theme::ACCENT), QStringLiteral("CPU"));
+        draw(true, QColor(theme::INFO), QStringLiteral("CPU"));
     }
 private:
     struct Sample { qint64 ms; std::optional<double> cpu, gpu; };

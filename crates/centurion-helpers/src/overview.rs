@@ -124,9 +124,9 @@ pub fn read_tail(path: &Path, max: u64) -> Option<String> {
     let len = f.metadata().ok()?.len();
     let cut = len > max;
     if cut { f.seek(SeekFrom::Start(len - max)).ok()?; }
-    let mut buf = Vec::new();
+    let mut buf = Vec::with_capacity(len.min(max) as usize);
     f.take(max).read_to_end(&mut buf).ok()?;
-    let mut text = String::from_utf8_lossy(&buf).into_owned();
+    let mut text = String::from_utf8(buf).unwrap_or_else(|e| String::from_utf8_lossy(e.as_bytes()).into_owned());
     if cut {
         if let Some(i) = text.find('\n') { text.drain(..=i); }
     }
@@ -145,33 +145,31 @@ pub fn read_json(path: &Path) -> Option<Value> {
 #[derive(Default, Debug, PartialEq)]
 pub struct KernelCounts { pub crit24: u64, pub err24: u64, pub crit7: u64, pub err7: u64 }
 
-/// The lines of health.log stamped after `seen` (epoch seconds, from the Health tab's "Mark all seen";
-/// 0 = never marked). Lines whose stamp cannot be read are kept.
-pub fn unseen_log(log: &str, seen: i64, offset: i64) -> String {
-    if seen <= 0 { return log.to_owned(); }
-    log.lines().filter(|line| {
-        let f: Vec<&str> = line.split_whitespace().collect();
-        f.len() < 2 || parse_local(&format!("{} {}", f[0], f[1]), offset).map_or(true, |t| t > seen)
-    }).collect::<Vec<_>>().join("\n")
+/// Read rotated and current logs successively so only one tail is resident.
+pub(crate) fn health_logs(st: &Path) -> impl Iterator<Item = String> + '_ {
+    ["health.log.1", "health.log"].into_iter().filter_map(|name| read_tail(&st.join(name), TAIL_BYTES))
 }
 
-/// Critical and error lines of health.log in the last day and week. Line shape (written by the
-/// Health tab): "YYYY-MM-DD HH:MM:SS  boot=… seq=…  LEVEL KIND  title  |  text".
-pub fn kernel_counts(log: &str, now: i64, offset: i64) -> KernelCounts {
-    let mut c = KernelCounts::default();
-    for line in log.lines() {
-        let f: Vec<&str> = line.split_whitespace().collect();
-        if f.len() < 5 { continue; }
-        let Some(t) = parse_local(&format!("{} {}", f[0], f[1]), offset) else { continue };
-        let age = (now - t).max(0);
-        if age > WEEK { continue; }
-        match f[4] {
-            "CRITICAL" => { c.crit7 += 1; if age <= DAY { c.crit24 += 1; } }
-            "ERROR" => { c.err7 += 1; if age <= DAY { c.err24 += 1; } }
-            _ => {}
+/// Count unreviewed errors while scanning each file once.
+fn kernel_counts(logs: impl IntoIterator<Item = impl AsRef<str>>, now: i64, offset: i64, seen: i64) -> KernelCounts {
+    let mut counts = KernelCounts::default();
+    for log in logs {
+        for line in log.as_ref().lines() {
+            let mut fields = line.split_whitespace();
+            let (Some(date), Some(time)) = (fields.next(), fields.next()) else { continue };
+            let (week, day) = match fields.nth(2) {
+                Some("CRITICAL") => (&mut counts.crit7, &mut counts.crit24),
+                Some("ERROR") => (&mut counts.err7, &mut counts.err24),
+                _ => continue,
+            };
+            let Some(t) = parse_local(&format!("{date} {time}"), offset) else { continue };
+            if seen > 0 && t <= seen { continue; }
+            let age = (now - t).max(0);
+            if age <= WEEK { *week += 1; }
+            if age <= DAY { *day += 1; }
         }
     }
-    c
+    counts
 }
 
 // ── unexpected shutdowns (exposure.json) ─────────────────────────────────────
@@ -340,7 +338,7 @@ pub struct Inputs {
     pub now: i64,
     pub offset: i64,
     pub today: String,
-    pub health_log: String,
+    pub kernel: KernelCounts,
     pub exposure: Option<Value>,
     /// Start of the newest unclean boot marked reviewed on the Overview (0 = none).
     pub unclean_seen: i64,
@@ -373,7 +371,7 @@ fn battery_level(pct: f64) -> i64 {
 pub fn cards(i: &Inputs) -> Vec<Value> {
     let mut out = Vec::new();
 
-    let k = kernel_counts(&i.health_log, i.now, i.offset);
+    let k = &i.kernel;
     let lvl = if k.crit24 > 0 { BAD } else if k.crit7 + k.err7 > 0 { WARN } else { OK };
     out.push(card("kernel", lvl, json!({"crit24": k.crit24, "err24": k.err24, "crit7": k.crit7, "err7": k.err7})));
 
@@ -449,18 +447,14 @@ pub fn worst(cards: &[Value]) -> i64 {
 pub fn read_inputs(req: &Value) -> Inputs {
     let (now, offset) = local_clock();
     let st = state_dir();
-    let mut health = String::new();
-    for name in ["health.log.1", "health.log"] {
-        if let Some(t) = read_tail(&st.join(name), TAIL_BYTES) { health.push_str(&t); health.push('\n'); }
-    }
-    let health = unseen_log(&health, req["kernel_seen"].as_i64().unwrap_or(0), offset);
+    let kernel = kernel_counts(health_logs(&st), now, offset, req["kernel_seen"].as_i64().unwrap_or(0));
     let backup_dirs: Vec<PathBuf> = req["backup_dirs"].as_array().into_iter().flatten()
         .filter_map(|v| v.as_str()).map(PathBuf::from).filter(|p| p.is_absolute()).collect();
     Inputs {
         now,
         offset,
         today: ymd(now, offset),
-        health_log: health,
+        kernel,
         exposure: read_json(Path::new(stability::EXPOSURE)),
         unclean_seen: req["unclean_seen"].as_i64().unwrap_or(0),
         battery: read_json(&st.join("battery.json")),
@@ -532,18 +526,18 @@ mod tests {
             "not a log line".to_owned(),
         ]
         .join("\n");
-        assert_eq!(kernel_counts(&log, now, 0), KernelCounts { crit24: 1, err24: 1, crit7: 1, err7: 2 });
+        assert_eq!(kernel_counts([&log], now, 0, 0), KernelCounts { crit24: 1, err24: 1, crit7: 1, err7: 2 });
     }
 
     #[test]
     fn marking_seen_removes_older_lines_from_the_cards() {
         let now = MAR1_2000 + 10 * DAY;
-        let log = [line(&stamp(now - 3600), "CRITICAL"), line(&stamp(now - 600), "ERROR"), "not a log line".to_owned()].join("\n");
-        assert_eq!(unseen_log(&log, 0, 0), log, "never marked: nothing is hidden");
-        // Marked seen half an hour ago: the critical line of an hour ago is seen, the error of ten minutes ago is not.
-        let left = unseen_log(&log, now - 1800, 0);
-        assert_eq!(kernel_counts(&left, now, 0), KernelCounts { crit24: 0, err24: 1, crit7: 0, err7: 1 });
-        assert!(left.contains("not a log line"));
+        let rotated = line(&stamp(now - 1800), "CRITICAL");
+        let current = [line(&stamp(now - 600), "ERROR"), "not a log line".to_owned()].join("\n");
+        let logs = [&rotated, &current];
+        assert_eq!(kernel_counts(logs, now, 0, 0).crit24, 1);
+        // The mark includes the event exactly at its timestamp.
+        assert_eq!(kernel_counts(logs, now, 0, now - 1800), KernelCounts { crit24: 0, err24: 1, crit7: 0, err7: 1 });
     }
 
     #[test]
@@ -719,7 +713,7 @@ mod tests {
         let busy = Inputs {
             now,
             today: ymd(now, 0),
-            health_log: line(&stamp(now - 60), "CRITICAL"),
+            kernel: KernelCounts { crit24: 1, crit7: 1, ..Default::default() },
             battery: Some(json!({"capacity": [{"d": "x", "full": 60.0, "design": 100.0}]})),
             backup_age: Some(40 * DAY),
             has_battery: true,
