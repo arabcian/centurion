@@ -28,6 +28,7 @@
 #include <QStringList>
 #include <QToolTip>
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <functional>
 #include <iterator>
@@ -85,7 +86,7 @@ class ChartTableModel final : public QAbstractTableModel {
 public:
     ChartTableModel(const QStringList &headers, const QList<QStringList> &rows, QObject *parent)
         : QAbstractTableModel(parent), headers_(headers), rows_(rows), columns_(int(headers.size())) {
-        for (const auto &row : rows_) columns_ = std::max(columns_, int(row.size()));
+        for (const auto &row : std::as_const(rows_)) columns_ = std::max(columns_, int(row.size()));
     }
     int rowCount(const QModelIndex &parent = {}) const override { return parent.isValid() ? 0 : int(rows_.size()); }
     int columnCount(const QModelIndex &parent = {}) const override { return parent.isValid() ? 0 : columns_; }
@@ -204,12 +205,20 @@ void LineChart::setPoints(const QVector<Point> &points, const QString &yUnit) {
         stableSelection = sameUnit && matchingIndex(points_, oldSelection) == keyboardSample_;
         QToolTip::hideText();
     }
-    points_.clear();
-    bool gap = false;
-    for (const auto &pt : points) {
-        if (!std::isfinite(pt.x) || !std::isfinite(pt.y)) { gap = true; continue; }
-        auto copy = pt; copy.breakBefore = copy.breakBefore || gap;
-        points_.append(copy); gap = false;
+    const auto finite = [](const Point &p) { return std::isfinite(p.x) && std::isfinite(p.y); };
+    const auto invalid = std::find_if_not(points.cbegin(), points.cend(), finite);
+    if (invalid == points.cend()) {
+        points_ = points;
+    } else {
+        points_ = points.mid(0, invalid - points.cbegin());
+        bool gap = true;
+        for (auto it = invalid + 1; it != points.cend(); ++it) {
+            if (!finite(*it)) { gap = true; continue; }
+            auto copy = *it;
+            copy.breakBefore |= gap;
+            points_.append(std::move(copy));
+            gap = false;
+        }
     }
     unit_ = yUnit;
     keyboardSample_ = stableSelection ? matchingIndex(points_, oldSelection) : -1;
@@ -230,9 +239,9 @@ void LineChart::updateAccessibleDescription() {
         return;
     }
     QString description = QCoreApplication::translate("LineChart", "%1 points, %2 to %3; last value %4 %5")
-        .arg(end_ - begin_).arg(points_[begin_].label, points_[end_ - 1].label).arg(points_[end_ - 1].y).arg(unit_);
+        .arg(end_ - begin_).arg(points_.at(begin_).label, points_.at(end_ - 1).label).arg(points_.at(end_ - 1).y).arg(unit_);
     if (keyboardSample_ >= begin_ && keyboardSample_ < end_) {
-        const auto &sample = points_[keyboardSample_];
+        const auto &sample = points_.at(keyboardSample_);
         description += QStringLiteral(" · ") + QCoreApplication::translate("LineChart", "Selected sample %1 of %2: %3, %4 %5")
             .arg(keyboardSample_ + 1).arg(points_.size()).arg(sample.label).arg(sample.y).arg(unit_);
     }
@@ -289,7 +298,7 @@ void LineChart::keyPressEvent(QKeyEvent *e) {
             keyboardSample_ = std::clamp(keyboardSample_ + step, begin_, end_ - 1);
         }
         hover_ = -1;
-        const auto &sample = points_[keyboardSample_];
+        const auto &sample = points_.at(keyboardSample_);
         QToolTip::showText(mapToGlobal(QPoint(width() / 2, 0)),
                            QStringLiteral("%1: %2 %3").arg(sample.label.toHtmlEscaped()).arg(sample.y, 0, 'g', 10)
                                .arg(unit_.toHtmlEscaped()), this);
@@ -316,9 +325,9 @@ void LineChart::paintEvent(QPaintEvent *) {
         p.drawText(rect(), Qt::AlignCenter, QCoreApplication::translate("LineChart", "No recorded samples."));
         return;
     }
-    double x0 = points_[begin_].x, x1 = x0, y0 = points_[begin_].y, y1 = y0;
+    double x0 = points_.at(begin_).x, x1 = x0, y0 = points_.at(begin_).y, y1 = y0;
     for (qsizetype i=begin_; i<end_; ++i) {
-        const auto &pt=points_[i];
+        const auto &pt=points_.at(i);
         x0 = std::min(x0, pt.x); x1 = std::max(x1, pt.x);
         y0 = std::min(y0, pt.y); y1 = std::max(y1, pt.y);
     }
@@ -356,8 +365,8 @@ void LineChart::paintEvent(QPaintEvent *) {
                    fm.elidedText(labels.at(qsizetype(i)),Qt::ElideRight,axis-4));
     }
     const int half = int(r.width() / 2);
-    p.drawText(QRectF(r.left(), r.bottom() + 3, half, rowH), Qt::AlignLeft, fm.elidedText(points_[begin_].label, Qt::ElideRight, half));
-    p.drawText(QRectF(r.right() - half, r.bottom() + 3, half, rowH), Qt::AlignRight, fm.elidedText(points_[end_-1].label, Qt::ElideLeft, half));
+    p.drawText(QRectF(r.left(), r.bottom() + 3, half, rowH), Qt::AlignLeft, fm.elidedText(points_.at(begin_).label, Qt::ElideRight, half));
+    p.drawText(QRectF(r.right() - half, r.bottom() + 3, half, rowH), Qt::AlignRight, fm.elidedText(points_.at(end_-1).label, Qt::ElideLeft, half));
 
     QPainterPath path;
     // Each bucket retains its first/last and extrema. If any gap occurs inside it,
@@ -367,14 +376,16 @@ void LineChart::paintEvent(QPaintEvent *) {
         const qsizetype last=std::min(end_,i+bucket)-1;
         qsizetype minAt=i,maxAt=i; bool gap=false;
         for(qsizetype j=i;j<=last;++j) {
-            if(points_[j].y<points_[minAt].y) minAt=j;
-            if(points_[j].y>points_[maxAt].y) maxAt=j;
-            gap|=points_[j].breakBefore;
+            if(points_.at(j).y<points_.at(minAt).y) minAt=j;
+            if(points_.at(j).y>points_.at(maxAt).y) maxAt=j;
+            gap|=points_.at(j).breakBefore;
         }
-        QList<qsizetype> indices{i,minAt,maxAt,last}; std::sort(indices.begin(),indices.end());
-        indices.erase(std::unique(indices.begin(),indices.end()),indices.end());
-        for(auto index:indices) {
-            const auto &pt=points_[index]; const QPointF q(X(pt.x),Y(pt.y));
+        std::array<qsizetype, 4> indices{i, minAt, maxAt, last};
+        std::sort(indices.begin(), indices.end());
+        const auto stop = std::unique(indices.begin(), indices.end());
+        for (auto it = indices.begin(); it != stop; ++it) {
+            const auto index = *it;
+            const auto &pt=points_.at(index); const QPointF q(X(pt.x),Y(pt.y));
             if(plotted_.isEmpty() || gap || pt.breakBefore) path.moveTo(q); else path.lineTo(q);
             plotted_.append(q); plottedIndices_.append(index);
         }
@@ -387,7 +398,7 @@ void LineChart::paintEvent(QPaintEvent *) {
     for (const QPointF &pt : plotted_) p.drawEllipse(pt, 2.5, 2.5);
     if ((keyboardSample_ >= begin_ && keyboardSample_ < end_) || (hover_ >= 0 && hover_ < plotted_.size())) {
         const auto pt = keyboardSample_ >= begin_ && keyboardSample_ < end_
-            ? QPointF(X(points_[keyboardSample_].x), Y(points_[keyboardSample_].y))
+            ? QPointF(X(points_.at(keyboardSample_).x), Y(points_.at(keyboardSample_).y))
             : plotted_.at(hover_);
         p.setPen(QPen(colorFrom(theme::FG_DIM), 1, Qt::DashLine));
         p.drawLine(QPointF(pt.x(), r.top()), QPointF(pt.x(), r.bottom()));
@@ -472,7 +483,7 @@ void BarChart::setBars(const QVector<Bar> &bars) {
     }
     bars_ = bars;
     minV_ = maxV_ = 0;
-    for (const auto &b : bars_) if (std::isfinite(b.value)) { minV_ = std::min(minV_,b.value); maxV_ = std::max(maxV_,b.value); }
+    for (const auto &b : bars) if (std::isfinite(b.value)) { minV_ = std::min(minV_,b.value); maxV_ = std::max(maxV_,b.value); }
     if (!anchor.isEmpty()) {
         const auto index = uniqueIndex(bars_, [&](const Bar &bar) { return bar.label == anchor; });
         if (index >= 0) {
@@ -562,7 +573,7 @@ void BarChart::paintEvent(QPaintEvent *) {
     if (!range) return;
     const double zero = range->fraction(0);
     for (qsizetype i = begin_; i < end_; ++i) {
-        const Bar &b = bars_[i];
+        const Bar &b = bars_.at(i);
         const int y = int(i-begin_) * rowH;
         p.setPen(colorFrom(theme::FG_DIM));
         p.drawText(QRect(0, y, labelW - 6, rowH), Qt::AlignRight | Qt::AlignVCenter, fm.elidedText(b.label, Qt::ElideRight, labelW - 6));

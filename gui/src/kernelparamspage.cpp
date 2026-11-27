@@ -1,6 +1,7 @@
 #include "kernelparamspage.h"
 #include "privileged.h"
 #include "theme.h"
+#include "unlock.h"
 #include <QComboBox>
 #include <QDir>
 #include <QFile>
@@ -118,10 +119,33 @@ KernelParamsPage::KernelParamsPage(QWidget *parent) : QWidget(parent) {
     connect(btn, &QPushButton::clicked, this, &KernelParamsPage::read);
     connect(scope_, &QComboBox::activated, this, &KernelParamsPage::read);
     connect(filter_, &QLineEdit::textChanged, this, &KernelParamsPage::applyFilter);
+
+    auto &manager = unlock::Manager::instance();
+    const auto syncLock = [this, btn](bool unlocked) {
+        btn->setEnabled(unlocked);
+        scope_->setEnabled(unlocked && !busy_);
+        filter_->setEnabled(unlocked);
+        if (unlocked) {
+            status_->setText(busy_ ? tr("Reading…") : QString());
+            return;
+        }
+        ++lockGeneration_;
+        export_->setEnabled(false);
+        model_->clear();
+        viewScope_.clear();
+        captured_ = {};
+        capturedMeta_ = {};
+        capturedScope_.clear();
+        capturedAt_.clear();
+        capturedStatus_.clear();
+        status_->setText(tr("Unlock Centurion to read kernel settings."));
+    };
+    connect(&manager, &unlock::Manager::changed, this, syncLock);
+    syncLock(manager.unlocked());
 }
 
 void KernelParamsPage::read() {
-    if (busy_) return;
+    if (busy_ || !unlock::Manager::instance().unlocked()) return;
     const QString helper = privileged::helperPath(QStringLiteral("health-reader"));
     if (!QFileInfo(helper).isExecutable()) { status_->setText(tr("health-reader is not installed.")); return; }
     const QString root = scope_->currentData().toString();
@@ -132,10 +156,18 @@ void KernelParamsPage::read() {
     captured_ = QJsonArray{};
     if(viewScope_!=root) { model_->clear(); viewScope_=root; }
     status_->setText(model_->rowCount()>0?tr("Reading… previous capture is shown until the new read completes."):tr("Reading…"));
-    privileged::run(helper, QJsonObject{{"op", "ksnap"}, {"roots", QJsonArray{root}}}, this, [this, root](const privileged::Result &r) {
+    const auto generation = lockGeneration_;
+    privileged::run(helper, QJsonObject{{"op", "ksnap"}, {"roots", QJsonArray{root}}}, this, [this, root, generation](const privileged::Result &r) {
         busy_ = false;
+        if (!unlock::Manager::instance().unlocked()) return;
         scope_->setEnabled(true);
-        if (!r.ok()) { model_->clear(); status_->setText(r.message()); return; }
+        if (generation != lockGeneration_) { status_->clear(); return; }
+        if (!r.ok()) {
+            model_->clear();
+            status_->setText(r.json.value(QStringLiteral("locked")).toBool()
+                                ? tr("Unlock Centurion to read kernel settings.") : r.message());
+            return;
+        }
         if (!r.json.value(QStringLiteral("entries")).isArray()) {
             model_->clear();
             status_->setText(r.json.value(QStringLiteral("ok")).toBool() ? tr("The installed health-reader is too old for this page — reinstall Centurion.") : r.message());
@@ -178,10 +210,12 @@ void KernelParamsPage::applyFilter() {
 }
 
 void KernelParamsPage::exportSnapshot() {
-    if (busy_ || capturedScope_.isEmpty()) return;
+    if (busy_ || capturedScope_.isEmpty() || !unlock::Manager::instance().unlocked()) return;
+    const auto generation = lockGeneration_;
     if (QMessageBox::question(this, tr("Export kernel settings"), tr("The snapshot can contain private device identifiers and configuration. All captured rows, including hidden rows and multiline values, will be saved. Continue?")) != QMessageBox::Yes) return;
+    if (generation != lockGeneration_) return;
     const auto path = QFileDialog::getSaveFileName(this, tr("Export kernel settings"), QStringLiteral("centurion-kernel-settings.json"), tr("JSON files (*.json)"));
-    if (path.isEmpty()) return;
+    if (path.isEmpty() || generation != lockGeneration_) return;
     const QJsonObject snapshot{{"schema", 1}, {"value_limit_bytes",4096}, {"scope", capturedScope_}, {"captured_utc", capturedAt_}, {"kernel", QSysInfo::kernelVersion()}, {"status", capturedStatus_}, {"capture_receipt", capturedMeta_}, {"entries", captured_}};
     const auto bytes = QJsonDocument(snapshot).toJson(QJsonDocument::Indented);
     QSaveFile f(path); f.setDirectWriteFallback(false);

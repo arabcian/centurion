@@ -3,9 +3,9 @@
 // USB 048d:c1xx). Model shared by the Lighting tab, the tray and scenes, plus
 // the call into lighting-helper.
 //
-// Access: lighting-helper runs as the user when the udev rule has tagged the
-// controller's hidraw node `uaccess` (no pkexec, no prompt); only a reply
-// with "denied" makes run() retry through pkexec.
+// Access: lighting-helper is tried as the user first (there is no udev `uaccess`
+// rule, so the hidraw node is normally root-only); a reply with "denied" makes
+// run() retry through pkexec.
 //
 // Effects live in the controller's non-volatile profile store (6 profiles,
 // survive reboots and Windows/Linux switches). Per-key colour is one Static

@@ -117,7 +117,7 @@ std::vector<Row> ContextWindow::rows() const {
     return result;
 }
 
-std::vector<Row> group(const std::vector<Line> &lines, bool groupRepeats) {
+std::vector<Row> group(const std::deque<Line> &lines, bool groupRepeats) {
     std::vector<Row> rows;
     QHash<QString, size_t> at;  // key → its row
     for (const Line &l : lines) {

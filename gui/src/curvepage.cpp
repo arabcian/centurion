@@ -5,6 +5,8 @@
 #include "gpustressbox.h"
 #include "privileged.h"
 #include "sysinfo.h"
+#include "experimentalui.h"
+#include <QTabWidget>
 #include "theme.h"
 #include <QCheckBox>
 #include <QDateTime>
@@ -146,15 +148,18 @@ CurvePage::CurvePage(QWidget *parent) : QWidget(parent) {
     connect(bRefresh, &QPushButton::clicked, this, &CurvePage::recompute);
     row->addWidget(bRefresh);
     root->addLayout(row);
+    auto *tests = new QTabWidget;
+    tests->setIconSize(QSize(18, 18));
+    root->addWidget(tests, 1);
     cpuTest_ = new CpuStressBox;
     connect(cpuTest_, &CpuStressBox::alert, this, &CurvePage::alert);
-    root->addWidget(cpuTest_);
+    tests->addTab(cpuTest_, experimentalui::navigationIcon(sysinfo::isIntel() ? "Intel Undervolt" : "Ryzen Curve"), cpuTest_->tr("CPU Test"));
     memTest_ = new MemTestBox;
     connect(memTest_, &MemTestBox::alert, this, &CurvePage::alert);
-    root->addWidget(memTest_);
+    tests->addTab(memTest_, experimentalui::navigationIcon("Memory"), memTest_->tr("Memory Test"));
     gpuTest_ = new GpuStressBox;
     connect(gpuTest_, &GpuStressBox::alert, this, &CurvePage::alert);
-    root->addWidget(gpuTest_);
+    tests->insertTab(1, gpuTest_, experimentalui::navigationIcon(nvidiaOnBus() ? "NVIDIA Curve" : "GPU"), gpuTest_->tr("GPU Test"));
 }
 
 void CurvePage::showEvent(QShowEvent *e) {

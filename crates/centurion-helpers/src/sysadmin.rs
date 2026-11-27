@@ -168,7 +168,7 @@ pub fn new_lines_allowed(kind: Kind, old: &str, new: &str) -> Result<(), String>
             }
             Kind::Udev => {
                 for part in line.split(',') {
-                    let key = part.trim().split(|c: char| c == '=' || c == '+' || c == '-' || c == ':' || c == '!').next().unwrap_or("").trim();
+                    let key = part.trim().split(['=', '+', '-', ':', '!']).next().unwrap_or("").trim();
                     if key.starts_with("RUN") || key.starts_with("PROGRAM") || key.starts_with("IMPORT{program}") {
                         return bad("RUN, PROGRAM and IMPORT{program} start a program as root and are not accepted here");
                     }

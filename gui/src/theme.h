@@ -28,6 +28,13 @@ inline const char *BG0 = "#121316", *BG1 = "#191a1e", *BG2 = "#202126", *BG3 = "
     *OK = "#8fc486", *WARN = "#e6c065", *DANGER = "#ea8076", *DANGER_SOFT = "#8e4841",
     *INFO = "#7fb1d5", *PURPLE = "#b79be2";
 inline constexpr int FONT_PT = 9, RADIUS = 10;
+/// Experimental layout scale, on a 4 px grid: margins and gaps in the Experimental
+/// shell and pages use these names, not literals. Classic keeps its own values.
+inline constexpr int GAP_XS = 4, GAP_S = 8, GAP_M = 12, GAP_L = 16, GAP_XL = 24;
+/// Experimental control height: buttons, line edits, combos and spin boxes on one row line up.
+inline constexpr int CONTROL_H = 24;
+/// Experimental type scale (points at the default 9 pt; the typography preference scales all four).
+inline constexpr int TITLE_PT = 13, SECTION_PT = 10, BODY_PT = FONT_PT, SMALL_PT = 8;
 /// Brand mark at the start of the header bezel (MainWindow): icon size, its x and
 /// the gap to the "Centurion" wordmark. The page rail starts at brandInset().
 inline constexpr int BRAND_X = 16, BRAND_ICON = 22, BRAND_GAP = 9;

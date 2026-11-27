@@ -1,3 +1,4 @@
+#include "unlock.h"
 #include "cosearchdialog.h"
 #include "cofirstfailure.h"
 #include "coarchive.h"
@@ -390,6 +391,12 @@ static void refreshCoreColors(QTableWidget *table) {
 CoSearchDialog::CoSearchDialog(QWidget *parent) : QDialog(parent), notifier_(new Notifier(this)) {
     setWindowTitle(tr("Ryzen CO Search Assistant (Experimental)"));
     resize(1000, 680);
+    const auto syncLock = [this](bool unlocked) {
+        if (!unlocked && operationActive()) cancel();
+        setEnabled(unlocked);
+    };
+    connect(&unlock::Manager::instance(), &unlock::Manager::changed, this, syncLock);
+    syncLock(unlock::Manager::instance().unlocked());
     auto *v = new QVBoxLayout(this);
     auto *explainer = new QLabel(tr(
         "Finds negative Curve Optimizer offsets with FFT / integer workload and boost/idle transitions. "
@@ -1255,7 +1262,7 @@ void CoSearchDialog::refreshTable() {
 }
 
 std::optional<ryzen::Layout> CoSearchDialog::preflight(Mode mode) {
-    if (running_ || perfTest_ || preparing_ || recoveryBusy_) return std::nullopt;
+    if (!unlock::Manager::instance().unlocked() || running_ || perfTest_ || preparing_ || recoveryBusy_) return std::nullopt;
     if (QFileInfo::exists(journalPath())) {
         // Never overwrite an unresolved crash history with a fresh, unguarded search.
         offerResume();
@@ -1280,6 +1287,10 @@ std::optional<ryzen::Layout> CoSearchDialog::preflight(Mode mode) {
               "the last helper-written state must explicitly be reset/0 before this search.")); return std::nullopt;
     }
     const ryzen::Layout layout = ryzen::detect();
+    // Only a per-core search writes by slot; the all-core one does not depend on the mapping.
+    if (const QString why = mode == Mode::PerCore ? ryzen::slotMappingProblem(layout) : QString(); !why.isEmpty()) {
+        QMessageBox::warning(this, tr("Core slots cannot be matched"), why); return std::nullopt;
+    }
     if (mode == Mode::PerCore && !layout.parked.isEmpty()) {
         QMessageBox::warning(this, tr("CCD parked"), tr("A CCD is parked by Optimizations: its cores cannot be tested alone. Unpark it first.")); return std::nullopt;
     }
@@ -1287,7 +1298,7 @@ std::optional<ryzen::Layout> CoSearchDialog::preflight(Mode mode) {
 }
 
 void CoSearchDialog::start() {
-    if (operationActive()) return;
+    if (!unlock::Manager::instance().unlocked() || operationActive()) return;
     if (QFileInfo::exists(journalPath())) { offerResume(); return; }
     probeTools([this](bool ok) { if (ok) startPrepared(); });
 }
@@ -1361,7 +1372,7 @@ void CoSearchDialog::startPrepared() {
 }
 
 void CoSearchDialog::verifyProfile() {
-    if (operationActive()) return;
+    if (!unlock::Manager::instance().unlocked() || operationActive()) return;
     if (QFileInfo::exists(journalPath())) { offerResume(); return; }
     probeTools([this](bool ok) { if (ok) verifyPrepared(); });
 }

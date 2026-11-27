@@ -1417,10 +1417,15 @@ void SceneEngine::start(const Scene &s, const QString &expectedGeneration) {
                 privileged::runUntilExit(privileged::helperPath("tune-profile-helper"), rq, this, [this, done, c](const privileged::Result &r) {
                     if (r.reached && r.json.value("game_active").toBool()) { done(true, "left alone (game session active)"); return; }
                     QString msg = c.kind == Choice::Reset ? QStringLiteral("originals restored") : "'" + c.name + "'";
-                    QStringList exceptions;
+                    // IRQ steering (irq.affinity, irq.nvme, ...) often cannot be applied (managed IRQs, a driver that
+                    // refuses a mask): it is listed, but never makes the scene partial or failed.
+                    QStringList exceptions, irqNotes;
+                    auto note = [&exceptions, &irqNotes](const QString &key, const QString &why) {
+                        (key.startsWith(QLatin1String("irq.")) ? irqNotes : exceptions) << key + QStringLiteral(": ") + why;
+                    };
                     for (const QJsonValue &v : r.json.value("results").toArray()) {
                         const auto row=v.toObject(); const QString key=row.value("key").toString(); QStringList reasons;
-                        if (!row.value("skipped").toString().isEmpty()) reasons << row.value("skipped").toString();
+                        if (row.value("controlled_by").toString().isEmpty() && !row.value("skipped").toString().isEmpty()) reasons << row.value("skipped").toString();
                         if (!row.value("error").toString().isEmpty()) reasons << row.value("error").toString();
                         if (row.value("refused").toInt()>0) reasons << QStringLiteral("%1 refused writes").arg(row.value("refused").toInt());
                         if (row.value("mismatch_count").toInt()>0) reasons << QStringLiteral("%1 value(s) did not stick").arg(row.value("mismatch_count").toInt());
@@ -1428,12 +1433,12 @@ void SceneEngine::start(const Scene &s, const QString &expectedGeneration) {
                         const auto mismatches=row.value("mismatch").toArray();
                         for(const auto &m:mismatches) reasons << m.toString();
                         if(row.value("mismatch_count").toInt()>mismatches.size()) reasons << QStringLiteral("%1 additional mismatch details not included by helper").arg(row.value("mismatch_count").toInt()-mismatches.size());
-                        if(!reasons.isEmpty()) exceptions << key + QStringLiteral(": ") + reasons.join(QStringLiteral("; "));
+                        if(!reasons.isEmpty()) note(key, reasons.join(QStringLiteral("; ")));
                     }
                     const auto restore = r.json.value("restored").toObject();
                     for (const QJsonValue &v : restore.value("errors").toArray()) {
                         const auto row = v.toObject();
-                        exceptions << row.value("key").toString() + QStringLiteral(": ") + row.value("error").toString();
+                        note(row.value("key").toString(), row.value("error").toString());
                     }
                     if (const int n = restore.value("deferred").toInt(); n > 0)
                         exceptions << QStringLiteral("%1 obsolete settings could not be restored yet").arg(n);
@@ -1442,9 +1447,11 @@ void SceneEngine::start(const Scene &s, const QString &expectedGeneration) {
                         stepDisposition_ = QStringLiteral("partial");
                         msg += QStringLiteral("\n") + exceptions.join(QLatin1Char('\n'));
                     }
+                    if (!irqNotes.isEmpty()) msg += QStringLiteral("\nIRQ steering not applied (not counted as a failure):\n") + irqNotes.join(QLatin1Char('\n'));
                     // The helper attempted the preset (per-key results) but some knobs did not stick: that is a partial
-                    // scene, already listed above — not a failed one (not every optimization knob matters).
-                    if (!r.ok() && !(r.reached && r.json.value("results").isArray() && !exceptions.isEmpty())) {
+                    // scene, already listed above — not a failed one (not every optimization knob matters). IRQ steering
+                    // alone never fails it either.
+                    if (!r.ok() && !(r.reached && r.json.value("results").isArray() && !(exceptions.isEmpty() && irqNotes.isEmpty()))) {
                         done(false, r.message() + QStringLiteral("\n") + msg);
                         return;
                     }
@@ -1459,7 +1466,7 @@ void SceneEngine::start(const Scene &s, const QString &expectedGeneration) {
             if (OptimizeTab::storeFresh(c.name, values)) { run(req); return; }
             // First use, or the preset changed since it was approved (a built-in updated with the
             // program): approve (store root-owned) once, then apply by name.
-            privileged::runUntilExit(privileged::helperPath("tune-admin-helper"),
+            privileged::runUntilExit(privileged::helperPath("tune-helper"),
                             QJsonObject{{"op", "preset_save"}, {"name", c.name}, {"values", values}}, this,
                             [run, req, done, name = c.name, values](const privileged::Result &r) {
                                 if (!r.ok()) { done(false, r.message()); return; }
@@ -1484,7 +1491,7 @@ void SceneEngine::start(const Scene &s, const QString &expectedGeneration) {
         });
     }
 
-    // 6. Keyboard lighting — as the user when the udev rule allows it, pkexec otherwise.
+    // 6. Keyboard lighting — as the user if the node is readable, pkexec otherwise.
     if (has(PlanStep::Spectrum)) {
         addStep("Lighting", [this, p = s.lightProfile, b = s.lightBrightness](Done done) {
             if (!lighting::present()) { stepDisposition_ = QStringLiteral("skipped"); done(true, "no Spectrum keyboard here; skipped"); return; }
@@ -1542,11 +1549,16 @@ void SceneEngine::start(const Scene &s, const QString &expectedGeneration) {
 
     // 7. User command (display mode, audio profile…) — as the user, no shell.
     if (has(PlanStep::Command)) {
-        addStep("Command", [cmd = s.command](Done done) {
+        // Same approval as the values root writes: the command line is approved when the user applies the scene
+        // from the unlocked window; automatic applies run it only if that exact line was approved before.
+        addStep("Command", [this, cmd = s.command](Done done) {
             QStringList argv = QProcess::splitCommand(cmd);
             if (argv.isEmpty()) { done(false, "empty command"); return; }
-            const QString prog = argv.takeFirst();
-            done(QProcess::startDetached(prog, argv), QStringLiteral("user command launch"));
+            helper("tune-helper", {{"op", "scene_command"}, {"command", cmd}}, [argv, done](bool ok, const QString &m) mutable {
+                if (!ok) { done(false, "command not approved: " + m); return; }
+                const QString prog = argv.takeFirst();
+                done(QProcess::startDetached(prog, argv), QStringLiteral("user command launch"));
+            });
         });
     }
 

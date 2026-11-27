@@ -121,6 +121,18 @@ Pil değişimi bu kayıtlardan belirlenemez.</translation></message>
     <context>
         <name>BootPage</name>
         <message>
+            <source>Clear highlight</source>
+            <translation>Vurgulamayı kaldır</translation>
+        </message>
+        <message>
+            <source>%1 boot(s) highlighted: %2</source>
+            <translation>%1 açılış vurgulandı: %2</translation>
+        </message>
+        <message>
+            <source>(%1 no longer in the recorded history)</source>
+            <translation>(%1 tanesi artık kayıtlı geçmişte yok)</translation>
+        </message>
+        <message>
             <source>Flight recorder:</source>
             <translation>Uçuş kaydedici:</translation>
         </message>
@@ -1580,6 +1592,14 @@ Bir adım geri alınamadı; "Lenovo logosuna dön" varsayılanı geri getirir.</
     <context>
         <name>HealthTab</name>
         <message>
+            <source>Diagnostics</source>
+            <translation>Tanılama</translation>
+        </message>
+        <message>
+            <source>What went wrong: every boot and its faults, this boot's evidence, and checks that compare boots and versions.</source>
+            <translation>Neyin ters gittiği: her açılış ve hataları, bu açılışın kanıtları ve açılışları ile sürümleri karşılaştıran denetimler.</translation>
+        </message>
+        <message>
             <source>Could not clear all saved log files.</source>
             <translation>Kayıtlı günlük dosyalarının tümü temizlenemedi.</translation>
         </message>
@@ -2566,6 +2586,14 @@ Kernel uptime: %2
     </context>
     <context>
         <name>HomeTab</name>
+        <message>
+            <source>Set or change unlock PIN…</source>
+            <translation>Kilit PIN'ini belirle veya değiştir…</translation>
+        </message>
+        <message>
+            <source>The 4-digit PIN that unlocks Centurion for writing new values. Setting it asks for the administrator password once.</source>
+            <translation>Centurion'ı yeni değer yazmak için açan 4 haneli PIN. Belirlemek yönetici parolasını bir kez sorar.</translation>
+        </message>
         <message><source>Colour theme. Changes take effect immediately without restarting.</source><translation>Renk teması. Değişiklikler yeniden başlatmadan hemen uygulanır.</translation></message>
         <message><source>Edit opaque RGB colors. Saving applies the palette immediately. Contrast is checked for the main text and panel surfaces.</source><translation>Opak RGB renklerini düzenleyin. Kaydettiğinizde palet hemen uygulanır. Ana metin ve panel yüzeylerinin kontrastı denetlenir.</translation></message>
         <message><source>Theme applied.</source><translation>Tema uygulandı.</translation></message>
@@ -4225,6 +4253,106 @@ Kapalı: artık klavyeyi izlemez; kendi parlaklığı buradan ayarlanamaz.</tran
     <context>
         <name>MainText</name>
         <message>
+            <location filename="work/gui/src/main.cpp" line="0"/>
+            <source>Important</source>
+            <translation>Önemli</translation>
+        </message>
+        <message>
+            <location filename="work/gui/src/main.cpp" line="0"/>
+            <source>Unlock PIN.</source>
+            <translation>Kilit PIN'i.</translation>
+        </message>
+        <message>
+            <location filename="work/gui/src/main.cpp" line="0"/>
+            <source>Writing new values (undervolt, curves, power limits, fan tables, kernel settings) now needs the window unlocked with a 4-digit PIN. Click "Locked" in the side bar and set your PIN once (the administrator password is asked for that). The window locks again when it is closed and after 10 minutes without use.</source>
+            <translation>Yeni değer yazmak (undervolt, eğriler, güç sınırları, fan tabloları, çekirdek ayarları) artık pencerenin 4 haneli PIN ile açılmasını gerektiriyor. Kenar çubuğundaki "Locked" düğmesine tıklayıp PIN'inizi bir kez belirleyin (bunun için yönetici parolası sorulur). Pencere kapatılınca ve 10 dakika kullanılmayınca yeniden kilitlenir.</translation>
+        </message>
+        <message>
+            <location filename="work/gui/src/main.cpp" line="0"/>
+            <source>Scenes and presets.</source>
+            <translation>Sahneler ve presetler.</translation>
+        </message>
+        <message>
+            <location filename="work/gui/src/main.cpp" line="0"/>
+            <source>Apply each scene that runs automatically (and each one with a command) once by hand from the unlocked window. Automatic runs only use values you approved. A saved preset is approved once the same way; then Optimize → Apply preset works while locked.</source>
+            <translation>Otomatik çalışan her sahneyi (ve komutu olan her sahneyi) kilidi açık pencereden bir kez elle uygulayın. Otomatik çalıştırmalar yalnızca onayladığınız değerleri kullanır. Kayıtlı bir preset de aynı şekilde bir kez onaylanır; sonrasında Optimize → Apply preset kilitliyken çalışır.</translation>
+        </message>
+        <message>
+            <location filename="work/gui/src/main.cpp" line="0"/>
+            <source>Keyboard lighting.</source>
+            <translation>Klavye aydınlatması.</translation>
+        </message>
+        <message>
+            <location filename="work/gui/src/main.cpp" line="0"/>
+            <source>The old udev rule is gone. Lighting now uses administrator rights: press "Use administrator rights" on the Lighting page, or tray → Keyboard Lighting → Enable. They end when the window closes, or one minute after the tray menu closes.</source>
+            <translation>Eski udev kuralı kaldırıldı. Aydınlatma artık yönetici haklarıyla çalışır: Lighting sayfasında "Use administrator rights"a basın ya da tepsi → Keyboard Lighting → Enable seçin. Haklar pencere kapanınca veya tepsi menüsü kapandıktan bir dakika sonra biter.</translation>
+        </message>
+        <message>
+            <location filename="work/gui/src/main.cpp" line="0"/>
+            <source>Update completely.</source>
+            <translation>Güncellemeyi tamamlayın.</translation>
+        </message>
+        <message>
+            <location filename="work/gui/src/main.cpp" line="0"/>
+            <source>Reinstall with your usual method (your package manager, or ./install.sh) so the new helpers and polkit rules are installed together. A half-updated install refuses writes.</source>
+            <translation>Yeni yardımcıların ve polkit kurallarının birlikte kurulması için her zamanki yöntemle (paket yöneticiniz veya ./install.sh) yeniden kurun. Yarım güncellenmiş kurulum yazma isteklerini reddeder.</translation>
+        </message>
+        <message>
+            <location filename="work/gui/src/main.cpp" line="0"/>
+            <source>Also changed</source>
+            <translation>Diğer değişiklikler</translation>
+        </message>
+        <message>
+            <location filename="work/gui/src/main.cpp" line="0"/>
+            <source>Password every time:</source>
+            <translation>Her seferinde parola:</translation>
+        </message>
+        <message>
+            <location filename="work/gui/src/main.cpp" line="0"/>
+            <source>boot preset, preset store, wake sources, system files (fstab, sysctl, modprobe, udev), kernel modules, driver options, firmware and backups.</source>
+            <translation>açılış preseti, preset deposu, uyandırma kaynakları, sistem dosyaları (fstab, sysctl, modprobe, udev), çekirdek modülleri, sürücü seçenekleri, donanım yazılımı ve yedekler.</translation>
+        </message>
+        <message>
+            <location filename="work/gui/src/main.cpp" line="0"/>
+            <source>Checks:</source>
+            <translation>Denetimler:</translation>
+        </message>
+        <message>
+            <location filename="work/gui/src/main.cpp" line="0"/>
+            <source>fstab edits are compared with your disks first; risky sysctl, modprobe and udev lines are refused.</source>
+            <translation>fstab düzenlemeleri önce disklerinizle karşılaştırılır; riskli sysctl, modprobe ve udev satırları reddedilir.</translation>
+        </message>
+        <message>
+            <location filename="work/gui/src/main.cpp" line="0"/>
+            <source>Intel undervolt:</source>
+            <translation>Intel undervolt:</translation>
+        </message>
+        <message>
+            <location filename="work/gui/src/main.cpp" line="0"/>
+            <source>never below -200 mV (-50 mV on Core Ultra).</source>
+            <translation>hiçbir zaman -200 mV'nin altına inmez (Core Ultra'da -50 mV).</translation>
+        </message>
+        <message>
+            <location filename="work/gui/src/main.cpp" line="0"/>
+            <source>Health reader:</source>
+            <translation>Sağlık okuyucusu:</translation>
+        </message>
+        <message>
+            <location filename="work/gui/src/main.cpp" line="0"/>
+            <source>asks for a password unless you are an administrator at the machine.</source>
+            <translation>makinenin başındaki bir yönetici değilseniz parola ister.</translation>
+        </message>
+        <message>
+            <location filename="work/gui/src/main.cpp" line="0"/>
+            <source>Centurion — what's new</source>
+            <translation>Centurion — yenilikler</translation>
+        </message>
+        <message>
+            <location filename="work/gui/src/main.cpp" line="0"/>
+            <source>Don't show again</source>
+            <translation>Bir daha gösterme</translation>
+        </message>
+        <message>
             <location filename="work/gui/src/main.cpp" line="243"/>
             <source>Centurion — model not supported</source>
             <translation>Centurion — model desteklenmiyor</translation>
@@ -4261,6 +4389,30 @@ Centurion bunda test edilmedi; bazı donanım yazılımı özellikleri eksik ola
     </context>
     <context>
         <name>MainWindow</name>
+        <message>
+            <source>CPU Curve</source>
+            <translation>İşlemci Eğrisi</translation>
+        </message>
+        <message>
+            <source>GPU Curve</source>
+            <translation>GPU Eğrisi</translation>
+        </message>
+        <message>
+            <source>Expand navigation</source>
+            <translation>Gezinme panelini genişlet</translation>
+        </message>
+        <message>
+            <source>Operations</source>
+            <translation>İşlemler</translation>
+        </message>
+        <message>
+            <source>Favorites</source>
+            <translation>Favoriler</translation>
+        </message>
+        <message>
+            <source>Set or change the PIN: the arrow next to this button.</source>
+            <translation>PIN'i belirlemek veya değiştirmek için: bu düğmenin yanındaki ok.</translation>
+        </message>
         <message>
             <source>Unsaved changes</source>
             <translation>Kaydedilmemiş değişiklikler</translation>
@@ -4369,8 +4521,8 @@ Centurion bunda test edilmedi; bazı donanım yazılımı özellikleri eksik ola
         </message>
         <message>
             <location filename="../src/mainwindow.cpp" line="460"/>
-            <source>«  Hide labels</source>
-            <translation>«  Etiketleri gizle</translation>
+            <source>Hide labels</source>
+            <translation>Etiketleri gizle</translation>
         </message>
         <message>
             <location filename="../src/mainwindow.cpp" line="484"/>
@@ -4584,20 +4736,20 @@ Centurion bunda test edilmedi; bazı donanım yazılımı özellikleri eksik ola
             <translation>Kullanılamayan favori: %1</translation>
         </message>
         <message>
-            <source>Change unlock PIN…</source>
-            <translation>Kilit PIN'ini değiştir…</translation>
+            <source>Set or change unlock PIN…</source>
+            <translation>Kilit PIN'ini belirle veya değiştir…</translation>
         </message>
         <message>
-            <source>🔓 Unlocked</source>
-            <translation>🔓 Kilit açık</translation>
+            <source>Unlocked</source>
+            <translation>Kilit açık</translation>
         </message>
         <message>
-            <source>🔒 Locked</source>
-            <translation>🔒 Kilitli</translation>
+            <source>Locked</source>
+            <translation>Kilitli</translation>
         </message>
         <message>
-            <source>New values can be written. Click to lock (closing the window locks too).</source>
-            <translation>Yeni değerler yazılabilir. Kilitlemek için tıklayın (pencereyi kapatmak da kilitler).</translation>
+            <source>New values can be written. Click to lock. The window locks when closed or after 10 minutes without input.</source>
+            <translation>Yeni değerler yazılabilir. Kilitlemek için tıklayın. Pencere kapatıldığında veya 10 dakika etkileşim olmadığında kilitlenir.</translation>
         </message>
         <message>
             <source>Writing new values (undervolt, curves, power limits, kernel tunables) needs the PIN. Click to unlock.</source>
@@ -7246,6 +7398,21 @@ Uyanma sonrası sayaç birimi: %3</translation></message>
     <context>
         <name>Tray</name>
         <message>
+            <location filename="work/gui/src/tray.cpp" line="0"/>
+            <source>Release administrator rights</source>
+            <translation>Yönetici haklarını bırak</translation>
+        </message>
+        <message>
+            <location filename="work/gui/src/tray.cpp" line="0"/>
+            <source>Enable administrator rights</source>
+            <translation>Yönetici haklarını etkinleştir</translation>
+        </message>
+        <message>
+            <location filename="work/gui/src/tray.cpp" line="0"/>
+            <source>Administrator rights are released one minute after this menu closes.</source>
+            <translation>Yönetici hakları bu menü kapandıktan bir dakika sonra bırakılır.</translation>
+        </message>
+        <message>
             <location filename="work/gui/src/tray.cpp" line="83"/>
             <source>GPU curve guard</source>
             <translation>GPU eğri koruması</translation>
@@ -7463,8 +7630,8 @@ Bunu değiştirmek için Sağlık → Bildirimler…</translation>
         </message>
         <message>
             <location filename="work/gui/src/tray.cpp" line="265"/>
-            <source>CPU Curve (Ryzen)</source>
-            <translation>İşlemci Eğrisi (Ryzen)</translation>
+            <source>CPU Curve</source>
+            <translation>İşlemci Eğrisi</translation>
         </message>
         <message>
             <location filename="work/gui/src/tray.cpp" line="267"/>
@@ -7519,8 +7686,8 @@ Bunu değiştirmek için Sağlık → Bildirimler…</translation>
         </message>
         <message>
             <location filename="work/gui/src/tray.cpp" line="307"/>
-            <source>GPU Curve (NVIDIA)</source>
-            <translation>GPU Eğrisi (NVIDIA)</translation>
+            <source>GPU Curve</source>
+            <translation>GPU Eğrisi</translation>
         </message>
         <message>
             <location filename="work/gui/src/tray.cpp" line="315"/>
@@ -9547,8 +9714,8 @@ Hedef: %2</translation>
             </translation>
         </message>
         <message>
-            <source>not readable on this machine</source>
-            <translation>bu makinede okunamıyor</translation>
+            <source>No timings recorded for this run</source>
+            <translation>Bu test için zamanlama kaydedilmemiş</translation>
         </message>
         <message>
             <source>%1 MT/s</source>
@@ -19352,6 +19519,10 @@ Günlük okunamıyor, bu yüzden onu tutmak hiçbir şeyi korumaz ve yalnızca b
     <context>
         <name>diag</name>
         <message>
+            <source>Show these %1 boot(s) in Boot History.</source>
+            <translation>Bu %1 açılışı Açılış geçmişi'nde göster.</translation>
+        </message>
+        <message>
             <source>The requested EDID bytes are missing or invalid.</source>
             <translation>İstenen EDID baytları eksik veya geçersiz.</translation>
         </message>
@@ -19908,8 +20079,8 @@ Günlük okunamıyor, bu yüzden onu tutmak hiçbir şeyi korumaz ve yalnızca b
             <translation>%3 ile %2 temiz saatte %1 hata, %6 ile %5 saatte %4 (şans eseri olasılığı: %7).</translation>
         </message>
         <message>
-            <source>Events &amp; alerts lists them by kind; Curve stability shows whether they follow a curve rather than the update.</source>
-            <translation>Olaylar ve uyarılar bunları türlerine göre listeler; Eğri kararlılığı güncellemeyi değil bir eğriyi izleyip izlemediklerini gösterir.</translation>
+            <source>Click Review to see the boots these faults happened in; Curve stability shows whether they follow a curve rather than the update.</source>
+            <translation>Bu hataların yaşandığı açılışları görmek için İncele'ye tıkla; Eğri kararlılığı güncellemeyi değil bir eğriyi izleyip izlemediklerini gösterir.</translation>
         </message>
         <message>
             <source>No version change was followed by a clear rise in unclean shutdowns or faults</source>
@@ -25102,6 +25273,10 @@ Satırlar sıralamadan bağımsız karşılaştırılır; değişen satırlar si
     <context>
         <name>AdvancedHealthPage</name>
         <message>
+            <source>More checks</source>
+            <translation>Diğer denetimler</translation>
+        </message>
+        <message>
             <source>Investigations read what Centurion already records (boot history, saved kernel logs, sleep log, CO Search records) and say what it means. Nothing runs until you press Run; no hardware setting is changed.</source>
             <translation>İncelemeler, Centurion'ın zaten tuttuğu kayıtları (açılış geçmişi, kaydedilen çekirdek günlükleri, uyku günlüğü, CO Arama kayıtları) okur ve ne anlama geldiklerini söyler. Çalıştır'a basmadan hiçbir şey çalışmaz; hiçbir donanım ayarı değiştirilmez.</translation>
         </message>
@@ -25359,6 +25534,10 @@ Satırlar sıralamadan bağımsız karşılaştırılır; değişen satırlar si
     <context>
         <name>KernelParamsPage</name>
         <message>
+            <source>Unlock Centurion to read kernel settings.</source>
+            <translation>Çekirdek ayarlarını okumak için Centurion'un kilidini açın.</translation>
+        </message>
+        <message>
             <source>Live values of kernel settings, including the root-only debugfs ones (read-only: nothing is changed here). The last column names the Centurion knob that sets a row, if any.</source>
             <translation>Çekirdek ayarlarının canlı değerleri; yalnızca root'un okuyabildiği debugfs ayarları dahil (salt okunur: burada hiçbir şey değiştirilmez). Son sütun, bir satırı ayarlayan Centurion ayarını (varsa) gösterir.</translation>
         </message>
@@ -25614,6 +25793,14 @@ Satırlar sıralamadan bağımsız karşılaştırılır; değişen satırlar si
     </context>
     <context>
         <name>PipewireConfigDialog</name>
+        <message>
+            <source>Centurion is locked: the settings below are read-only. Unlock it with your PIN to change them.</source>
+            <translation>Centurion kilitli: aşağıdaki ayarlar salt okunur. Değiştirmek için PIN'inizle kilidi açın.</translation>
+        </message>
+        <message>
+            <source>Unlock…</source>
+            <translation>Kilidi aç…</translation>
+        </message>
         <message>
             <location filename="../src/pipewireconfig.cpp" line="202"/>
             <source>PipeWire Settings</source>
@@ -26086,6 +26273,11 @@ Satırlar sıralamadan bağımsız karşılaştırılır; değişen satırlar si
     </context>
     <context>
         <name>LightingTab</name>
+        <message>
+            <location filename="work/gui/src/lightingtab.cpp" line="0"/>
+            <source>Administrator rights released. Use them again to read or change the keyboard.</source>
+            <translation>Yönetici hakları bırakıldı. Klavyeyi okumak veya değiştirmek için yeniden kullanın.</translation>
+        </message>
         <message>
             <source>Undo</source>
             <translation>Geri Al</translation>
@@ -28200,4 +28392,31 @@ Set a 4-digit PIN now? The administrator password is asked once to store it.</so
             <translation>İki PIN birbirinden farklı.</translation>
         </message>
 </context>
+    <context>
+        <name>DiagnosticsPage</name>
+        <message>
+            <source>Boot History</source>
+            <translation>Açılış geçmişi</translation>
+        </message>
+        <message>
+            <source>This Boot</source>
+            <translation>Bu açılış</translation>
+        </message>
+        <message>
+            <source>Findings</source>
+            <translation>Bulgular</translation>
+        </message>
+        <message>
+            <source>Every boot: how it ended, its kernel events and faults, the curves in effect, crash records and patterns.</source>
+            <translation>Her açılış: nasıl bittiği, çekirdek olayları ve hataları, geçerli eğriler, çökme kayıtları ve örüntüler.</translation>
+        </message>
+        <message>
+            <source>The running boot's own evidence: machine checks, PCIe errors, NVIDIA Xid, F2FS failures and radio firmware faults.</source>
+            <translation>Çalışan açılışın kendi kanıtı: makine denetimleri, PCIe hataları, NVIDIA Xid, F2FS hataları ve telsiz yazılımı arızaları.</translation>
+        </message>
+        <message>
+            <source>Checks that compare boots and versions (did an update make things worse?), plus NVMe, USB, sleep and GPU memory checks.</source>
+            <translation>Açılışları ve sürümleri karşılaştıran denetimler (güncelleme işleri kötüleştirdi mi?) ile NVMe, USB, uyku ve GPU belleği denetimleri.</translation>
+        </message>
+    </context>
 </TS>

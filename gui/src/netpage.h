@@ -38,6 +38,7 @@ class QLineEdit;
 class QListWidget;
 class QListWidget;
 class QMenu;
+class QStackedLayout;
 class QNetworkAccessManager;
 class QTabWidget;
 class QTimer;
@@ -81,6 +82,8 @@ private:
     /// A Wi-Fi request for the adapter picked in the list (empty: the helper takes the first).
     QJsonObject wifiReq(const char *op) const;
     void subscriptions();
+    /// Locked: only the unlock prompt is shown and nothing is read or polled. Unlocked: the page works as usual.
+    void applyLock();
     void fillTraffic();
     /// Open ports: listening sockets from the last connection snapshot, with who can reach them.
     void showPorts();
@@ -107,6 +110,7 @@ private:
     QLabel *status_, *connInfo_;
     QCheckBox *guard_, *lan_, *logConns_, *accounting_, *listening_;
     QTabWidget *tabs_;
+    QStackedLayout *stack_ = nullptr;
     QLabel *wifiText_;                        // Wi-Fi tab: link and station counters
     class QComboBox *wifiIface_ = nullptr;    // adapter picker, shown only when there are several
     QLabel *wifiIfaceLabel_ = nullptr, *wifiHw_ = nullptr, *wifiNetInfo_ = nullptr;

@@ -443,7 +443,10 @@ void BackupPage::pruneAuto(const QString &dir, int keep) {
     for (const QFileInfo &fi : QDir(dir).entryInfoList(QDir::Files, QDir::Time))
         if (isConfigName(fi.fileName()) && fi.fileName().endsWith(QLatin1String("-auto.tar.gz"))) autos << fi;
     for (int i = keep; i < autos.size(); ++i)
-        if (QFile::remove(autos.at(i).absoluteFilePath())) log(QStringLiteral("removed old automatic backup ") + autos.at(i).fileName(), theme::MUTED);
+        if (QFile::remove(autos.at(i).absoluteFilePath())) {
+            QFile::remove(autos.at(i).absoluteFilePath() + QStringLiteral(".RESTORE.txt"));  // its hand-restore guide
+            log(QStringLiteral("removed old automatic backup ") + autos.at(i).fileName(), theme::MUTED);
+        }
 }
 
 void BackupPage::autoTick() {

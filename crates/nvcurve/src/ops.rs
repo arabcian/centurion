@@ -191,6 +191,50 @@ pub fn reset_gpu_curve_verified(gpu_index: usize) -> Result<String, String> {
     }
 }
 
+/// What a profile changes besides the curve and the core cap, put back: the NVML memory offset (P0, what
+/// profiles set), the VRAM clock lock and the power limit (to NVML's default). Every step is attempted;
+/// returns (done, errors). PowerMizer and the other P-states are not a profile's doing and stay.
+fn reset_profile_extras(idx: u32) -> (Vec<String>, Vec<String>) {
+    let (mut done, mut errs) = (Vec::new(), Vec::new());
+    match limits::get_clock_offsets(idx).mem_offset_mhz {
+        Some(0) => {}
+        Some(cur) => match limits::set_clock_offsets(None, Some(0), idx) {
+            Ok(()) => match limits::get_clock_offsets(idx).mem_offset_mhz {
+                Some(0) => done.push(format!("memory offset {cur:+} MHz → 0")),
+                now => errs.push(format!("memory offset read-back {now:?} after reset, expected 0")),
+            },
+            Err(e) => errs.push(format!("memory offset: {e}")),
+        },
+        None => errs.push("memory offset could not be read; not reset".into()),
+    }
+    match limits::reset_mem_locked_clocks(idx) {
+        Ok(()) => done.push("memory clock lock released".into()),
+        Err(e) if e.contains("Not Supported") || e.contains("not found") => {}
+        Err(e) => errs.push(format!("memory clock lock: {e}")),
+    }
+    let pl = limits::get_power_limit(idx);
+    if let (Some(cur), Some(def)) = (pl.power_limit_w, pl.default_power_limit_w) {
+        if cur != def {
+            match limits::set_power_limit(def, idx) {
+                Ok(()) => done.push(format!("power limit {cur} W → {def} W (default)")),
+                Err(e) => errs.push(format!("power limit: {e}")),
+            }
+        }
+    }
+    (done, errs)
+}
+
+/// End of a trial apply ("reverts to stock in N s"): the curve and core cap (`reset_gpu_curve_verified`)
+/// AND what the profile set around them. The extras are attempted even if the curve reset failed.
+pub fn reset_trial_verified(gpu_index: usize) -> Result<String, String> {
+    gpu::require_single_profile_target(gpu_index)?;
+    let curve = reset_gpu_curve_verified(gpu_index);
+    let (done, mut errs) = reset_profile_extras(gpu_index as u32);
+    let mut msg = match &curve { Ok(m) => m.clone(), Err(e) => { errs.insert(0, e.clone()); String::new() } };
+    for d in done { msg.push_str("; "); msg.push_str(&d); }
+    if errs.is_empty() { Ok(msg) } else { Err(errs.join("; ")) }
+}
+
 /// Everything back to stock, in the order LACT's reset uses too: curve
 /// offsets (every point, both domains), NVML offsets in every P-state, core
 /// and memory clock locks, power limit, PowerMizer → Auto. Each step is

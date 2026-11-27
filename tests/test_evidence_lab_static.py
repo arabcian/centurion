@@ -31,7 +31,7 @@ class EvidenceLabIntegration(unittest.TestCase):
             self.assertIn('code == QStringLiteral("'+code+'")) return er::'+fn,dispatch)
         for field in ['aer','xid_cases','mce','f2fs_events','radio_events']:
             self.assertIn('scan.value(QStringLiteral("'+field+'"))',reports)
-        self.assertIn('new HealthEvidencePage',src('gui/src/healthtab.cpp'))
+        self.assertIn('new HealthEvidencePage',src('gui/src/diagnosticspage.cpp'))  # a tab of Diagnostics
         self.assertIn('helperPath(QStringLiteral("health-reader"))',dispatch)
 
     def test_classification_and_gui_trigger_both_updated(self):
