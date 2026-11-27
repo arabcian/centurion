@@ -419,7 +419,13 @@ void OptimizeTab::buildUi() {
     conflictRow->addWidget(conflictBanner_, 1);
     auto *sourceInspector = new QPushButton(tr("Sources & Conflicts…"));
     connect(sourceInspector, &QPushButton::clicked, this, &OptimizeTab::sourceWorkspace);
-    conflictRow->addWidget(sourceInspector); root->addLayout(conflictRow);
+    if (theme::experimentalEnabled()) {
+        // The conflict text gets its own line; the inspector joins the Wi-Fi row below (one row, not two).
+        sourceInspector->setText(sourceInspector->text().replace(QLatin1Char('&'), QLatin1String("&&")));  // no mnemonic
+        root->addLayout(conflictRow);
+    } else {
+        conflictRow->addWidget(sourceInspector); root->addLayout(conflictRow);
+    }
 
     // Drift banner: hidden until DriftWatch finds a setting changed behind Centurion's back.
     driftBar_ = new QFrame;
@@ -453,7 +459,15 @@ void OptimizeTab::buildUi() {
         "Power management of Wi-Fi and Bluetooth chips (802.11 power save, PCIe ASPM, runtime PM, USB autosuspend) has been\n"
         "unreliable on Linux for many years, and several drivers and firmwares (notably some MediaTek adapters) misbehave when\n"
         "the radio or its link is put to sleep. The price is a little more idle power."));
-    root->addWidget(wirelessLock_);
+    if (theme::experimentalEnabled()) {
+        auto *wirelessRow = new QHBoxLayout;
+        wirelessRow->addWidget(wirelessLock_);
+        wirelessRow->addStretch(1);
+        wirelessRow->addWidget(sourceInspector);
+        root->addLayout(wirelessRow);
+    } else {
+        root->addWidget(wirelessLock_);
+    }
     connect(wirelessLock_, &QCheckBox::toggled, this, [this](bool on) {
         auto revert = [this, on] { const QSignalBlocker b(wirelessLock_); wirelessLock_->setChecked(!on); };
         if (busy_) { revert(); return; }
@@ -1024,12 +1038,15 @@ void OptimizeTab::buildUi() {
         pl->setColumnStretch(0, 1);
 
         auto *presetLine = new QHBoxLayout;
-        presetLine->setSpacing(5);
+        presetLine->setSpacing(theme::GAP_XS);
         for (QWidget *w : {static_cast<QWidget *>(presetCombo_),
                            static_cast<QWidget *>(bLoad), static_cast<QWidget *>(applySaved), static_cast<QWidget *>(bSave),
-                           static_cast<QWidget *>(bDel), static_cast<QWidget *>(gameBtn_),
+                           static_cast<QWidget *>(gameBtn_),
                            static_cast<QWidget *>(bootBtn_), static_cast<QWidget *>(bootClear_)})
             presetLine->addWidget(w);
+        // Destructive last, set apart from the safe actions.
+        presetLine->addSpacing(theme::GAP_M);
+        presetLine->addWidget(bDel);
         presetLine->setStretch(0, 1);
         pl->addLayout(presetLine, 0, 0);
         auto *presetInfo = new QHBoxLayout;
