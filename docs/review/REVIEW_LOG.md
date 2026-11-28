@@ -7,8 +7,9 @@ Python static testleri kaynakta metin arıyor (≈441 assert); bunları kıran b
 
 ## Durum
 
-- Aşama 0 (envanter + plan): TAMAMLANDI, **onay bekleniyor**.
-- Kod değişikliği: yok.
+- Aşama 0: TAMAMLANDI (onaylandı 2026-11-28).
+- Aşama 1 (helpers ortak altyapı): TAMAMLANDI — 1 düzeltme uygulandı, 5 kırmızı çizgi bulgusu onay bekliyor.
+- Sıradaki: Aşama 2 (tune.rs + tune-helper + tune-admin/profile-helper + power/pmtable). Önce F1.2'yi orada ele al.
 
 ## Başlangıç durumu (2026-11-28, commit 123c3c7, dal experimental)
 
@@ -106,16 +107,46 @@ Her aşama tek oturuma sığacak boyutta tutuldu (~4–8k satır).
 
 ## Bekleyen onaylar
 
-1. Aşama 0 planının onayı.
+Kırmızı çizgi alanında; uygulanmadı, onay bekliyor:
+
+- **F1.3** `unlock.rs:309` `unhex`: `&s[i..i + 2]` bayt dilimi; pin.json'daki `salt`/`hash` çok baytlı bir karakter içerirse
+  panic (release'de abort) — yetki yolunda. Dosya root/0600, yalnızca `set_pin` yazıyor → kullanıcı tetikleyemez.
+  Öneri: `if !s.is_ascii() { return Vec::new(); }` (dönüş zaten "boş = geçersiz" anlamında). Risk: düşük.
+- **F1.4** `unlock.rs:105` `Failures::load`: `as_u64() as u32` kesmesi; 2^32 ve üstü sayaç küçük bir sayıya döner ve
+  kilit sıfırlanmış olur. Yalnızca root yazıyor. Öneri: `defaults.rs:87`'deki gibi `.min(u32::MAX as u64)`. Risk: düşük.
+- **F1.5** `unlock.rs:73` `write_private`: rename'den sonra dizin fsync yok (`lib.rs::write_root_file` yapıyor).
+  Yanlış PIN'den hemen sonra elektrik kesilirse sayaç güncellemesi kaybolabilir → bir deneme fazladan. Öneri: dizin fsync. Risk: düşük.
+- **F1.6** `distro.rs:276` `command_lines`: rpm/pacman/xbps-query backup-helper içinde root olarak çalışıyor, yalnızca
+  `is_file()` kontrolüyle; `lib.rs::modprobe` aynı iş için `trusted_path()` kullanıyor. Normal sistemde istismar edilemez
+  (/usr/bin root'un). Ayrıca NixOS dalı ortamdaki `USER`'ı yola koyuyor (lib.rs başlığı "ortama güvenilmez" diyor);
+  `USER=..` → `/etc/profiles/bin` listelenir, zararsız salt okuma. Öneri: `trusted_path` filtresi. Risk: düşük.
+- **F1.7** `lib.rs:384` `FdLock`: ham fd tutuyor, dosyayı ödünç almıyor. Bir çağıran File'ı kilitten önce düşürürse Drop,
+  yeniden kullanılmış bir fd üzerinde `LOCK_UN` yapar. Bugünkü 4 kullanım (intel_uv, memory_spd, wlog, legion_wmi) doğru
+  sırada. Öneri: ömür parametresi (`FdLock<'a>` + PhantomData) ile derleyiciye zorlatmak. MSR/acpi_call serileştirmesi →
+  kırmızı çizgi; davranış değişmez. Risk: düşük.
 
 ## Okunan dosyalar
 
-(henüz yok)
+Aşama 1 (tamamı satır satır): `crates/centurion-helpers/src/` lib.rs, field.rs, par.rs, wlog.rs, defaults.rs,
+machine.rs, unlock.rs, distro.rs.
 
 ## Bulgular
 
-(henüz yok)
+### Aşama 1 — helpers ortak altyapı
+
+| # | Yer | Sorun / senaryo | Durum | Risk | Kırmızı çizgi |
+|---|---|---|---|---|---|
+| F1.1 | `distro.rs:291-294` | Zaman aşımında `kill(); wait()` sınırsız bekliyor ve okuyucu thread join ediliyordu. D durumunda takılan sorgu (asılı diskte rpm) ya da stdout'u tutan alt süreç → watchdog'u olmayan backup-helper (gözetimsiz otomatik yapılandırma yedeği) sonsuza kadar asılı. | **Düzeltildi** `b358b67`: `kill_reap` + başarısızlıkta join yok. Önce kıran test eklendi (5 s → 0,2 s). | düşük | hayır |
+| F1.2 | `defaults.rs:93` `record` (çağıranlar `bin/tune-helper.rs:1162`, `:1219`) | outcomes.json kilitsiz oku-değiştir-yaz; iki çağrı da tune kilidinin dışında. Apply ile guard rollback eşzamanlıysa bir rollback sayımı kaybolur → "iki rollback adayı emekliye ayırır" emniyeti gecikir. | **Aşama 2'ye ertelendi** (çağıranlar orada; düzeltme yeri oraya bağlı) | orta | hayır (emniyeti sıkılaştırır) |
+| F1.3–F1.7 | unlock.rs, distro.rs, lib.rs | bkz. "Bekleyen onaylar" | onay bekliyor | düşük | evet |
+
+Sorunsuz bulunanlar: field.rs, par.rs, wlog.rs, machine.rs (tüm dilimleme ASCII sınırlarında, panik yolu yok),
+lib.rs'in geri kalanı (`write_root_file` atomik: O_EXCL tmp + fsync + rename + dizin fsync; `read_root_bytes` kontrolleri
+açılmış fd üzerinde → TOCTOU yok).
+
+Doğrulama (b358b67): cargo test 727 geçti / 0 kaldı / 9 ignored · clippy temiz · GUI build + ctest 77/77 · python 45/45.
 
 ## Ölü kod adayları
 
-(henüz yok)
+Aşama 1: yok (tüm `pub` öğelerin çağıranı var).
+
