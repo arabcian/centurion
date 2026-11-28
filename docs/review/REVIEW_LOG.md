@@ -15,7 +15,9 @@ Python static testleri kaynakta metin arıyor (≈441 assert); bunları kıran b
 - Aşama 3 (nvcurve): TAMAMLANDI — F3.1–F3.4 onayla uygulandı (2026-11-28), F3.5 yalnızca bilgi.
 - Aşama 4 (Intel undervolt): TAMAMLANDI — F4.1–F4.3 onayla uygulandı (2026-11-28), F4.4 yalnızca bilgi.
 - Aşama 5 bağlam için ikiye bölündü. 5a (Ryzen/SMU, Legion WMI/EC, fwattr): OKUNDU — kod değişikliği yok, F5.1 onay bekliyor.
-- Sıradaki: Aşama 5b (amdgpu + helper, dgpu, nvreg, cooling, fan_table, lighting + helper, centurion-spectrum).
+- Aşama 5b (amdgpu, dgpu, nvreg, cooling, fan_table, lighting, centurion-spectrum): OKUNDU — kod değişikliği yok,
+  F5.4 onay bekliyor, F5.5–F5.8 yalnızca bilgi.
+- Sıradaki: Aşama 6a (autotune).
 
 ## Başlangıç durumu (2026-11-28, commit 123c3c7, dal experimental)
 
@@ -128,6 +130,16 @@ Aşama 5a (kırmızı çizgi, uygulanmadı):
 - **F5.3 (bilgi)** `legion_wmi.rs:530/1183` `record_verified` / `record_unsupported` kilitsiz RMW; iki eşzamanlı status
   çağrısında bir "doğrulandı" kaydı düşebilir, bir sonraki status yeniden kaydeder (kendi kendini onarıyor).
 
+Aşama 5b (kırmızı çizgi, uygulanmadı):
+
+- **F5.4 (düşük)** `centurion-spectrum/src/lib.rs:135` `Rgb::parse_hex`, uzunluğu (6) denetleyip `u32::from_str_radix`'e
+  veriyor; o da baştaki `+` işaretini kabul ediyor: `"+12345"` → `Rgb(0x01,0x23,0x45)`. Ayrıca `trim_start_matches('#')`
+  birden çok `#`'i atıyor (`"##ff0000"` geçerli). lighting-helper'ın renk doğrulaması bunu kullanıyor (`lighting.rs:75`,
+  `:150`, stream karesi `:272`), bu yüzden helper girdi doğrulaması sayıldı. Zararı yok (her durumda geçerli bir renk
+  çıkıyor), ama doğrulama belgelenen `rrggbb`'den gevşek. Öneri (sıkılaştırma): uzunluk denetiminin yanına
+  `s.bytes().all(|b| b.is_ascii_hexdigit())`, önce bunu yakalayan bir test. GUI `#` önekli renk gönderiyorsa tek `#`
+  kabul edilmeye devam eder.
+
 ## Okunan dosyalar
 
 Aşama 1 (tamamı satır satır): `crates/centurion-helpers/src/` lib.rs, field.rs, par.rs, wlog.rs, defaults.rs,
@@ -144,6 +156,9 @@ Aşama 4: `intel_uv.rs`, `intel_uv_daemon.rs`, `intel_uv_search.rs`, `bin/intel-
 
 Aşama 5a: `smu.rs`, `ryzen_mon.rs`, `bin/ryzen-co-helper.rs`, `legion_wmi.rs`, `bin/legion-profile-helper.rs`,
 `bin/legion-firmware-helper.rs`, `bin/legion-gpu-helper.rs`, `bin/legion-ec-sensors.rs`, `bin/fwattr-helper.rs` (tamamı).
+
+Aşama 5b: `amdgpu.rs`, `bin/amdgpu-helper.rs`, `dgpu.rs`, `nvreg.rs`, `cooling.rs`, `fan_table.rs`, `lighting.rs`,
+`bin/lighting-helper.rs`, `crates/centurion-spectrum/src/lib.rs`, `lamparray.rs` (tamamı).
 
 ## Bulgular
 
@@ -227,6 +242,25 @@ CO toplu yazma önce tümünü doğruluyor, hata olursa geri alıyor ve durumu (
 Legion WMI yazmaları "önce oku, yaz, geri oku" ve firmware-güvenli sırada (`fw_write_order`); fwattr-helper yolu biçim +
 Lenovo + kanonik konum + canlı aralık ile denetliyor, toplu yazmada orijinalleri yakalayıp geri alıyor.
 
+### Aşama 5b — amdgpu, dGPU, nvreg, cooling, fan tablosu, aydınlatma
+
+Uygulanan değişiklik yok. F5.4 "Bekleyen onaylar"da; aşağıdakiler yalnızca bilgi (öneri yok ya da kırmızı çizgi):
+
+| # | Yer | Gözlem | Risk | Kırmızı çizgi |
+|---|-----|--------|------|---------------|
+| F5.5 | `dgpu.rs:118-131` `in_child` | Süre dolunca çocuğu `SIGKILL`'liyor ama `waitpid` ile toplamıyor; helper çıkana dek zombi kalır. D durumundaki (modül boşaltma/PCI rescan) bir çocuk zaten toplanamaz; helper kısa ömürlü. Değişiklik önerilmez. | yok | evet (sürücü/PCI yolu) |
+| F5.6 | `cooling.rs:382` `load_fanmax` | `load_runs` (`:363`) 4 MiB sınırı koyuyor, `load_fanmax` koymuyor. Kullanıcının kendi dosyası, kullanıcı süreci okuyor; yalnızca tutarsızlık. | çok düşük | hayır |
+| F5.7 | `nvreg.rs:83` `Kind::Dwords` | İzin verilen karakterlerde `,` var ama yalnızca anahtar adında işe yarıyor (değer `num()`'dan geçmeli). NVIDIA'nın `RegistryDwords` söz diziminde `,` gerekip gerekmediğinden emin değilim — soru, değişiklik önerilmez. | yok | evet (doğrulama) |
+| F5.8 | `centurion-spectrum/src/lib.rs:520` `Device::open` | `flock(LOCK_EX)` süresiz bekliyor; takılan bir eş (ör. gamemode) lighting-helper'ı bekletir, lighting-helper'da watchdog yok. Tüm kullanıcılar kısa ömürlü olduğu için pratikte sorun değil. | düşük | hayır |
+
+Sorunsuz bulunanlar: amdgpu `apply` her değeri yazmadan önce doğruluyor (OD tablosu sürücünün aralığıyla + 4000 MHz /
+1300 mV akıl sınırı, voltaj ofseti yalnızca aşağı, fan eğrisi düşmeyen + sıcak noktada asgari fan), hata olursa en
+yeniden eskiye geri alıp neyin geri alınamadığını söylüyor. dGPU `release` önce sahipleri buluyor, durdurduğu
+servisleri ret durumunda geri başlatıyor; sürücü/PCI adımları süreli çocukta. nvreg yalnızca `modinfo`'nun bildirdiği,
+tek anlamlı seçenekleri yazıyor; tip aralığı dışı ya da metin/dizi tipleri reddediliyor. fan_table her yazmayı geri
+okuyup uyuşmazlıkta eski tabloyu geri yüklüyor; son üç adım için termal taban var. Spectrum yalnızca 960 baytlık feature
+raporu bildiren ve D1'e yanıt veren arayüzle konuşuyor; LampArray akışı sinyal/çıkışta otonom moda dönüyor.
+
 ## Ölü kod adayları
 
 Aşama 1: yok (tüm `pub` öğelerin çağıranı var).
@@ -240,4 +274,10 @@ Aşama 4: yok.
 
 Aşama 5a: `bin/legion-gpu-helper.rs:116` kalibrasyon listesindeki `set_gpu_mode` / `set_fw_oc` girdileri (bu binary
 o op'ları sunmuyor). Silinmedi.
+
+Aşama 5b: `centurion-spectrum` kütüphanesinin çalışma alanında tüketicisi olmayan `pub` API'si (yalnızca kendi
+testleri kullanıyor ya da hiç kullanılmıyor): `EffectType::{name, needs_host, has_speed, has_direction, has_clockwise,
+has_colors}`, `Effect::kind`, `per_key_effects`, `KeyMap::{at, unique, zone_of, zone, spans}`, `Zone`, `is_perimeter`,
+`PERIMETER_REAR/FRONT`, `Device::restore_effects_raw` (hiç çağrılmıyor). GUI C++ olduğu için bunları kullanamaz; eski bir
+Rust GUI'nin ya da yedekleme özelliğinin kalıntısı olabilir. Silinmedi.
 
