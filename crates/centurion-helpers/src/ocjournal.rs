@@ -13,7 +13,7 @@
 //!
 //! A reboot resets every curve (the SMU, the MSRs and the NVIDIA driver forget them), so an interval
 //! ends at the next line of its kind or at the end of its boot. The same format is written by
-//! nvcurve-root-helper (crates/nvcurve/src/ocjournal.rs). Never fatal: a failed write is ignored.
+//! nvcurve-root-helper (through crates/nvcurve/src/ocjournal.rs). Never fatal: a failed write is ignored.
 
 use std::io::Write;
 use std::os::unix::fs::OpenOptionsExt;
