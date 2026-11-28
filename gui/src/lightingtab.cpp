@@ -33,6 +33,9 @@
 #include <QVBoxLayout>
 #include <QSplitter>
 #include <QScrollArea>
+#include <QStackedWidget>
+#include <QTabWidget>
+#include <QResizeEvent>
 #include <cmath>
 
 using namespace lighting;
@@ -340,6 +343,54 @@ void KeyboardView::keyPressEvent(QKeyEvent *e) {
 
 // ── tab ─────────────────────────────────────────────────────────────────────
 
+namespace {
+class LightingWorkspace final : public QStackedWidget {
+public:
+    LightingWorkspace(QSplitter *splitter, QGroupBox *keyboard, QScrollArea *effects,
+                      const QString &effectsTitle)
+        : splitter_(splitter), keyboard_(keyboard), effects_(effects), effectsTitle_(effectsTitle),
+          tabs_(new QTabWidget) {
+        tabs_->setDocumentMode(true);
+        addWidget(splitter_);
+        addWidget(tabs_);
+    }
+
+protected:
+    void resizeEvent(QResizeEvent *event) override {
+        QStackedWidget::resizeEvent(event);
+        const int minimumWidth = keyboard_->minimumSizeHint().width()
+                               + effects_->widget()->minimumSizeHint().width()
+                               + splitter_->handleWidth() + theme::GAP_M;
+        if (width() < minimumWidth && currentWidget() == splitter_) {
+            wideSizes_ = splitter_->sizes();
+            tabs_->addTab(keyboard_, keyboard_->title());
+            tabs_->addTab(effects_, effectsTitle_);
+            tabs_->setCurrentIndex(compactTab_);
+            setCurrentWidget(tabs_);
+        } else if (width() >= minimumWidth && currentWidget() == tabs_) {
+            compactTab_ = tabs_->currentIndex();
+            tabs_->removeTab(1);
+            tabs_->removeTab(0);
+            splitter_->addWidget(keyboard_);
+            splitter_->addWidget(effects_);
+            splitter_->setStretchFactor(0, 7);
+            splitter_->setStretchFactor(1, 3);
+            splitter_->setSizes(wideSizes_);
+            setCurrentWidget(splitter_);
+        }
+    }
+
+private:
+    QSplitter *splitter_;
+    QGroupBox *keyboard_;
+    QScrollArea *effects_;
+    QString effectsTitle_;
+    QTabWidget *tabs_;
+    QList<int> wideSizes_;
+    int compactTab_ = 0;
+};
+} // namespace
+
 LightingTab::LightingTab(QWidget *parent) : QWidget(parent) {
     buildUi();
     brightDebounce_ = new QTimer(this);
@@ -547,7 +598,7 @@ void LightingTab::buildUi() {
         work->setStretchFactor(1, 3);
         work->setSizes({750, 350});
         experimentalui::rememberSplitter(work, QStringLiteral("ui/studio/lighting_split"));
-        root->addWidget(work, 1);
+        root->addWidget(new LightingWorkspace(work, kbBox, effectsScroll, fxBox->title()), 1);
         delete mid; // no widgets are owned by the unused layout in Experimental
     } else {
         mid->addWidget(fxBox);
