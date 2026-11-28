@@ -14,7 +14,8 @@ Python static testleri kaynakta metin arıyor (≈441 assert); bunları kıran b
 - Kullanıcı talimatı: aşamalar arasında onay beklemeden devam et; kırmızı çizgi bulguları yine raporlanır, uygulanmaz.
 - Aşama 3 (nvcurve): TAMAMLANDI — F3.1–F3.4 onayla uygulandı (2026-11-28), F3.5 yalnızca bilgi.
 - Aşama 4 (Intel undervolt): TAMAMLANDI — F4.1–F4.3 onayla uygulandı (2026-11-28), F4.4 yalnızca bilgi.
-- Sıradaki: Aşama 5 (Ryzen/SMU, Legion WMI/EC, fwattr, amdgpu, dgpu, nvreg, cooling/fan_table, lighting, spectrum).
+- Aşama 5 bağlam için ikiye bölündü. 5a (Ryzen/SMU, Legion WMI/EC, fwattr): OKUNDU — kod değişikliği yok, F5.1 onay bekliyor.
+- Sıradaki: Aşama 5b (amdgpu + helper, dgpu, nvreg, cooling, fan_table, lighting + helper, centurion-spectrum).
 
 ## Başlangıç durumu (2026-11-28, commit 123c3c7, dal experimental)
 
@@ -112,7 +113,20 @@ Her aşama tek oturuma sığacak boyutta tutuldu (~4–8k satır).
 
 ## Bekleyen onaylar
 
-Şu an yok.
+Aşama 5a (kırmızı çizgi, uygulanmadı):
+
+- **F5.1 (düşük-orta)** Kalibrasyon kilidi yanlış binary'de: `bin/legion-gpu-helper.rs:116` `refuse_during_calibration`
+  listesinde `set_gpu_mode` ve `set_fw_oc` var, ama bu binary onları hiç sunmuyor (`moved()` ile reddediyor). Bu op'ları
+  sunan `bin/legion-firmware-helper.rs` ise kalibrasyon kilidini hiç denetlemiyor. Çoğu bir sonraki açılışta etkili (GPU
+  modu, firmware OC, boot logosu, AOD), ama zorlanmış `set_igpu_mode` dGPU'yu hemen ayırıyor → çalışan bir kalibrasyonun
+  ölçtüğü güç bağlamını değiştirebilir. Öneri: legion-firmware-helper'da en azından `set_igpu_mode` için
+  `refuse_during_calibration()`; legion-gpu-helper listesindeki ölü iki girdi zararsız (kaldırma önerilmez, raporlandı).
+  Ayrıca legion-firmware-helper'da `watchdog` yok (diğer helper'larda 120 sn); bilinçli olabilir (ESP'ye logo yazımı) — soru.
+- **F5.2 (bilgi)** `smu.rs:172` `Guard(libc::c_int)`: F1.7'de `FdLock` için düzeltilen ham-fd kalıbının aynısı; bugünkü
+  kullanım (dosyalar `Bus`/`DriverMb` içinde, guard'dan uzun yaşıyor) doğru. `lock_bounded` sınırlı beklediği için
+  `FdLock`'a geçirilemiyor; önerim yok, yalnızca not.
+- **F5.3 (bilgi)** `legion_wmi.rs:530/1183` `record_verified` / `record_unsupported` kilitsiz RMW; iki eşzamanlı status
+  çağrısında bir "doğrulandı" kaydı düşebilir, bir sonraki status yeniden kaydeder (kendi kendini onarıyor).
 
 ## Okunan dosyalar
 
@@ -127,6 +141,9 @@ Aşama 3: `crates/nvcurve` tamamı (27 dosya, 5 863 satır) satır satır.
 
 Aşama 4: `intel_uv.rs`, `intel_uv_daemon.rs`, `intel_uv_search.rs`, `bin/intel-uv-helper.rs`,
 `bin/centurion-intel-uv.rs` (tamamı); karşılaştırma için `stream.rs` ve `bin/ryzen-co-helper.rs:198-245`.
+
+Aşama 5a: `smu.rs`, `ryzen_mon.rs`, `bin/ryzen-co-helper.rs`, `legion_wmi.rs`, `bin/legion-profile-helper.rs`,
+`bin/legion-firmware-helper.rs`, `bin/legion-gpu-helper.rs`, `bin/legion-ec-sensors.rs`, `bin/fwattr-helper.rs` (tamamı).
 
 ## Bulgular
 
@@ -201,6 +218,15 @@ mailbox işlemleri msr fd'sinde flock ile serileştiriliyor; profil ayrıştırm
 (cTDP 0..2 olduğu için `["nominal","down","up"][level]` indekslemesi güvenli). MMIO açılışı hizalama, sayfa sınırı ve
 /proc/iomem "System RAM" denetimi yapıyor.
 
+### Aşama 5a — Ryzen/SMU, Legion WMI/EC, fwattr
+
+Uygulanan değişiklik yok (bulguların hepsi kırmızı çizgi alanında; F5.1–F5.3 "Bekleyen onaylar"da).
+
+Sorunsuz bulunanlar: SMU mailbox'ı yalnızca sabit tablodan opcode gönderiyor, 1 sn sınırlı yoklama ve self-test var;
+CO toplu yazma önce tümünü doğruluyor, hata olursa geri alıyor ve durumu ("original/stock/unknown") dürüstçe bildiriyor.
+Legion WMI yazmaları "önce oku, yaz, geri oku" ve firmware-güvenli sırada (`fw_write_order`); fwattr-helper yolu biçim +
+Lenovo + kanonik konum + canlı aralık ile denetliyor, toplu yazmada orijinalleri yakalayıp geri alıyor.
+
 ## Ölü kod adayları
 
 Aşama 1: yok (tüm `pub` öğelerin çağıranı var).
@@ -211,4 +237,7 @@ Aşama 3: yok. (Kopyalar F3.2 ve F3.4'te; bunlar ölü değil, tekrar.) Not: `nv
 modül yorumunda kopuk boş `//!` satırları var (yalnızca biçim, dokunulmadı).
 
 Aşama 4: yok.
+
+Aşama 5a: `bin/legion-gpu-helper.rs:116` kalibrasyon listesindeki `set_gpu_mode` / `set_fw_oc` girdileri (bu binary
+o op'ları sunmuyor). Silinmedi.
 
