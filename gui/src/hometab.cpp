@@ -957,6 +957,8 @@ QGroupBox *HomeTab::buildLiveBox() {
     g->setHorizontalSpacing(10);
     g->setVerticalSpacing(6);
 
+    const bool experimental = theme::experimentalEnabled();
+    const QFont numeric = experimental ? QFontDatabase::systemFont(QFontDatabase::FixedFont) : QFont();
     using Metric = sysinfo::PresentationMetric;
     struct Spec { QString name; std::function<sysinfo::Opt()> getter; std::optional<Metric> metric; };
     const QList<Spec> spec{
@@ -970,6 +972,7 @@ QGroupBox *HomeTab::buildLiveBox() {
             gpuLiveKey_ = muted(name);
             gpuLiveValue_ = new QLabel;
             gpuLiveValue_->setProperty("role", "value");
+            if (experimental) gpuLiveValue_->setFont(numeric);
             gpuLiveValue_->setWordWrap(true);
             gpuLiveKey_->hide();
             gpuLiveValue_->hide();
@@ -982,6 +985,7 @@ QGroupBox *HomeTab::buildLiveBox() {
         key->setWordWrap(false);
         auto *val = new QLabel(QStringLiteral("—"));
         val->setProperty("role", "value");  // a readout: brighter and heavier than its label
+        if (experimental) val->setFont(numeric);
         val->setWordWrap(true);
         g->addWidget(key, row, 0, Qt::AlignTop);
         g->addWidget(val, row++, 1);
@@ -994,6 +998,7 @@ QGroupBox *HomeTab::buildLiveBox() {
     ecFansKey_ = muted(tr("Fans (EC)"));
     ecFansValue_ = new QLabel;
     ecFansValue_->setProperty("role", "value");
+    if (experimental) ecFansValue_->setFont(numeric);
     chargerKey_ = muted(tr("Charger"));
     chargerValue_ = new QLabel;
     chargerValue_->setWordWrap(true);
