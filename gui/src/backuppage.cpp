@@ -43,6 +43,8 @@
 #include <QSet>
 #include <QSaveFile>
 #include <QScrollBar>
+#include <QScrollArea>
+#include <QTabWidget>
 #include <QItemSelectionModel>
 #include <QShowEvent>
 #include <QSpinBox>
@@ -202,7 +204,8 @@ BackupPage::BackupPage(QWidget *parent) : QWidget(parent) {
     autoNote_->setProperty("role", "muted");
     ar->addWidget(autoNote_, 1);
     cv->addLayout(ar);
-    v->addWidget(cb);
+    const bool experimental = theme::experimentalEnabled();
+    if (!experimental) v->addWidget(cb);
 
     // ── System image ──
     auto *sb = new QGroupBox(QStringLiteral("System Image (tar of /)"));
@@ -351,7 +354,21 @@ BackupPage::BackupPage(QWidget *parent) : QWidget(parent) {
     remindNote_->setProperty("role", "muted");
     rm->addWidget(remindNote_, 1);
     sv->addLayout(rm);
-    v->addWidget(sb, 3);
+    if (experimental) {
+        auto *forms = new QTabWidget;
+        forms->setDocumentMode(true);
+        for (auto *form : {cb, sb}) {
+            auto *scroll = new QScrollArea;
+            scroll->setFrameShape(QFrame::NoFrame);
+            scroll->setWidgetResizable(true);
+            scroll->setWidget(form);
+            forms->addTab(scroll, form->title());
+            form->setTitle({});
+        }
+        v->addWidget(forms, 3);
+    } else {
+        v->addWidget(sb, 3);
+    }
 
     // ── Archives ──
     list_ = new QTreeWidget;
@@ -398,6 +415,8 @@ BackupPage::BackupPage(QWidget *parent) : QWidget(parent) {
     log_->setFont(QFontDatabase::systemFont(QFontDatabase::FixedFont));
     log_->setMinimumHeight(fontMetrics().lineSpacing() * 4 + 12);
     log_->setMaximumHeight(fontMetrics().lineSpacing() * 12 + 24);
+    if (experimental)
+        log_->setFixedHeight(fontMetrics().lineSpacing() * 3 + theme::GAP_S);
     v->addWidget(log_);
 
     for (QLineEdit *e : {cfgDir_, sysDir_})
