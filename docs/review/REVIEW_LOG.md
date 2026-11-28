@@ -8,8 +8,10 @@ Python static testleri kaynakta metin arıyor (≈441 assert); bunları kıran b
 ## Durum
 
 - Aşama 0: TAMAMLANDI (onaylandı 2026-11-28).
-- Aşama 1 (helpers ortak altyapı): TAMAMLANDI — 1 düzeltme, F1.3–F1.7 onay bekliyor.
-- Aşama 2 (tune.rs, tune-helper, tune-admin/profile-helper, power, pmtable): TAMAMLANDI — 1 düzeltme, F2.2–F2.5 onay bekliyor, F1.2 karar bekliyor.
+- Aşama 1 (helpers ortak altyapı): TAMAMLANDI — tüm bulgular uygulandı.
+- Aşama 2 (tune.rs, tune-helper, power, pmtable): TAMAMLANDI — tüm bulgular uygulandı (F2.5 yalnızca bilgi).
+- Onaylı düzeltmeler (2026-11-28, "onay bekleyenleri düzelt"): F1.2–F1.7, F2.2–F2.4 uygulandı.
+- Kullanıcı talimatı: aşamalar arasında onay beklemeden devam et; kırmızı çizgi bulguları yine raporlanır, uygulanmaz.
 - Sıradaki: Aşama 3 (nvcurve crate'i).
 
 ## Başlangıç durumu (2026-11-28, commit 123c3c7, dal experimental)
@@ -108,30 +110,7 @@ Her aşama tek oturuma sığacak boyutta tutuldu (~4–8k satır).
 
 ## Bekleyen onaylar
 
-Aşama 2 (kırmızı çizgi veya karar gerektiren; uygulanmadı):
-
-- **F1.2 (orta, kırmızı çizgi değil — karar gerekiyor)** `defaults::record` kilitsiz oku-değiştir-yaz. Doğrulandı:
-  `bin/tune-helper.rs:1162` (`guard_after`, `locked()` döndükten sonra) ve `:1219` (guard, `lock()` kapsamı bittikten sonra)
-  tune kilidinin dışında. Ayrıca aynı süreçte iki yazma `write_root_file`'ın pid'li tmp adında çakışır. Senaryo: guard
-  rollback'i ile yeni bir apply aynı anda → bir `rollbacks` sayımı kaybolur → "iki rollback adayı emekliye ayırır"
-  emniyeti bir tur gecikir. Öneri (a): `record` içinde `helper_lock("outcomes")`; öneri (b): iki çağrıyı tune kilidi
-  içine taşımak. Test engeli: `record` sabit /var/lib yolu ve `read_root_file`'ın uid 0 şartı yüzünden CI'da (root değil)
-  test edilemez; test için yol parametresi gibi yeni bir dikiş gerekir.
-- **F2.2** `bin/tune-helper.rs:607` (apply yolu): her scoped-storage dosyası için tüm baseline girdileri
-  `canonicalize()` ediliyor → O(plan × baseline) syscall, tune kilidi altında. Öneri: döngüden önce bir kez kanonik küme.
-  Yazma öncesi zamanlamayı (hızlanarak) değiştirir → kırmızı çizgi. Risk: düşük.
-- **F2.3** `bin/tune-helper.rs:1179` `spawn_guard`: `fork()` sonrası çocukta `read_dir`, bellek ayırma, `sleep` gibi
-  async-signal-safe olmayan işler. Fork anında başka bir thread (ör. `run_tool`'un okuyucu thread'i) malloc kilidi tutuyorsa
-  çocuk kilitlenebilir → guard hiç rollback yapmaz. Olasılık düşük. Öneri: fork yerine kendini `exec` eden ayrı bir alt
-  komut. Guard/rollback mantığı → kırmızı çizgi. Risk: orta (değişiklik büyük).
-- **F2.4** `tune.rs:3580` `forked_firmware_write`: çocuk yalnızca 0..4096 fd'lerini kapatıyor; RLIMIT_NOFILE daha yüksekse
-  üstteki fd'ler asılı bir yazmada açık kalır. Öneri: `close_range(3, ~0, 0)` ya da rlimit'e kadar. Firmware yazma yolu →
-  kırmızı çizgi. Risk: düşük.
-- **F2.5 (bilgi)** `tune.rs:1597` `powerd_pids`: süreç yalnızca `comm == "nvidia-powerd"` ile tanınıyor; kullanıcı kendi
-  sürecini bu adla çalıştırırsa root ona SIGTERM/SIGKILL gönderir (kendi süreci) ve exe yolunu işarete yazar;
-  `powerd_resume` `trusted_path` ile korunduğu için root olarak çalıştırılmaz. Değişiklik önerisi yok.
-
-Aşama 1'den hâlâ bekleyen: F1.3, F1.4, F1.5, F1.6, F1.7 (ayrıntılar aşağıda, Aşama 1 bulguları).
+Şu an yok.
 
 ## Okunan dosyalar
 
@@ -150,11 +129,11 @@ tekrarı, Int aralığı min≤max ve her satırda Target alanı mekanik olarak 
 |---|---|---|---|---|---|
 | F1.1 | `distro.rs:291-294` | Zaman aşımında `kill(); wait()` sınırsız bekliyor ve okuyucu thread join ediliyordu. D durumunda takılan sorgu (asılı diskte rpm) ya da stdout'u tutan alt süreç → watchdog'u olmayan backup-helper (gözetimsiz otomatik yapılandırma yedeği) sonsuza kadar asılı. | **Düzeltildi** `b358b67`: `kill_reap` + başarısızlıkta join yok. Önce kıran test eklendi (5 s → 0,2 s). | düşük | hayır |
 | F1.2 | `defaults.rs:93` `record` (çağıranlar `bin/tune-helper.rs:1162`, `:1219`) | outcomes.json kilitsiz oku-değiştir-yaz; iki çağrı da tune kilidinin dışında. Apply ile guard rollback eşzamanlıysa bir rollback sayımı kaybolur → "iki rollback adayı emekliye ayırır" emniyeti gecikir. | **Aşama 2'ye ertelendi** (çağıranlar orada; düzeltme yeri oraya bağlı) | orta | hayır (emniyeti sıkılaştırır) |
-| F1.3 | `unlock.rs:309` `unhex` | `&s[i..i + 2]` bayt dilimi; pin.json'da çok baytlı karakter → yetki yolunda panic (abort). Dosya root/0600, yalnızca `set_pin` yazıyor. Öneri: `is_ascii()` kontrolü. | onay bekliyor | düşük | evet |
-| F1.4 | `unlock.rs:105` `Failures::load` | `as u32` kesmesi: ≥2^32 sayaç küçük sayıya döner → kilit sıfırlanır. Yalnızca root yazıyor. Öneri: `.min(u32::MAX as u64)`. | onay bekliyor | düşük | evet |
-| F1.5 | `unlock.rs:73` `write_private` | rename sonrası dizin fsync yok; elektrik kesilirse sayaç güncellemesi kaybolabilir (bir fazla deneme). Öneri: dizin fsync. | onay bekliyor | düşük | evet |
-| F1.6 | `distro.rs:276` `command_lines` | rpm/pacman/xbps-query root olarak yalnızca `is_file()` ile çalışıyor (`modprobe` `trusted_path` kullanıyor); NixOS dalı ortamdaki `USER`'ı yola koyuyor (zararsız salt okuma). Öneri: `trusted_path` filtresi. | onay bekliyor | düşük | evet |
-| F1.7 | `lib.rs:384` `FdLock` | Ham fd tutuyor, File'ı ödünç almıyor; ters sırada bırakılırsa yeniden kullanılmış fd'ye `LOCK_UN`. Bugünkü 4 kullanım doğru. Öneri: `FdLock<'a>` + PhantomData. | onay bekliyor | düşük | evet |
+| F1.3 | `unlock.rs:309` `unhex` | `&s[i..i + 2]` bayt dilimi; pin.json'da çok baytlı karakter → yetki yolunda panic (abort). Dosya root/0600, yalnızca `set_pin` yazıyor. Öneri: `is_ascii()` kontrolü. | **Düzeltildi** `aaa6f01` | düşük | evet |
+| F1.4 | `unlock.rs:105` `Failures::load` | `as u32` kesmesi: ≥2^32 sayaç küçük sayıya döner → kilit sıfırlanır. Yalnızca root yazıyor. Öneri: `.min(u32::MAX as u64)`. | **Düzeltildi** `9f8cb18` | düşük | evet |
+| F1.5 | `unlock.rs:73` `write_private` | rename sonrası dizin fsync yok; elektrik kesilirse sayaç güncellemesi kaybolabilir (bir fazla deneme). Öneri: dizin fsync. | **Düzeltildi** `d9f5ca5` | düşük | evet |
+| F1.6 | `distro.rs:276` `command_lines` | rpm/pacman/xbps-query root olarak yalnızca `is_file()` ile çalışıyor (`modprobe` `trusted_path` kullanıyor); NixOS dalı ortamdaki `USER`'ı yola koyuyor (zararsız salt okuma). Öneri: `trusted_path` filtresi. | **Düzeltildi** `a590cdf` | düşük | evet |
+| F1.7 | `lib.rs:384` `FdLock` | Ham fd tutuyor, File'ı ödünç almıyor; ters sırada bırakılırsa yeniden kullanılmış fd'ye `LOCK_UN`. Bugünkü 4 kullanım doğru. Öneri: `FdLock<'a>` + PhantomData. | **Düzeltildi** `538f2b9` | düşük | evet |
 
 Sorunsuz bulunanlar: field.rs, par.rs, wlog.rs, machine.rs (tüm dilimleme ASCII sınırlarında, panik yolu yok),
 lib.rs'in geri kalanı (`write_root_file` atomik: O_EXCL tmp + fsync + rename + dizin fsync; `read_root_bytes` kontrolleri
@@ -167,7 +146,11 @@ Doğrulama (b358b67): cargo test 727 geçti / 0 kaldı / 9 ignored · clippy tem
 | # | Yer | Sorun / senaryo | Durum | Risk | Kırmızı çizgi |
 |---|---|---|---|---|---|
 | F2.1 | `tune.rs:3821` `describe_with` | `irqbalance_running()` her IRQ satırında (4 satır) tekrar → her light describe'da (GUI 4 sn'de bir) 4 tam /proc taraması (süreç başına bir `comm` okuması), artı `optimization_conflicts` içinde bir tane. | **Düzeltildi** `fc31e8b`: döngüden önce bir kez. Çıktı aynı. | düşük | hayır (salt okuma) |
-| F1.2, F2.2–F2.5 | | bkz. "Bekleyen onaylar" | onay/karar bekliyor | | |
+| F1.2 | `defaults.rs:93` `record` | Kilitsiz oku-değiştir-yaz; iki çağıran da tune kilidi dışında → eşzamanlı apply + guard rollback'te bir sayım kaybolabilir. | **Düzeltildi** `7103c33`: `helper_lock("outcomes")` (alınamazsa eskisi gibi). Test yok: sabit /var/lib yolu + uid 0 şartı CI'da kurulamıyor. | orta | hayır |
+| F2.2 | `bin/tune-helper.rs:607` | Her storage dosyası için tüm baseline `canonicalize()` → O(plan×baseline) syscall, kilit altında. | **Düzeltildi** `712d795`: satır başına bir kez takma ad kümesi; koşul eşdeğer. | düşük | evet (onaylı) |
+| F2.3 | `bin/tune-helper.rs` `spawn_guard` | Çok thread'li süreçte `fork()` sonrası async-signal-safe olmayan guard gövdesi → kilitlenme, rollback olmaz. | **Düzeltildi** `553837d`: guard aynı binary'nin yeniden başlatılması (stdin'de iş, iç op `guard_run`; pkexec ile ve root olmayan çağrıda reddedilir). Gövde aynı. Uçtan uca deneme bu ortamda yapılamadı (`init()` Lenovo olmayan makineyi reddediyor). | orta | evet (onaylı) |
+| F2.4 | `tune.rs:3580` `forked_firmware_write` | Çocuk yalnızca 0..4096 fd'lerini kapatıyordu. | **Düzeltildi** `bdde6b6`: `close_range`, eski döngü yedek. Kıran test (fd 5000) eklendi. | düşük | evet (onaylı) |
+| F2.5 | `tune.rs:1597` `powerd_pids` | comm ile tanıma; `trusted_path` kötüye kullanımı engelliyor. | Bilgi — değişiklik yok | — | evet |
 
 Sorunsuz bulunanlar / gözlemler: `power.rs`, `pmtable.rs` (dilimler `get` ile sınırlı). tune.rs'te dilimlemeler ASCII
 önekten sonra (`ratio:`, `K`/`M`, `nvme`) → panik yolu yok. `describe` light modu yavaş satırları (iw/ethtool/hdparm/PCI
@@ -175,6 +158,7 @@ config) zaten atlıyor. `write_checked_inner`'ın /proc izin listesi ve sysfs ka
 okuma doğrulaması "dosyayı son yazan satır" kuralıyla doğru.
 
 Doğrulama (fc31e8b): cargo test 727 / 0 / 9 ignored · clippy temiz · GUI build + ctest 77/77 · python 45/45.
+Onaylı düzeltmelerden sonra (553837d): cargo test 733 / 0 / 9 ignored · clippy temiz · ctest 77/77 · python 45/45.
 
 ## Ölü kod adayları
 
