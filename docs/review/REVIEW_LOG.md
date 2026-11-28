@@ -18,7 +18,8 @@ Python static testleri kaynakta metin arıyor (≈441 assert); bunları kıran b
 - Aşama 5b (amdgpu, dgpu, nvreg, cooling, fan_table, lighting, centurion-spectrum): OKUNDU — kod değişikliği yok,
   F5.4 onay bekliyor, F5.5–F5.8 yalnızca bilgi.
 - Aşama 6a (autotune): TAMAMLANDI — F6.1 uygulandı (yalnızca doc yorumu), F6.2–F6.4 yalnızca bilgi.
-- Sıradaki: Aşama 6b (calib + centurion-calibrate + calctx + calsim).
+- Aşama 6b (calib, centurion-calibrate, calctx, calsim): OKUNDU — kod değişikliği yok, F6.5–F6.7 rapor.
+- Sıradaki: Aşama 6c (bench, stability, cooltest, gamemode, boot*).
 
 ## Başlangıç durumu (2026-11-28, commit 123c3c7, dal experimental)
 
@@ -165,6 +166,13 @@ Aşama 6a: `bin/centurion-autotune.rs` (tamamı); `autotune.rs` kod kısmı 1–
 fikstür ve doğrulamalar için tarandı). Kural gövdelerindeki sezgisel katsayılar (etki vektörleri) alan kararı olduğu için
 doğruluk açısından değerlendirilmedi; panik, indeksleme, bölme ve dosya G/Ç kalıplarına bakıldı.
 
+Aşama 6b: `calctx.rs` (tamamı satır satır). `calib.rs`: dosya G/Ç ve depolar (imza yükle/kaydet/yedek, fit deposu,
+ölçek önbelleği, 1180–1290, 1425–1470, 1778–1850) satır satır; istatistik kodu panik/indeksleme kalıplarıyla tarandı.
+`bin/centurion-calibrate.rs` (3229 satır kod, büyük kısmı kırmızı çizgi: ayar yazma + günlük + geri yükleme): başlık,
+`--field` içe aktarma ve imza yazma yolları okundu, geri kalanı risk kalıplarıyla tarandı (ölçüm/geri alma mantığı
+değiştirilmeyeceği için ayrıntılı değerlendirilmedi). `calsim.rs` yalnızca test (centurion-calibrate'in test modülü):
+gözden geçirildi.
+
 ## Bulgular
 
 ### Aşama 1 — helpers ortak altyapı
@@ -280,6 +288,20 @@ dosyası okuyan kök yolu (`read_regular`) O_NOFOLLOW + O_NONBLOCK + fstat ile k
 `write_root_file` kullanıyor. Çıkan her ön ayar kendi `audit`'inden geçiriliyor; 2^53 üstü tamsayılar atılıyor.
 `guard_verdict` (geri alma kuralı) ve `audit` / `enforce` kırmızı çizgi alanı: yalnızca okundu.
 
+### Aşama 6b — kalibrasyon
+
+| # | Yer | Sorun | Senaryo | Öneri | Risk | Kırmızı çizgi |
+|---|-----|-------|---------|-------|------|---------------|
+| F6.5 | `bin/centurion-calibrate.rs:2476`, `:2484` | Eski `--oat` yolu imzayı `write_root_file` ile doğrudan yazıyor; `Calibration::save()`'i (ilk yazımda `.bak` yedeği, `MAX_FILE`'a yaklaşınca eski satırları kırpma) atlıyor. Ana tasarım yolu (`:3031`) `save()` kullanıyor. | `--oat` sonrası bozulan bir imza için yedek yok; dosya 8 MiB'ı aşarsa okuyucu "hasarlı" der. `--oat` yalnızca kayıt ekliyor (değer başına 10), bu yüzden pratikte küçük. | İki çağrıyı `cal.save()` ile değiştirmek. Sabit `/var/lib` yoluna kök olarak yazdığı için birim testi yazılamıyor; uygulanmadı. | düşük | hayır |
+| F6.6 | `overview.rs:114` `state_dir` (ayrıca `cooling.rs:332`) | `XDG_STATE_HOME` ve `HOME` yoksa `/tmp/centurion`'a düşüyor. `autotune_req` tune-helper'dan kök olarak da çalışıyor (`autotune` op'u) ve oraya `write_replace` ile yazıyor. pkexec `HOME=/root` koyduğu için bugün güvenli. `HOME`'suz bir kök servis bu yolu çağırırsa dünya-yazılabilir `/tmp` altında sembolik bağlantıya açık olur. | Bugünkü çağıranlarda ulaşılamıyor. | Aşama 9'da (overview) `state_dir` çağıranları kök bağlamı açısından denetlenecek. | bilgi | hayır |
+| F6.7 | `calctx.rs:124-157` `home_of` / `uid_of` / `ids_of` | Ad **ya da** uid ile eşleşiyor, ilk satır kazanıyor; adı başka bir hesabın uid'i olan bir kullanıcı ("1000") yanlış hesaba çözülebilir. | Çok nadir yapılandırma. | Değişiklik önerilmez; not. | çok düşük | hayır |
+
+Sorunsuz bulunanlar: sahne dosyası kök tarafından kullanıcının fsuid'iyle çözülüyor (`FsAs`), O_NOFOLLOW + açık fd
+üzerinde sahip/boyut denetimiyle okunuyor; açılış zamanlaması sahnenin güç kısmını onay anında köke kopyalıyor.
+`apply_scene_power` önce tam orijinali günlüğe yazıyor, eksik bir orijinalde hiç yazmıyor; geri yükleme hata olursa
+günlüğü tutuyor. `--field` kullanıcı günlüklerini O_NOFOLLOW + sahip denetimiyle okuyor. İmza yüklemesi bozuk dosyayı
+"başka donanım"dan ayırıyor ve yedeğe düşüyor.
+
 ## Ölü kod adayları
 
 Aşama 1: yok (tüm `pub` öğelerin çağıranı var).
@@ -301,4 +323,6 @@ has_colors}`, `Effect::kind`, `per_key_effects`, `KeyMap::{at, unique, zone_of, 
 Rust GUI'nin ya da yedekleme özelliğinin kalıntısı olabilir. Silinmedi.
 
 Aşama 6a: yok (`explore` yalnızca `#[cfg(test)]`, bilinçli).
+
+Aşama 6b: yok (`calsim.rs` `#![allow(dead_code)]` ile test simülatörü, bilinçli).
 
