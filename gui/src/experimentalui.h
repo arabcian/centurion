@@ -27,7 +27,7 @@
 namespace experimentalui {
 // Purpose-drawn navigation symbols: consistent 18 px line icons in all
 // palettes, without icon-font or KDE-theme dependencies. Active pages use
-// the same accent as primary actions; icons have no semantic side effects.
+// the same neutral stroke; the navigation button carries the selection marker.
 inline QIcon navigationIcon(const QString &page) {
     const auto draw = [&page](const char *color) {
         QPixmap px(64, 64);
@@ -41,11 +41,11 @@ inline QIcon navigationIcon(const QString &page) {
         p.setBrush(Qt::NoBrush);
         if (page == QLatin1String("Ryzen Curve") || page == QLatin1String("AMD GPU")) {
             p.setPen(Qt::NoPen);
-            p.setBrush(QColor("#ED1C24"));
+            p.setBrush(QColor(QString::fromLatin1(color)));
             p.drawPolygon(QPolygonF{{2,2},{16,2},{16,16},{12,12},{12,6},{6,6}});
             p.drawPolygon(QPolygonF{{2,7},{6,11},{6,12},{10,12},{14,16},{2,16}});
         } else if (page == QLatin1String("NVIDIA Curve")) {
-            p.setPen(QPen(QColor("#76B900"), 1.7));
+            p.setPen(QPen(QColor(QString::fromLatin1(color)), 1.7));
             QPainterPath eye;
             eye.moveTo(1,9);
             eye.cubicTo(5,2,12,2,17,9);
@@ -120,14 +120,7 @@ inline QIcon navigationIcon(const QString &page) {
         p.end();
         return px;
     };
-    const char *color = theme::ACCENT;
-    if (page == "Intel Undervolt") color = "#007DC3";
-    else if (page == "Health" || page == "GPU") color = theme::OK;
-    else if (page == "Memory" || page == "Scenes") color = theme::PURPLE;
-    else if (page == "Firmware" || page == "Optimizations") color = theme::INFO;
-    else if (page == "Lighting") color = theme::WARN;
-    QIcon icon(draw(color));
-    return icon;
+    return QIcon(draw(theme::FG_DIM));
 }
 
 // Magnifier for the top bar's search field and the navigator, same stroke as the page icons.

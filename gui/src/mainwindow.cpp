@@ -525,7 +525,7 @@ void MainWindow::installExperimentalShell() {
     auto *top = new QFrame;
     top->setObjectName(QStringLiteral("expTopbar"));
     auto *topRow = new QHBoxLayout(top);
-    topRow->setContentsMargins(theme::GAP_L, theme::GAP_XS + 2, theme::GAP_M, theme::GAP_XS + 2);
+    topRow->setContentsMargins(theme::GAP_L, theme::GAP_XS, theme::GAP_M, theme::GAP_XS);
     topRow->setSpacing(theme::GAP_S);
     auto *titles = new QVBoxLayout;
     titles->setSpacing(0);
@@ -693,7 +693,7 @@ void MainWindow::rebuildExperimentalNavigation() {
         button->setEnabled(tabs_->isTabEnabled(i));
         button->setCursor(Qt::PointingHandCursor);
         button->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
-        button->setMinimumHeight(std::max(32, button->fontMetrics().height() + 12));
+        button->setMinimumHeight(std::max(28, button->fontMetrics().height() + theme::GAP_S));
         button->setAccessibleName(label);
         QWidget *page = tabs_->widget(i);
         connect(button, &QPushButton::clicked, this, [this, page] {
@@ -730,8 +730,8 @@ void MainWindow::setExperimentalCollapsed(bool collapsed) {
     lockButton_->setProperty("collapsed", collapsed);
     lockButton_->style()->unpolish(lockButton_);
     lockButton_->style()->polish(lockButton_);
-    const QSize iconSize = collapsed ? QSize(32, 32) : QSize(21, 21);
-    lockButton_->setFixedHeight(collapsed ? 44 : RAIL_BOX_HEIGHT);
+    const QSize iconSize = collapsed ? QSize(24, 24) : QSize(20, 20);
+    lockButton_->setFixedHeight(collapsed ? 36 : RAIL_BOX_HEIGHT);
     lockButton_->setIconSize(collapsed ? iconSize : QSize(22, 22));
     expToggle_->setText(collapsed ? QString() : tr("Hide labels"));
     expToggle_->setAccessibleName(collapsed ? tr("Expand navigation") : tr("Hide labels"));
@@ -741,14 +741,14 @@ void MainWindow::setExperimentalCollapsed(bool collapsed) {
     expOperations_->setIcon(experimentalui::navigationIcon(QStringLiteral("Operations")));
     expFavorites_->setIcon(experimentalui::navigationIcon(QStringLiteral("Favorites")));
     for (QPushButton *box : {expToggle_, expOperations_, expFavorites_}) {
-        box->setFixedHeight(collapsed ? 44 : RAIL_BOX_HEIGHT);
+        box->setFixedHeight(collapsed ? 36 : RAIL_BOX_HEIGHT);
         box->setIconSize(iconSize);
         box->setProperty("collapsed", collapsed);
         box->style()->unpolish(box);
         box->style()->polish(box);
     }
     for (auto *button : std::as_const(expNavButtons_)) {
-        button->setMinimumHeight(std::max(collapsed ? 44 : 32, button->fontMetrics().height() + 12));
+        button->setMinimumHeight(std::max(collapsed ? 36 : 28, button->fontMetrics().height() + theme::GAP_S));
         button->setIconSize(iconSize);
         button->setText(collapsed ? QString() : button->property("navLabel").toString());
         button->setProperty("collapsed", collapsed);
