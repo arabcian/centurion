@@ -81,6 +81,10 @@ fn write_private(p: &str, body: &[u8]) -> Result<(), String> {
         let _ = std::fs::remove_file(&tmp);
         return Err(format!("{p}: {e}"));
     }
+    // The rename itself survives a power cut only once the directory is synced (as in write_root_file).
+    if let Some(dir) = std::path::Path::new(p).parent() {
+        if let Ok(d) = std::fs::OpenOptions::new().read(true).custom_flags(libc::O_DIRECTORY | libc::O_CLOEXEC).open(dir) { let _ = d.sync_all(); }
+    }
     Ok(())
 }
 
