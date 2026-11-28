@@ -30,6 +30,10 @@ fn run() -> Value {
     let req = match read_request(2 * bootlogo::MAX_LOGO + 4096) { Ok(v) => v, Err(e) => return e };
     let Some(o) = req.as_object() else { return json!({"ok": false, "error": "payload must be an object"}) };
     let force = o.get("force").and_then(Value::as_bool).unwrap_or(false);
+    // The ops legion-gpu-helper used to serve keep its calibration hold here, where they run now.
+    if matches!(o.get("op").and_then(Value::as_str), Some("set_gpu_mode" | "set_igpu_mode" | "set_fw_oc" | "set_fw_oc_many")) {
+        if let Some(r) = refuse_during_calibration() { return r; }
+    }
     match o.get("op").and_then(Value::as_str) {
         Some("aod_set") => memory_spd::aod_set(o.get("values"), o.get("confirm_below_safe").and_then(Value::as_bool).unwrap_or(false)),
         Some("aod_restore") => memory_spd::aod_restore(),
