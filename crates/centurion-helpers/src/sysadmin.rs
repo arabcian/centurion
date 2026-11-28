@@ -152,7 +152,7 @@ fn added_lines<'a>(old: &str, new: &'a str) -> Vec<(usize, &'a str)> {
 }
 
 /// Refuses added lines that would make root run a command or lower a kernel hardening (see SYSCTL_DENY,
-/// MODPROBE_NOOP; udev RUN / PROGRAM / IMPORT{program}). fstab is checked by fstabcheck instead.
+/// MODPROBE_NOOP; udev RUN / PROGRAM / IMPORT{program}, and MODE / OWNER / GROUP). fstab is checked by fstabcheck instead.
 pub fn new_lines_allowed(kind: Kind, old: &str, new: &str) -> Result<(), String> {
     for (n, line) in added_lines(old, new) {
         let bad = |why: &str| Err(format!("line {n}: {why}: {}", line.chars().take(80).collect::<String>()));
@@ -171,6 +171,9 @@ pub fn new_lines_allowed(kind: Kind, old: &str, new: &str) -> Result<(), String>
                     let key = part.trim().split(['=', '+', '-', ':', '!']).next().unwrap_or("").trim();
                     if key.starts_with("RUN") || key.starts_with("PROGRAM") || key.starts_with("IMPORT{program}") {
                         return bad("RUN, PROGRAM and IMPORT{program} start a program as root and are not accepted here");
+                    }
+                    if matches!(key, "MODE" | "OWNER" | "GROUP") {
+                        return bad("MODE, OWNER and GROUP change who may open a device node and are not accepted here");
                     }
                 }
             }
@@ -541,6 +544,9 @@ mod tests {
         assert!(!ok(Kind::Udev, "", "ACTION==\"add\", SUBSYSTEM==\"usb\", RUN+=\"/tmp/x\""));
         assert!(!ok(Kind::Udev, "", "KERNEL==\"sda\", PROGRAM=\"/bin/x\""));
         assert!(!ok(Kind::Udev, "", "KERNEL==\"sda\", IMPORT{program}=\"/bin/x\""));
+        assert!(!ok(Kind::Udev, "", "KERNEL==\"mem\", MODE=\"0666\""));
+        assert!(!ok(Kind::Udev, "", "KERNEL==\"sda\", OWNER=\"user\""));
+        assert!(!ok(Kind::Udev, "", "KERNEL==\"kmem\", GROUP:=\"users\""));
         assert!(ok(Kind::Udev, "", "ACTION==\"add\", SUBSYSTEM==\"pci\", ATTR{power/control}=\"auto\", TAG+=\"uaccess\""));
         for bad in ["kernel.core_pattern = |/tmp/x %p", "kernel.modprobe=/tmp/x", "kernel/yama/ptrace_scope = 0",
                     "fs.protected_symlinks=0", "-kernel.kptr_restrict=0", "kernel.* = 0", "kernel.usermodehelper.bset = 1",
