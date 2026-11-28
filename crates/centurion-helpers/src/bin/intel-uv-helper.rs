@@ -20,7 +20,7 @@
 //! Profile format: see intel_uv::parse_profile.
 
 use centurion_helpers::intel_uv::{self, parse_profile};
-use centurion_helpers::intel_uv_daemon::{apply_boot, clear_hold, parse_boot, write_hold};
+use centurion_helpers::intel_uv_daemon::{apply_boot, boot_within_gui_floor, clear_hold, within_gui_floor, write_hold};
 use centurion_helpers::*;
 use centurion_helpers::stream::{emit_line, wait_stdin};
 use serde_json::{json, Value};
@@ -31,19 +31,6 @@ const BOOT_DIR: &str = "/etc/centurion";
 const BOOT_FILE: &str = "/etc/centurion/intel-uv-boot.json";
 /// Early, readable refusal of an offset below this CPU's floor (intel_uv::uv_floor_mv: -200 mV, -50 mV on
 /// Core Ultra). intel_uv::apply enforces the same floor on every write, the boot service and daemon included.
-fn within_gui_floor(p: &intel_uv::Profile) -> Result<(), String> {
-    let floor = intel_uv::uv_floor_mv();
-    match p.voltage.iter().find(|(_, _, mv)| *mv < floor) {
-        Some((plane, _, mv)) => Err(format!("voltage.{plane}: {mv} mV is below this CPU's {floor} mV floor")),
-        None => Ok(()),
-    }
-}
-
-fn boot_within_gui_floor(c: &Value) -> Result<(), String> {
-    let b = parse_boot(c)?;
-    b.ac.iter().chain(&b.battery).try_for_each(within_gui_floor)
-}
-
 /// The boot profile is applied by root at every boot and resume, so it lives
 /// in a verified root-owned directory and is replaced atomically (the old
 /// version used create_dir_all under the caller's umask: `umask 000; pkexec`
@@ -141,7 +128,9 @@ fn run() -> Value {
             Ok(m) => intel_uv::monitor_sample(&m, obj.get("clear_logs").and_then(Value::as_bool).unwrap_or(false)),
             Err(e) => json!({"ok": false, "error": format!("/dev/cpu/0/msr: {e}")}),
         },
-        Some("monitor_stream") => return monitor_stream(obj),
+        // The stream has its own end (stdin EOF, stdout gone, 4 h): main's 120 s watchdog would kill it after
+        // two minutes and the tab would start a new pkexec every time. Read-only, like ryzen-co-helper's stream.
+        Some("monitor_stream") => { centurion_helpers::watchdog(0); return monitor_stream(obj) }
         Some("clear_boot") => match std::fs::remove_file(BOOT_FILE) {
             Ok(()) => { clear_hold(); json!({"ok": true, "message": "boot profile removed"}) }
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => json!({"ok": true, "message": "no boot profile"}),

@@ -13,8 +13,23 @@ Python static testleri kaynakta metin arıyor (≈441 assert); bunları kıran b
 - Onaylı düzeltmeler (2026-11-28, "onay bekleyenleri düzelt"): F1.2–F1.7, F2.2–F2.4 uygulandı.
 - Kullanıcı talimatı: aşamalar arasında onay beklemeden devam et; kırmızı çizgi bulguları yine raporlanır, uygulanmaz.
 - Aşama 3 (nvcurve): TAMAMLANDI — F3.1–F3.4 onayla uygulandı (2026-11-28), F3.5 yalnızca bilgi.
-- Aşama 4 (Intel undervolt): TAMAMLANDI — kod değişikliği yok; F4.1–F4.3 onay bekliyor (F4.1 öncelikli).
-- Sıradaki: Aşama 5 (Ryzen/SMU, Legion WMI/EC, fwattr, amdgpu, dgpu, nvreg, cooling/fan_table, lighting, spectrum).
+- Aşama 4 (Intel undervolt): TAMAMLANDI — F4.1–F4.3 onayla uygulandı (2026-11-28), F4.4 yalnızca bilgi.
+- Aşama 5 bağlam için ikiye bölündü. 5a (Ryzen/SMU, Legion WMI/EC, fwattr): OKUNDU — kod değişikliği yok, F5.1 onay bekliyor.
+- Aşama 5b (amdgpu, dgpu, nvreg, cooling, fan_table, lighting, centurion-spectrum): OKUNDU — kod değişikliği yok,
+  F5.4 onay bekliyor, F5.5–F5.8 yalnızca bilgi.
+- Aşama 6a (autotune): TAMAMLANDI — F6.1 uygulandı (yalnızca doc yorumu), F6.2–F6.4 yalnızca bilgi.
+- Aşama 6b (calib, centurion-calibrate, calctx, calsim): OKUNDU — kod değişikliği yok, F6.5–F6.7 rapor.
+- Aşama 6c (bench, stability, cooltest, gamemode, boot*): OKUNDU — kod değişikliği yok; F6.9 onay bekliyor, F6.8/F6.10/F6.11 bilgi.
+- Aşama 7 (backup, tarscan, sysadmin, fstabcheck): OKUNDU — kod değişikliği yok; F7.1–F7.3 onay bekliyor (kırmızı çizgi), F7.4–F7.5 bilgi/soru.
+- Onaylı düzeltmeler (2026-11-28, "sadece onay bekleyenleri fixle"): F5.1, F5.4, F6.9, F7.1, F7.2, F7.3 uygulandı.
+- Devir: `docs/review/HANDOVER.md` (açık kalanlar + kalan aşamalar).
+- Oturum 2 (2026-11-28): başlangıç yeniden ölçüldü (dd0c608: 737 / 0 / 9, clippy temiz, ctest 77/77, python 45/45).
+  Sorulara cevaplar: F5.7 dokunma; F6.10 kapalı başarısız olsun; F7.5 MODE/OWNER/GROUP reddedilsin; F8.3 açılıştaki
+  gibi tolere et. F6.10 (`dfb8f08`), F7.5 (`b9c7027`), F8.3 (`14b08ad`) uygulandı.
+- Aşama 8 (netguard, firewall, traffic, wifi + bin'ler): TAMAMLANDI — F8.1 uygulandı (`63d5077`), F8.3 onayla uygulandı,
+  F8.2/F8.4–F8.6 bilgi.
+- Aşama 9 (teşhis / sağlık): KISMEN — kök yolları okundu, kod değişikliği yok; F6.6 kapandı (ulaşılamıyor), F9.1–F9.3 bilgi.
+  Kalan: aşağıda "Okunan dosyalar / Aşama 9"da yalnızca taranan diye geçen modüller satır satır okunmadı.
 
 ## Başlangıç durumu (2026-11-28, commit 123c3c7, dal experimental)
 
@@ -112,27 +127,9 @@ Her aşama tek oturuma sığacak boyutta tutuldu (~4–8k satır).
 
 ## Bekleyen onaylar
 
-Aşama 4 (Intel undervolt; hepsi MSR yolunda veya root yetkisiyle çalıştırma → kırmızı çizgi, uygulanmadı):
-
-- **F4.1 (orta, öncelikli)** `bin/intel-uv-helper.rs:157`: `main` her istekten önce `watchdog(120)` kuruyor;
-  `monitor_stream` ise 4 saate kadar sürmek üzere tasarlanmış (kendi sınırı `stop_at`, modül yorumu "oturum başına bir
-  pkexec"). Sonuç: akış 120 sn'de SIGALRM ile ölüyor; GUI (`gui/src/inteltab.cpp:1131-1141`) bunu "4 saatlik sınır ya da
-  çökme" sanıp yeni bir pkexec başlatıyor → her 2 dakikada bir polkit denetimi + bir örnek boşluğu (ve polkit eylemi
-  yetki istiyorsa yeniden parola sorabilir). `bin/ryzen-co-helper.rs:223-236` aynı akışı doğru yapıyor: watchdog'u akış
-  dalından sonra kuruyor. Öneri: Intel yardımcısında da `watchdog(120)`'yi `monitor_stream` dalından sonraya almak
-  (yazma op'larının 120 sn sınırı aynen kalır). Risk: düşük.
-- **F4.2 (düşük)** `intel_uv.rs:1109` `stock_note`: /run/centurion/intel-stock.json kilitsiz oku-değiştir-yaz. Daemon'un
-  tam apply'ı ile helper'ın apply'ı aynı anda ilk kez farklı alanları kaydederse biri diğerininkini siler → güç kaynağı
-  geçişi / reset o alanı (ör. IccMax, PL1) firmware değerine döndüremez. Öneri: RMW'yi `helper_lock("intel-stock")` ile
-  sarmak. Geri alma verisi → kırmızı çizgi.
-- **F4.3 (düşük)** `intel_uv_search.rs:170` `stress_bin`: binary'nin yanında centurion-cpustress yoksa PATH'teki
-  `centurion-cpustress` root olarak, ortam temizlenmeden çalıştırılıyor (arama root CLI'dan yürür). Öneri: yalnızca
-  `trusted_path` geçen yolu kabul etmek (PATH yedeği yerine sabit sistem dizinleri). Risk: düşük.
-- **F4.4 (bilgi)** `intel_uv.rs:1748` `monitor_sample`: her örnekte her CPU için /dev/cpu/N/msr açılıp kapanıyor
-  (2 sn'de bir 2×N işlem). Ölçülebilir ama küçük; önbellek yeni yapı ister → önerilmiyor. `read_status` MSR_POWER_CTL'i iki
-  kez okuyor (mikro).
-
-Aşama 3'ten bekleyen yok.
+F5.1, F5.4, F6.9, F7.1, F7.2, F7.3 onaylandı ve uygulandı (2026-11-28). Oturum 2: F5.7 "dokunma" cevabıyla kapandı;
+F6.10, F7.5, F8.3 onayla uygulandı. Test yazılamayan düşük bulgular (F6.3, F6.5, F8.4) `HANDOVER.md` bölüm 4'te. Bulguların özgün metni "Bulgular" altındaki aşama
+tablolarında; onay bekleyenlerin uzun açıklamaları için bu dosyanın git geçmişine bakın (482aeb9…4e0a7bd).
 
 ## Okunan dosyalar
 
@@ -147,6 +144,44 @@ Aşama 3: `crates/nvcurve` tamamı (27 dosya, 5 863 satır) satır satır.
 
 Aşama 4: `intel_uv.rs`, `intel_uv_daemon.rs`, `intel_uv_search.rs`, `bin/intel-uv-helper.rs`,
 `bin/centurion-intel-uv.rs` (tamamı); karşılaştırma için `stream.rs` ve `bin/ryzen-co-helper.rs:198-245`.
+
+Aşama 5a: `smu.rs`, `ryzen_mon.rs`, `bin/ryzen-co-helper.rs`, `legion_wmi.rs`, `bin/legion-profile-helper.rs`,
+`bin/legion-firmware-helper.rs`, `bin/legion-gpu-helper.rs`, `bin/legion-ec-sensors.rs`, `bin/fwattr-helper.rs` (tamamı).
+
+Aşama 5b: `amdgpu.rs`, `bin/amdgpu-helper.rs`, `dgpu.rs`, `nvreg.rs`, `cooling.rs`, `fan_table.rs`, `lighting.rs`,
+`bin/lighting-helper.rs`, `crates/centurion-spectrum/src/lib.rs`, `lamparray.rs` (tamamı).
+
+Aşama 6a: `bin/centurion-autotune.rs` (tamamı); `autotune.rs` kod kısmı 1–2957 satır satır (testler 2957–4210 yalnızca
+fikstür ve doğrulamalar için tarandı). Kural gövdelerindeki sezgisel katsayılar (etki vektörleri) alan kararı olduğu için
+doğruluk açısından değerlendirilmedi; panik, indeksleme, bölme ve dosya G/Ç kalıplarına bakıldı.
+
+Aşama 6b: `calctx.rs` (tamamı satır satır). `calib.rs`: dosya G/Ç ve depolar (imza yükle/kaydet/yedek, fit deposu,
+ölçek önbelleği, 1180–1290, 1425–1470, 1778–1850) satır satır; istatistik kodu panik/indeksleme kalıplarıyla tarandı.
+`bin/centurion-calibrate.rs` (3229 satır kod, büyük kısmı kırmızı çizgi: ayar yazma + günlük + geri yükleme): başlık,
+`--field` içe aktarma ve imza yazma yolları okundu, geri kalanı risk kalıplarıyla tarandı (ölçüm/geri alma mantığı
+değiştirilmeyeceği için ayrıntılı değerlendirilmedi). `calsim.rs` yalnızca test (centurion-calibrate'in test modülü):
+gözden geçirildi.
+
+Aşama 6c: `bootguard.rs`, `bin/centurion-boot-guard.rs`, `boothist.rs`, `stability.rs` (kod kısmı), `bin/centurion-cooltest.rs`
+(tamamı satır satır); `bootlogo.rs` (kırmızı çizgi: UEFI değişkeni + ESP yazımı) tamamı okundu. `bench.rs` (1485 satır kod,
+ölçüm): dosya oluşturma (yalnızca O_TMPFILE), eşleme ve indeksleme yolları okundu, ölçüm yöntemleri değerlendirilmedi.
+`bin/centurion-gamemode.rs` (1673): pkexec çağrısı, ön ayar yükleme, sahne durumu / kilit yolları okundu; sahne uygulama
+akışı (`apply_scene`, 691–1020) helper çağrılarının sırası olduğu için yalnızca tarandı.
+
+Aşama 9 (kısmi): satır satır — `ksnap.rs`, `health.rs` (kod), `bin/health-reader.rs`, `wakeup.rs`, `pstore.rs` (kod),
+`diagreport.rs` 715–870 (arşiv / anlık görüntü yazma), `flight.rs` 180–257, `iorate.rs` `probe`, `model.rs` 505–580 ve
+735–775 (`unsafe` paylaşımlı matris yazımı: Cholesky ve çekirdek doldurma), `overview::state_dir` ve tüm çağıranları.
+Yalnızca risk kalıplarıyla taranan (Command / dosya yazma / unsafe / unwrap): `model.rs`'in geri kalanı, `diagreport.rs`'in
+geri kalanı, `health_nvme.rs`, `health_diagnostics.rs`, `overview.rs`, `memory_spd.rs`, `sleepdiag.rs`, `hibernate.rs`,
+`trends.rs`, `tools.rs`, `display.rs`.
+
+Aşama 8: `netguard.rs` (kod kısmı 1–2222 satır satır), `firewall.rs`, `traffic.rs`, `wifi.rs` (kod kısımları satır satır),
+`bin/netguard-helper.rs`, `bin/centurion-netguard.rs`; GUI tarafı yalnızca `netpage.cpp` `runUser` zaman aşımı için.
+
+Aşama 7: `sysadmin.rs`, `fstabcheck.rs`, `tarscan.rs` (kod kısımları satır satır), `bin/backup-helper.rs`,
+`bin/sysadmin-helper.rs`, `bin/sysadmin-config-helper.rs`. `backup.rs`: yapılandırma geri yükleme yolu (1740–1960) ve yol
+yardımcıları (233–270) satır satır; sistem imajı yedekleme/geri yükleme ve zincir geri yükleme (578–1420) ile
+config_diff risk kalıplarıyla tarandı (fd'ye göre `unlinkat` / `renameat` kullanıyor).
 
 ## Bulgular
 
@@ -207,12 +242,147 @@ Doğrulama (5255ff0): cargo test 734 / 0 / 9 ignored · clippy temiz · ctest 77
 
 ### Aşama 4 — Intel undervolt
 
-Uygulanan değişiklik yok; bulgular F4.1–F4.4 "Bekleyen onaylar"da.
+| # | Yer | Sorun / senaryo | Durum | Risk | Kırmızı çizgi |
+|---|---|---|---|---|---|
+| F4.1 | `bin/intel-uv-helper.rs` | `main`'in 120 sn watchdog'u 4 saatlik `monitor_stream`'i 2 dakikada öldürüyordu; GUI her seferinde yeni pkexec başlatıyordu. | **Düzeltildi** `34bbec0`: akış dalı `alarm(0)` ile watchdog'u kaldırıyor (ryzen-co-helper gibi); istek okuma ve diğer op'lar 120 sn sınırında. Otomatik test yok (helper Lenovo dışında başlamıyor). | düşük | evet (onaylı) |
+| F4.2 | `intel_uv.rs` `stock_note` | intel-stock.json kilitsiz RMW; eşzamanlı ilk kayıtlarda bir alan kaybolabiliyordu. | **Düzeltildi** `9a9b843`: `helper_lock("intel-stock")`. | düşük | evet (onaylı) |
+| F4.3 | `intel_uv_search.rs` `stress_bin` | PATH'teki cpustress root olarak çalışabiliyordu. | **Düzeltildi** `1e85319`: yanındaki / /usr/bin / /usr/local/bin, yalnızca `trusted_path`; yoksa "çalışamadı" (çıkış 3, son iyi değere dönüş). | düşük | evet (onaylı) |
+| F4.4 | `intel_uv.rs` `monitor_sample`, `read_status` | Örnek başına CPU başına msr açma; POWER_CTL iki kez okunuyor. | Bilgi — değişiklik yok | — | — |
+
+Doğrulama (1e85319): cargo test 734 / 0 / 9 ignored · clippy temiz · ctest 77/77 · python 45/45.
 
 Sorunsuz bulunanlar / gözlemler: her yazma "oku → yaz → geri oku" ve atomik modda ters sırada geri alma yapıyor;
 mailbox işlemleri msr fd'sinde flock ile serileştiriliyor; profil ayrıştırma tüm aralıkları yazmadan önce denetliyor
 (cTDP 0..2 olduğu için `["nominal","down","up"][level]` indekslemesi güvenli). MMIO açılışı hizalama, sayfa sınırı ve
 /proc/iomem "System RAM" denetimi yapıyor.
+
+### Aşama 5a — Ryzen/SMU, Legion WMI/EC, fwattr
+
+Uygulanan değişiklik yok (bulguların hepsi kırmızı çizgi alanında; F5.1–F5.3 "Bekleyen onaylar"da).
+
+Sorunsuz bulunanlar: SMU mailbox'ı yalnızca sabit tablodan opcode gönderiyor, 1 sn sınırlı yoklama ve self-test var;
+CO toplu yazma önce tümünü doğruluyor, hata olursa geri alıyor ve durumu ("original/stock/unknown") dürüstçe bildiriyor.
+Legion WMI yazmaları "önce oku, yaz, geri oku" ve firmware-güvenli sırada (`fw_write_order`); fwattr-helper yolu biçim +
+Lenovo + kanonik konum + canlı aralık ile denetliyor, toplu yazmada orijinalleri yakalayıp geri alıyor.
+
+### Aşama 5b — amdgpu, dGPU, nvreg, cooling, fan tablosu, aydınlatma
+
+Uygulanan değişiklik yok. F5.4 "Bekleyen onaylar"da; aşağıdakiler yalnızca bilgi (öneri yok ya da kırmızı çizgi):
+
+| # | Yer | Gözlem | Risk | Kırmızı çizgi |
+|---|-----|--------|------|---------------|
+| F5.5 | `dgpu.rs:118-131` `in_child` | Süre dolunca çocuğu `SIGKILL`'liyor ama `waitpid` ile toplamıyor; helper çıkana dek zombi kalır. D durumundaki (modül boşaltma/PCI rescan) bir çocuk zaten toplanamaz; helper kısa ömürlü. Değişiklik önerilmez. | yok | evet (sürücü/PCI yolu) |
+| F5.6 | `cooling.rs:382` `load_fanmax` | `load_runs` (`:363`) 4 MiB sınırı koyuyor, `load_fanmax` koymuyor. Kullanıcının kendi dosyası, kullanıcı süreci okuyor; yalnızca tutarsızlık. | çok düşük | hayır |
+| F5.7 | `nvreg.rs:83` `Kind::Dwords` | İzin verilen karakterlerde `,` var ama yalnızca anahtar adında işe yarıyor (değer `num()`'dan geçmeli). NVIDIA'nın `RegistryDwords` söz diziminde `,` gerekip gerekmediğinden emin değilim — soru, değişiklik önerilmez. | yok | evet (doğrulama) |
+| F5.8 | `centurion-spectrum/src/lib.rs:520` `Device::open` | `flock(LOCK_EX)` süresiz bekliyor; takılan bir eş (ör. gamemode) lighting-helper'ı bekletir, lighting-helper'da watchdog yok. Tüm kullanıcılar kısa ömürlü olduğu için pratikte sorun değil. | düşük | hayır |
+
+Sorunsuz bulunanlar: amdgpu `apply` her değeri yazmadan önce doğruluyor (OD tablosu sürücünün aralığıyla + 4000 MHz /
+1300 mV akıl sınırı, voltaj ofseti yalnızca aşağı, fan eğrisi düşmeyen + sıcak noktada asgari fan), hata olursa en
+yeniden eskiye geri alıp neyin geri alınamadığını söylüyor. dGPU `release` önce sahipleri buluyor, durdurduğu
+servisleri ret durumunda geri başlatıyor; sürücü/PCI adımları süreli çocukta. nvreg yalnızca `modinfo`'nun bildirdiği,
+tek anlamlı seçenekleri yazıyor; tip aralığı dışı ya da metin/dizi tipleri reddediliyor. fan_table her yazmayı geri
+okuyup uyuşmazlıkta eski tabloyu geri yüklüyor; son üç adım için termal taban var. Spectrum yalnızca 960 baytlık feature
+raporu bildiren ve D1'e yanıt veren arayüzle konuşuyor; LampArray akışı sinyal/çıkışta otonom moda dönüyor.
+
+### Aşama 6a — autotune
+
+| # | Yer | Sorun | Senaryo | Öneri / yapılan | Risk | Kırmızı çizgi |
+|---|-----|-------|---------|-----------------|------|---------------|
+| F6.1 | `autotune.rs:234`, `:1400`, `:2535` | Üç doc yorumu yanlış öğeye bağlı: `game_sessions`'ınki `project_c_under`'da, `level_costs`'unki `poll_names`'te, `autotune_req`'inki `progress_event`'te. | rustdoc / IDE yanlış açıklamayı gösteriyor. | Yorumlar ait oldukları öğelere taşındı (271b502). Kod değişmedi. | yok | hayır |
+| F6.2 | `autotune.rs:1455` `joint_pass` | `r.joint.take()` sonrası `Rules::seen` için model yok; önbellekte olmayan bir anahtar için `set` → `seen()` `true` döner. `joint_pass`'in kendi `set_live`'ları ve `repair_live` bu yoldan geçer. | Kâğıt üstünde: `signature_pass`'te `calibrated_choice` erken `false` dönmüş (ölçülmüş değer yok) bir eklem-model anahtarını eklem araması değiştirirse karar `seen: true` raporlanır. Mevcut eklem testinde (`joint_model_keeps_synergy_and_drops_redundancy`) geçici bir yoklamayla denedim: tüm anahtarlar önceden önbellekteydi, uyuşmazlık çıkmadı. Ulaşılabilir bir girdi bulamadım. | Kanıt yok, değişiklik yapılmadı. Ulaşılabilirse çözüm: `joint_pass` sonunda `r.joint`'i geri koymak. | düşük (yalnızca rapor alanı) | hayır |
+| F6.3 | `bin/centurion-autotune.rs:161` `write_atomic` | Geçici dosya adı süreç başına değil (`.<ad>.tmp`). `history_push` aynı sorun için süreç kimlikli `write_replace`'e geçirilmiş; `--save` geçirilmemiş. | Aynı adla aynı anda iki `--save` (GUI + CLI) aynı geçici dosyaya yazar. | Yarış için güvenilir bir test yazılamıyor; yalnızca rapor. | çok düşük | hayır |
+| F6.4 | `bin/centurion-autotune.rs:246` `report` | Watermark sayfa boyutu sabit 4 KiB. | Yalnızca 4 KiB dışı sayfa boyutlu çekirdeklerde tanı çıktısı yanlış olur (hedef x86). | Değişiklik önerilmez. | yok | hayır |
+
+Sorunsuz bulunanlar: `centurion-autotune --weights` sıkı ayrıştırılıyor (sonlu, bilinen anahtar, tekrar yok). Kullanıcı
+dosyası okuyan kök yolu (`read_regular`) O_NOFOLLOW + O_NONBLOCK + fstat ile korunuyor. Kanıt geçmişi `read_root_file` /
+`write_root_file` kullanıyor. Çıkan her ön ayar kendi `audit`'inden geçiriliyor; 2^53 üstü tamsayılar atılıyor.
+`guard_verdict` (geri alma kuralı) ve `audit` / `enforce` kırmızı çizgi alanı: yalnızca okundu.
+
+### Aşama 6b — kalibrasyon
+
+| # | Yer | Sorun | Senaryo | Öneri | Risk | Kırmızı çizgi |
+|---|-----|-------|---------|-------|------|---------------|
+| F6.5 | `bin/centurion-calibrate.rs:2476`, `:2484` | Eski `--oat` yolu imzayı `write_root_file` ile doğrudan yazıyor; `Calibration::save()`'i (ilk yazımda `.bak` yedeği, `MAX_FILE`'a yaklaşınca eski satırları kırpma) atlıyor. Ana tasarım yolu (`:3031`) `save()` kullanıyor. | `--oat` sonrası bozulan bir imza için yedek yok; dosya 8 MiB'ı aşarsa okuyucu "hasarlı" der. `--oat` yalnızca kayıt ekliyor (değer başına 10), bu yüzden pratikte küçük. | İki çağrıyı `cal.save()` ile değiştirmek. Sabit `/var/lib` yoluna kök olarak yazdığı için birim testi yazılamıyor; uygulanmadı. | düşük | hayır |
+| F6.6 | `overview.rs:114` `state_dir` (ayrıca `cooling.rs:332`) | `XDG_STATE_HOME` ve `HOME` yoksa `/tmp/centurion`'a düşüyor. `autotune_req` tune-helper'dan kök olarak da çalışıyor (`autotune` op'u) ve oraya `write_replace` ile yazıyor. pkexec `HOME=/root` koyduğu için bugün güvenli. `HOME`'suz bir kök servis bu yolu çağırırsa dünya-yazılabilir `/tmp` altında sembolik bağlantıya açık olur. | Bugünkü çağıranlarda ulaşılamıyor. | Aşama 9'da (overview) `state_dir` çağıranları kök bağlamı açısından denetlenecek. | bilgi | hayır |
+| F6.7 | `calctx.rs:124-157` `home_of` / `uid_of` / `ids_of` | Ad **ya da** uid ile eşleşiyor, ilk satır kazanıyor; adı başka bir hesabın uid'i olan bir kullanıcı ("1000") yanlış hesaba çözülebilir. | Çok nadir yapılandırma. | Değişiklik önerilmez; not. | çok düşük | hayır |
+
+Sorunsuz bulunanlar: sahne dosyası kök tarafından kullanıcının fsuid'iyle çözülüyor (`FsAs`), O_NOFOLLOW + açık fd
+üzerinde sahip/boyut denetimiyle okunuyor; açılış zamanlaması sahnenin güç kısmını onay anında köke kopyalıyor.
+`apply_scene_power` önce tam orijinali günlüğe yazıyor, eksik bir orijinalde hiç yazmıyor; geri yükleme hata olursa
+günlüğü tutuyor. `--field` kullanıcı günlüklerini O_NOFOLLOW + sahip denetimiyle okuyor. İmza yüklemesi bozuk dosyayı
+"başka donanım"dan ayırıyor ve yedeğe düşüyor.
+
+### Aşama 6c — bench, stability, cooltest, gamemode, boot*
+
+| # | Yer | Gözlem | Risk | Kırmızı çizgi |
+|---|-----|--------|------|---------------|
+| F6.8 | `bin/centurion-cooltest.rs:177` `fanmax` | `--peaks nan` kabul ediliyor (`f64::parse`); JSON'a `null` yazılıyor ve o ayar için taban kalıcı olarak "fan sayısı farklı" oluyor (`forget` gerekir). GUI (`coolingpage.cpp:584`) yalnızca `qRound` tamsayıları gönderiyor; yalnızca elle CLI çağrısında olur. "İmkânsız durum" kuralı gereği değişiklik önerilmez. | çok düşük | hayır |
+| F6.10 | `bootguard.rs:29` `read` | Okunamayan / bozuk durum dosyası `{}` döner → `should_skip` `None` → ön ayarlar uygulanır (açık kalarak başarısız). Bilinçli olabilir (bozuk bir dosya açılışları kalıcı olarak durdurmasın diye). Soru: niyet bu mu? | bilgi | evet (koruma mantığı) |
+| F6.11 | `autotune.rs:376` `boot_id` | `bootguard::boot_id`'in birebir kopyası (`stability.rs` ikincisini kullanıyor). Davranış farkı yok. | yok | hayır |
+
+Sorunsuz bulunanlar: boot guard sinyalleri `sigtimedwait` ile alıyor (kontrol ile bekleme arasında SIGTERM kaçmaz);
+bootlogo yalnızca tam çözünürlükte temel JPEG kabul ediyor, her UEFI yazımını geri okuyup başarısızlıkta öncekileri geri
+koyuyor. bench G/Ç testleri bağlantısız O_TMPFILE kullanıyor (dünya-yazılabilir `/var/tmp`'de bile sembolik bağlantıya
+açık ad yok). gamemode kök gerektiren her şeyi pkexec ile yapıyor; ön ayar değerleri yalnızca köke ait depodan
+(`/etc/centurion/presets`) alınıyor, kullanıcının dosyası değil; yetkilendirme takılırsa 60 sn, helper 180 sn sınırı var.
+
+### Oturum 2'de onayla uygulanan eski bulgular
+
+| # | Değişiklik | Test |
+|---|---|---|
+| F6.10 | `bootguard.rs`: dosya var ama okunamıyor/bozuksa `should_skip` atlıyor, `arm` korumayı "damaged" gerekçesiyle tetikliyor; dosya yoksa (ilk açılış) eskisi gibi boş durum. Uygulamada "Resume" (`reset`) yeni durum yazıyor. | `damaged_state_is_not_an_empty_one` (önce derlenmiyordu) |
+| F7.5 | `sysadmin.rs` udev denetimi: eklenen satırlarda `MODE` / `OWNER` / `GROUP` reddediliyor. Not: `TAG+="uaccess"` (oturumdaki kullanıcıya erişim) hâlâ kabul ediliyor ve mevcut testte izinli örnek olarak duruyor. | mevcut red testine üç vaka (önce kırmızıydı) |
+
+### Aşama 7 — yedekleme ve sistem araçları
+
+| # | Yer | Gözlem | Risk | Kırmızı çizgi |
+|---|-----|--------|------|---------------|
+| F7.4 | `sysadmin.rs:417` `config_restore` | Geri yüklenen yedek `new_lines_allowed`'dan ve fstab'da `fstabcheck`'ten geçmiyor (`config_write` içindeki `validate` ve `findmnt --verify` çalışıyor). Yedekler kökün kendi kopyaları; yalnızca yasak listesinden önce yazılmış bir satır geri gelebilir. | çok düşük | evet |
+| F7.5 | `sysadmin.rs:174` udev denetimi | Yalnızca RUN / PROGRAM / IMPORT{program} reddediliyor. `MODE` / `OWNER` / `GROUP` (ör. `KERNEL=="mem", MODE="0666"`) bir çekirdek korumasını aynı ölçüde düşürür. Her seferinde yönetici parolası. Soru: bilinçli olarak mı dışarıda bırakıldı? | düşük | evet |
+
+Doğrulanan (değişiklik gerektirmeyen): `extract_limited` arşivi kök olarak açarken, arşivdeki bir dizin bağlantısının
+(`system/etc -> /hedef`) ardından gelen bir üye o bağlantının üzerinden yazabilir mi? GNU tar 1.35 ile scratchpad'de
+denedim: tar "Cannot open: Not a directory" diyerek reddediyor, hedef boş kalıyor. Ardından `plain_tree` her bağlantıyı
+ve özel dosyayı reddediyor. Kullanıcı geri yüklemesi sahnelerin `command` alanını atıyor; kök geri yüklemesi modprobe.d
+dosyasını kopyalamıyor, `nvreg::restore_from` ile yeniden doğruluyor. tarscan tanımadığı her başlıkta akışı "broken"
+işaretleyip silme/yeniden adlandırmayı kapatıyor.
+
+### Aşama 8 — ağ koruması, güvenlik duvarı, trafik, Wi-Fi
+
+| # | Yer | Gözlem | Durum | Risk | Kırmızı çizgi |
+|---|-----|--------|-------|------|---------------|
+| F8.1 | `traffic.rs` `Ledger::from_json` | Bir günde 256 program + "(other)" varken (bunu `add` üretiyor) dosya geri okunduğunda alfabetik olarak sonuncu program düşüyordu (daemon yeniden başlatma, sayımın yeniden açılması). Ayrıca kısıt kesilmemiş adla denetleniyordu. | **Düzeltildi** `63d5077`: yükleme `add` ile aynı sınırı uyguluyor. `full_day_round_trips` (önce kırmızıydı). | düşük | hayır (sayım verisi) |
+| F8.2 | `netguard.rs:1013`, `:1019-1020` `decide` | Ayrıştırılamayan paket ya da bulunamayan soket → kabul (paket başına açık kalarak başarısız). Kopya aralığı 256 bayt; IPv6 uzantı başlıklarını bu sınırın ötesine itmek CAP_NET_RAW istiyor (yetkisiz RTHDR tip 2 yalnızca 24 bayt), bu yüzden Wine programı için ulaşılamıyor. | Bilgi — değişiklik yok | düşük | evet (koruma kararı) |
+| F8.3 | `netguard.rs:1447` yeniden yükleme | Trafik sayımı açık ve conntrack soketi açılamıyorsa her yeniden yükleme başarısız oluyordu: güvenlik duvarı / kara liste değişiklikleri sayım kapatılana dek uygulanmıyordu (açılışta aynı hata tolere ediliyordu). | **Düzeltildi** (onaylı) `14b08ad`: kurallar yükleniyor, hata durum dosyasına yazılıyor. Test yok (kök + netlink daemon döngüsü). Not: helper `state["error"]` doluyken yeni engelleme kurallarının açık bağlantılarını kesmiyor (`:1962`); bu durumda da öyle. | düşük | evet (onaylı) |
+| F8.4 | `netguard.rs:1432` açılış | `sync_acct` başarısız olursa `write_state` önceki `start_error`'ı (ör. "firewall not applied") eziyor; GUI yalnızca sayım hatasını gösterir. | Bilgi — test yazılamıyor (daemon) | çok düşük | hayır |
+| F8.5 | `bin/netguard-helper.rs` | Diğer kök helper'ların çoğunda olan `watchdog` yok. Bloklayabilecek yerler: `forget_blocked_flows` zaman aşımsız netlink dump okuması, nft alt süreci, whois DNS çözümü. Kullanıcı yolu GUI'de `timeoutMs` ile öldürülüyor; kök yolu `privileged::run`. Pratikte dump her zaman DONE ile bitiyor. | Bilgi | çok düşük | hayır |
+| F8.6 | `firewall.rs:281` `move` | `i as i64 + by` taşması: release'de sarıyor → `to < 0` → işlem yok; debug'da panik. Yalnızca elle yazılmış istek. | Bilgi — "imkânsız durum" | yok | evet (doğrulama) |
+
+Sorunsuz bulunanlar: güvenlik duvarı kuralının her alanı nft'ye gitmeden önce tipli değere ayrıştırılıyor (arayüz adı
+izin listesi, port aralıkları birleştiriliyor, not nft'ye hiç gitmiyor); `firewall` isteği kaydetmeden önce `nft -c` ile
+deneniyor ve `expected_firewall` kilit altında karşılaştırılıyor. Tablo tek nft işlemiyle değiştiriliyor; kuyruk kuralları
+açılmadan önce bağlanıyor; Wine koruması `bypass`'sız kuyrukla kapalı başarısız. Netlink ayrıştırıcıları (`nl_each`,
+öznitelik döngüleri) uzunluk denetimli; sock_diag yanıtları sıra numarasıyla eşleniyor. Günlükler 0640 root:wheel,
+O_NOFOLLOW. whois yalnızca `whois.` ile başlayan geçerli adlara, genel adreslere, süre ve boyut sınırıyla bağlanıyor.
+Wi-Fi: yetkisiz, salt okuma; araçlar `trusted_path` + temiz ortamla; arayüz adı yalnızca /sys/class/net listesinden.
+Kanal hesaplarında işaretsiz çıkarmaların hepsi önceden korunmuş.
+
+### Aşama 9 — teşhis / sağlık (kısmi)
+
+| # | Yer | Gözlem | Risk | Kırmızı çizgi |
+|---|-----|--------|------|---------------|
+| F6.6 | `overview.rs:114` `state_dir` | Kapandı: kök olarak çağıranlar (`autotune_req`, `trends`, `diagreport` önizlemesi) yalnızca pkexec ile tune-helper'dan geliyor, pkexec `HOME=/root` koyuyor; servis yolları (`centurion-tune.service` → `boot`, paket kancası → `restore`) `state_dir`'a ulaşmıyor. `diagreport` yazımı kökte zaten reddediliyor. `cooling.rs`'in kopyası yalnızca kullanıcı süreci (cooltest). | yok | hayır |
+| F9.1 | `ksnap.rs:40` `DENY_PREFIXES` | Eski `firmware/efi/vars` arayüzü (CONFIG_EFI_VARS, yeni çekirdeklerde kaldırıldı) listede yok; `efivars` var. İçerik çoğunlukla ikili (atlanıyor), metin olanlar GUI'ye dönebilir. | çok düşük | evet (izin listesi) |
+| F9.2 | `bin/health-reader.rs` | `watchdog(30)` yalnızca `ksnap`'te; `nvme_deep`, `diagnostics`, `boots`, `sleep_diag`, `battery_info` (acpi_call) kökte süre sınırsız. | çok düşük | hayır |
+| F9.3 | `bin/health-reader.rs:8` doc | "The scan never returns raw log lines" — olaylar `text` alanında sınıflanan satırın ilk 300 karakterini (adresler temizlenmiş) taşıyor. Sessiz polkit eyleminin gerekçesi bu cümleye dayandığı için yorum değiştirilmedi, raporlandı. | bilgi | evet (polkit gerekçesi) |
+
+Sorunsuz bulunanlar: ksnap sembolik bağlantıları izlemiyor, kökleri `canonical_in_sysfs` ile /sys içine sabitliyor, debugfs'i
+alt ağaç izin listesiyle açıyor, O_NONBLOCK okuyor, değerleri `scrub`'dan geçiriyor ve kilit açık pencere istiyor.
+`scrub` ve kmsg ayrıştırıcıları dilimlemelerde karakter sınırında. pstore arşivi önce yazıp sonra siliyor, adları
+temizliyor. diagreport arşivi ve anlık görüntüsü yalnızca kullanıcı olarak, O_EXCL geçici dosya + `RENAME_NOREPLACE`
+ile yazılıyor; anlık görüntü okuması sahip / mod / nlink / sürüm denetimli. iorate yazma sınaması bağlantısız O_TMPFILE.
+model.rs `unsafe` paralel yazımları satır sahipliğiyle ayrık; Cholesky'de hata bayrağı engelden önce yazılıp sonra
+okunuyor, tüm işçiler aynı noktada dönüyor.
 
 ## Ölü kod adayları
 
@@ -225,3 +395,24 @@ modül yorumunda kopuk boş `//!` satırları var (yalnızca biçim, dokunulmad�
 
 Aşama 4: yok.
 
+Aşama 5a: `bin/legion-gpu-helper.rs:116` kalibrasyon listesindeki `set_gpu_mode` / `set_fw_oc` girdileri (bu binary
+o op'ları sunmuyor). Silinmedi.
+
+Aşama 5b: `centurion-spectrum` kütüphanesinin çalışma alanında tüketicisi olmayan `pub` API'si (yalnızca kendi
+testleri kullanıyor ya da hiç kullanılmıyor): `EffectType::{name, needs_host, has_speed, has_direction, has_clockwise,
+has_colors}`, `Effect::kind`, `per_key_effects`, `KeyMap::{at, unique, zone_of, zone, spans}`, `Zone`, `is_perimeter`,
+`PERIMETER_REAR/FRONT`, `Device::restore_effects_raw` (hiç çağrılmıyor). GUI C++ olduğu için bunları kullanamaz; eski bir
+Rust GUI'nin ya da yedekleme özelliğinin kalıntısı olabilir. Silinmedi.
+
+Aşama 6a: yok (`explore` yalnızca `#[cfg(test)]`, bilinçli).
+
+Aşama 6b: yok (`calsim.rs` `#![allow(dead_code)]` ile test simülatörü, bilinçli).
+
+Aşama 6c: yok (F6.11 bir kopya, ölü değil).
+
+Aşama 7: yok.
+
+Aşama 8: yok. (`netguard`/`wifi`/`traffic`'te dışarıdan kullanılmayan birkaç `pub` öğe var — `parse_*`, `find_socket`,
+`KCONFIG`, `DAYS_KEPT` … — hepsinin modül içinde çağıranı var; yalnızca görünürlük gereğinden geniş.)
+
+Aşama 9 (kısmi): yok.

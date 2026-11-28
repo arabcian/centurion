@@ -71,6 +71,19 @@ pub fn parse_boot(v: &Value) -> Result<BootConfig, String> {
     Ok(BootConfig { ac, battery, interval_ms, reapply, alarm })
 }
 
+pub fn within_gui_floor(p: &Profile) -> Result<(), String> {
+    let floor = intel_uv::uv_floor_mv();
+    match p.voltage.iter().find(|(_, _, mv)| *mv < floor) {
+        Some((plane, _, mv)) => Err(format!("voltage.{plane}: {mv} mV is below this CPU's {floor} mV floor")),
+        None => Ok(()),
+    }
+}
+
+pub fn boot_within_gui_floor(c: &Value) -> Result<(), String> {
+    let b = parse_boot(c)?;
+    b.ac.iter().chain(&b.battery).try_for_each(within_gui_floor)
+}
+
 pub fn load_boot() -> Result<Option<BootConfig>, String> {
     if !Path::new(BOOT_FILE).exists() { return Ok(None); }
     // Root writes MSR voltages from this file at every boot/resume: only a

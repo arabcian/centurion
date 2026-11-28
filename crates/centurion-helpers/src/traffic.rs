@@ -209,8 +209,11 @@ impl Ledger {
             for (name, t) in progs.as_object().into_iter().flatten() {
                 let tot = Tot { tx: t["tx"].as_u64().unwrap_or(0), rx: t["rx"].as_u64().unwrap_or(0), conns: t["conns"].as_u64().unwrap_or(0) };
                 let days = l.days.entry(day.clone()).or_default();
-                if days.len() < PROGRAMS_PER_DAY || days.contains_key(name) {
-                    let e = days.entry(name.chars().take(MAX_NAME).collect()).or_default();
+                let name: String = name.chars().take(MAX_NAME).collect();
+                // The same cap as `add`: PROGRAMS_PER_DAY programs, plus OTHER.
+                let programs = days.len() - usize::from(days.contains_key(OTHER));
+                if programs < PROGRAMS_PER_DAY || days.contains_key(&name) || name == OTHER {
+                    let e = days.entry(name).or_default();
                     e.tx = e.tx.saturating_add(tot.tx);
                     e.rx = e.rx.saturating_add(tot.rx);
                     e.conns += tot.conns;
@@ -326,6 +329,13 @@ mod tests {
         assert_eq!(back, l);
         assert_eq!(Ledger::from_json("not json"), Ledger::default());
         assert_eq!(Ledger::from_json(r#"{"days": {"d": {"p": {"tx": "x"}}}}"#).days["d"]["p"], Tot::default());
+    }
+
+    #[test]
+    fn full_day_round_trips() {
+        let mut l = Ledger::default();
+        for i in 0..PROGRAMS_PER_DAY + 5 { l.add("2026-10-30", &format!("app{i:03}"), 1, 0); }
+        assert_eq!(Ledger::from_json(&l.to_json().to_string()), l);
     }
 
     #[test]

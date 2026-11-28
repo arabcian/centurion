@@ -133,8 +133,8 @@ pub struct Rgb(pub u8, pub u8, pub u8);
 
 impl Rgb {
     pub fn parse_hex(s: &str) -> Option<Rgb> {
-        let s = s.trim_start_matches('#');
-        if s.len() != 6 {
+        let s = s.strip_prefix('#').unwrap_or(s);
+        if s.len() != 6 || !s.bytes().all(|b| b.is_ascii_hexdigit()) {
             return None;
         }
         let v = u32::from_str_radix(s, 16).ok()?;
@@ -729,6 +729,15 @@ mod tests {
         };
         assert!(encode_effects(1, &per_key_effects(&order, &mk(36))).is_ok());
         assert!(matches!(encode_effects(1, &per_key_effects(&order, &mk(40))), Err(Error::TooLarge { .. })));
+    }
+
+    #[test]
+    fn hex_colour_is_six_hex_digits() {
+        assert_eq!(Rgb::parse_hex("ff0040"), Some(Rgb(255, 0, 64)));
+        assert_eq!(Rgb::parse_hex("#ff0040"), Some(Rgb(255, 0, 64)));
+        assert_eq!(Rgb::parse_hex("+12345"), None, "from_str_radix takes a sign");
+        assert_eq!(Rgb::parse_hex("##ff0040"), None);
+        assert_eq!(Rgb::parse_hex("ff00 4"), None);
     }
 
     #[test]

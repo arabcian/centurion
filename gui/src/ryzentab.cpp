@@ -49,7 +49,6 @@
 #include <QSplitter>
 #include <QSpinBox>
 #include <QScrollArea>
-#include <QTabWidget>
 #include <QSet>
 #include <QStandardPaths>
 #include <QGridLayout>
@@ -482,14 +481,9 @@ RyzenTab::RyzenTab(QWidget *parent) : QWidget(parent), layout_(ryzen::detect()) 
     const char *const accents[] = {theme::OK, theme::ACCENT, theme::PURPLE, theme::INFO};
     auto *cards = new QHBoxLayout;
     cards->setSpacing(8);
-    auto *ccdTabs = theme::experimentalEnabled() && ccdCount_ > 1 ? new QTabWidget : nullptr;
-    if (ccdTabs) {
-        ccdTabs->setDocumentMode(true);
-        cards->addWidget(ccdTabs);
-    }
     slots_.reserve(ccdCount_ * SLOTS_PER_CCD);
     for (int ccd = 0; ccd < ccdCount_; ++ccd) {
-        const char *accent = theme::experimentalEnabled() ? theme::FG_DIM : accents[ccd % 4];
+        const char *accent = accents[ccd % 4];
         const auto detected = layout_.cores.value(ccd);
 
         auto *card = new QFrame;
@@ -504,7 +498,7 @@ RyzenTab::RyzenTab(QWidget *parent) : QWidget(parent), layout_(ryzen::detect()) 
                                     .arg(theme::BG2, theme::BORDER_SOFT, accent); });
         auto *g = new QGridLayout(card);
         g->setContentsMargins(8, 6, 8, 6);
-        g->setHorizontalSpacing(theme::experimentalEnabled() ? theme::GAP_XS : 14);
+        g->setHorizontalSpacing(14);
         g->setVerticalSpacing(1);
 
         // Row 0: title + quick fill
@@ -605,16 +599,7 @@ RyzenTab::RyzenTab(QWidget *parent) : QWidget(parent), layout_(ryzen::detect()) 
         for (int c = 0; c < COLS; ++c) g->setColumnStretch(c, 1);
         g->setRowStretch(3 + SLOTS_PER_CCD, 1);
         ccdColumns_[ccd] = card;
-        if (ccdTabs) {
-            auto *page = new QWidget;
-            auto *column = new QVBoxLayout(page);
-            column->setContentsMargins(0, 0, 0, 0);
-            column->addWidget(card);
-            column->addStretch(1);
-            ccdTabs->addTab(page, QStringLiteral("CCD%1").arg(ccd));
-        } else {
-            cards->addWidget(card, 1);
-        }
+        cards->addWidget(card, 1);
     }
 
     auto *gridHost = new QWidget;
@@ -633,7 +618,7 @@ RyzenTab::RyzenTab(QWidget *parent) : QWidget(parent), layout_(ryzen::detect()) 
         // Slot-by-slot editing already exists in the CCD matrix. A second
         // editor duplicated that state and stole ~30% of the usable width.
         // Preserve one source of truth, the fixed 8-slot table, at full width.
-        root->addWidget(coreBox, 0);
+        root->addWidget(coreBox, 1);
     } else {
         root->addWidget(coreBox, 1);
     }
@@ -651,7 +636,6 @@ RyzenTab::RyzenTab(QWidget *parent) : QWidget(parent), layout_(ryzen::detect()) 
         root->addWidget(experimentalui::disclosure(tr("ACTIVITY LOG  ·  Diagnostics"), logBox));
     }
     root->addWidget(logBox, 0);
-    if (theme::experimentalEnabled()) root->addStretch(1);
 
     monTimer_ = new QTimer(this);
     monTimer_->setInterval(MONITOR_MS);
@@ -705,11 +689,9 @@ QList<RyzenTab::Slot *> RyzenTab::activeSlots() {
 void RyzenTab::setCoreMode(bool all) {
     activeCcds_.clear();
     for (int c = 0; c < (all ? ccdCount_ : 1); ++c) activeCcds_.insert(c);
-    auto *ccdTabs = coreGrid_ ? coreGrid_->findChild<QTabWidget *>() : nullptr;
     for (auto it = ccdColumns_.cbegin(); it != ccdColumns_.cend(); ++it) {
         const bool vis = activeCcds_.contains(it.key());
-        if (ccdTabs) ccdTabs->setTabVisible(it.key(), vis);
-        else it.value()->setVisible(vis);
+        it.value()->setVisible(vis);
     }
     for (Slot &s : slots_) if (!activeCcds_.contains(s.ccd)) { s.disable->setChecked(false); s.entry->clear(); }
     log(all ? QStringLiteral("Core mode: All CCDs (%1 slots)").arg(ccdCount_ * SLOTS_PER_CCD)
@@ -987,9 +969,7 @@ void RyzenTab::fitCoreScroll() {
     // them so the measurement is made in the current style.
     for (QWidget *w : coreGrid_->findChildren<QWidget *>()) w->updateGeometry();
     for (QLayout *l : coreGrid_->findChildren<QLayout *>()) l->invalidate();
-    const int contentHeight = coreGrid_->sizeHint().height();
-    coreScroll_->setMinimumHeight(std::min(contentHeight, 260));
-    if (theme::experimentalEnabled()) coreScroll_->setMaximumHeight(contentHeight);
+    coreScroll_->setMinimumHeight(std::min(coreGrid_->sizeHint().height(), 260));
 }
 
 // The height above is measured in the theme's metrics; at start-up the style sheet is applied

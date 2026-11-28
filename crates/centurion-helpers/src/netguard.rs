@@ -1444,22 +1444,23 @@ pub fn run_daemon() -> i32 {
                         open_nflog()
                     } else { None };
                     let log_blocked = wants_nflog(&c) && (g.nflog.is_some() || new_nflog.is_some());
-                    let acct = if c.traffic && g.acct.is_none() {
-                        enable_ct_accounting().and_then(|_| ct_open().map_err(|e| format!(
-                            "traffic accounting: conntrack events unavailable: {e} (kernel: NF_CT_NETLINK)")))
-                            .map(|fd| Some(Acct { fd, open: HashMap::new(), ledger: traffic::Ledger::load(), dirty: None, lost_logged: None }))
-                    } else { Ok(None) };
-                    let result = acct.and_then(|new_acct| {
-                        nft_load(&c, log_blocked).map(|()| new_acct)
-                    });
-                    match result {
-                        Ok(new_acct) => {
+                    // As at start: accounting that cannot start is reported, it does not hold the rules back.
+                    let (new_acct, acct_error) = if c.traffic && g.acct.is_none() {
+                        match enable_ct_accounting().and_then(|_| ct_open().map_err(|e| format!(
+                            "traffic accounting: conntrack events unavailable: {e} (kernel: NF_CT_NETLINK)"))) {
+                            Ok(fd) => (Some(Acct { fd, open: HashMap::new(), ledger: traffic::Ledger::load(), dirty: None, lost_logged: None }), None),
+                            Err(e) => (None, Some(e)),
+                        }
+                    } else { (None, None) };
+                    match nft_load(&c, log_blocked) {
+                        Ok(()) => {
                             if !c.traffic { g.acct_save(); g.acct = None; }
                             else if let Some(a) = new_acct { g.acct = Some(a); }
                             g.cfg = c;
                             if !wants_nflog(&g.cfg) { g.nflog = None; }
                             else if let Some(fd) = new_nflog { g.nflog = Some(fd); }
-                            write_state(&g.cfg, None);
+                            if let Some(e) = &acct_error { eprintln!("centurion-netguard: {e}"); }
+                            write_state(&g.cfg, acct_error.as_deref());
                             eprintln!("centurion-netguard: configuration reloaded");
                             if g.cfg.log_conns && !was_logging { g.snapshot(); }
                             g.sweep();  // guard switched on, or a program left the whitelist

@@ -166,10 +166,12 @@ fn verdict(code: i32, events: Result<Vec<String>, String>) -> (bool, String) {
     }
 }
 
-/// centurion-cpustress next to this binary, else from PATH.
-fn stress_bin() -> std::path::PathBuf {
-    std::env::current_exe().ok().and_then(|p| Some(p.parent()?.join("centurion-cpustress")))
-        .filter(|p| p.is_file()).unwrap_or_else(|| "centurion-cpustress".into())
+/// centurion-cpustress next to this binary (where every package installs it), else in a system
+/// directory. Run as root: only a binary that passes trusted_path, never one found through PATH.
+fn stress_bin() -> Option<std::path::PathBuf> {
+    let beside = std::env::current_exe().ok().and_then(|p| Some(p.parent()?.join("centurion-cpustress")));
+    beside.into_iter().chain(["/usr/bin", "/usr/local/bin"].iter().map(|d| std::path::Path::new(d).join("centurion-cpustress")))
+        .find(|p| crate::trusted_path(p))
 }
 
 // A signal during an unstable offset is a failure, even if SSE would pass.
@@ -180,7 +182,8 @@ fn exit_code(status: std::process::ExitStatus) -> i32 { status.code().unwrap_or(
 /// get a terminal's SIGINT when the search runs under ssh -T, a service or `kill`.
 fn stress(seconds: u64, stop: &AtomicBool) -> i32 {
     let run = |load: &str| -> i32 {
-        let Ok(mut child) = std::process::Command::new(stress_bin())
+        let Some(bin) = stress_bin() else { return 3 };
+        let Ok(mut child) = std::process::Command::new(bin)
             .args(["percore", "--load", load, "--seconds", &seconds.to_string()])
             .stdout(std::process::Stdio::null()).spawn() else { return 3 };
         loop {

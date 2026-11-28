@@ -727,8 +727,7 @@ HomeTab::HomeTab(QWidget *parent) : QWidget(parent), handler_(pp::primaryHandler
             lastVisible=visible; lastColumns=columns;
             for (const auto &entry : panels) if (entry.second) cells->removeWidget(entry.second);
             for (int i=0; i<visible.size(); ++i)
-                cells->addWidget(visible[i],i/columns,i%columns,1,columns==2 && i==visible.size()-1 && i%2==0 ? 2:1,
-                                 experimental ? Qt::AlignTop : Qt::Alignment{});
+                cells->addWidget(visible[i],i/columns,i%columns,1,columns==2 && i==visible.size()-1 && i%2==0 ? 2:1);
             cells->setColumnStretch(0,1); cells->setColumnStretch(1,columns==2?1:0);
             const int rows = int(visible.size()+columns-1)/columns;
             for (int i=0; i<5; ++i) cells->setRowStretch(i,experimental ? (i==rows?1:0) : (i==(visible.size()-1)/columns?1:0));
@@ -838,20 +837,7 @@ HomeTab::HomeTab(QWidget *parent) : QWidget(parent), handler_(pp::primaryHandler
 QGroupBox *HomeTab::buildHardwareBox() {
     auto *box = new QGroupBox(tr("Hardware"));
     box->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Expanding);
-    QTabWidget *sections = nullptr;
-    QGridLayout *g = nullptr;
-    if (theme::experimentalEnabled()) {
-        auto *outer = new QVBoxLayout(box);
-        outer->setContentsMargins(0, 0, 0, 0);
-        sections = new QTabWidget;
-        sections->setDocumentMode(true);
-        outer->addWidget(sections);
-        auto *system = new QWidget;
-        sections->addTab(system, tr("System"));
-        g = new QGridLayout(system);
-    } else {
-        g = new QGridLayout(box);
-    }
+    auto *g = new QGridLayout(box);
     g->setContentsMargins(6, 2, 6, 4);
     g->setHorizontalSpacing(10);
     g->setVerticalSpacing(6);
@@ -870,9 +856,10 @@ QGroupBox *HomeTab::buildHardwareBox() {
         ++row;
     };
     {
-        QLabel *sysVal = nullptr;
-        add(tr("System"), sysinfo::systemInfo(), nullptr, &sysVal);
+        QLabel *sysKey = nullptr, *sysVal = nullptr;
+        add(tr("System"), sysinfo::systemInfo(), &sysKey, &sysVal);
         if (sysVal) {
+            g->setAlignment(sysKey, Qt::AlignLeft | Qt::AlignVCenter);  // level with the value beside the buttons
             // What the firmware reports about itself (series, WMI interfaces, capability list).
             auto *w = new QWidget;
             auto *h = new QHBoxLayout(w);
@@ -901,9 +888,10 @@ QGroupBox *HomeTab::buildHardwareBox() {
     add("CPU", sysinfo::cpuModel());
     add(tr("GPU"), QStringLiteral("…"), &gpuHwKey_, &gpuHwValue_);
     {
-        QLabel *memVal = nullptr;
-        add(tr("Memory"), sysinfo::ramTotal(), nullptr, &memVal);
+        QLabel *memKey = nullptr, *memVal = nullptr;
+        add(tr("Memory"), sysinfo::ramTotal(), &memKey, &memVal);
         if (memVal) {
+            g->setAlignment(memKey, Qt::AlignLeft | Qt::AlignVCenter);
             // Replace the plain value with value + a "Timings…" link to the SPD view.
             auto *w = new QWidget;
             auto *h = new QHBoxLayout(w);
@@ -916,17 +904,6 @@ QGroupBox *HomeTab::buildHardwareBox() {
             h->addWidget(btn);
             g->addWidget(w, row - 1, 1);
         }
-    }
-    if (sections) {
-        g->setColumnStretch(1, 1);
-        g->setRowStretch(row, 1);
-        auto *platform = new QWidget;
-        sections->addTab(platform, tr("Platform && Firmware"));
-        g = new QGridLayout(platform);
-        g->setContentsMargins(theme::GAP_XS, theme::GAP_XS, theme::GAP_XS, theme::GAP_XS);
-        g->setHorizontalSpacing(theme::GAP_S);
-        g->setVerticalSpacing(theme::GAP_XS);
-        row = 0;
     }
     add(tr("Scheduler"), sysinfo::schedulerSummary());
     add(tr("CPU layout"), sysinfo::cpuLayout());
