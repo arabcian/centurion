@@ -141,7 +141,9 @@ fn run() -> Value {
             Ok(m) => intel_uv::monitor_sample(&m, obj.get("clear_logs").and_then(Value::as_bool).unwrap_or(false)),
             Err(e) => json!({"ok": false, "error": format!("/dev/cpu/0/msr: {e}")}),
         },
-        Some("monitor_stream") => return monitor_stream(obj),
+        // The stream has its own end (stdin EOF, stdout gone, 4 h): main's 120 s watchdog would kill it after
+        // two minutes and the tab would start a new pkexec every time. Read-only, like ryzen-co-helper's stream.
+        Some("monitor_stream") => { centurion_helpers::watchdog(0); return monitor_stream(obj) }
         Some("clear_boot") => match std::fs::remove_file(BOOT_FILE) {
             Ok(()) => { clear_hold(); json!({"ok": true, "message": "boot profile removed"}) }
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => json!({"ok": true, "message": "no boot profile"}),
