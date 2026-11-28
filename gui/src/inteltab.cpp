@@ -699,16 +699,14 @@ IntelTab::IntelTab(QWidget *parent) : QWidget(parent) {
         auto *work = new QTabWidget;
         work->setObjectName(QStringLiteral("intelWorkflows"));
         work->setDocumentMode(true);
-        // Two equal columns; boxes on one row share its height (a grid cell stretches its widget), so a box
-        // that gains rows with the hardware (Arrow Lake planes, turbo groups) grows its neighbour with it.
-        // A row taller than the window scrolls with the page.
+        // Keep cards top-aligned and give spare height to the bottom of the page.
         auto makePage = [work](const QString &label, const QList<QList<QWidget *>> &rows) {
             auto *scroll = new QScrollArea;
             scroll->setFrameShape(QFrame::NoFrame);
             scroll->setWidgetResizable(true);
             auto *page = new QWidget;
             auto *grid = new QGridLayout(page);
-            grid->setContentsMargins(5, 7, 5, 7);
+            grid->setContentsMargins(theme::GAP_XS, theme::GAP_S, theme::GAP_XS, theme::GAP_S);
             grid->setHorizontalSpacing(8);
             grid->setVerticalSpacing(8);
             grid->setColumnStretch(0, 1);
@@ -716,11 +714,11 @@ IntelTab::IntelTab(QWidget *parent) : QWidget(parent) {
             int r = 0;
             for (const QList<QWidget *> &row : rows) {
                 for (QWidget *w : row) w->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);  // widths from the grid only
-                if (row.size() == 1) grid->addWidget(row[0], r, 0, 1, 2);
-                else { grid->addWidget(row[0], r, 0); grid->addWidget(row[1], r, 1); }
-                grid->setRowStretch(r, 1);  // the rows fill the page: every tab's boxes end on the same line
+                if (row.size() == 1) grid->addWidget(row[0], r, 0, 1, 2, Qt::AlignTop);
+                else { grid->addWidget(row[0], r, 0, Qt::AlignTop); grid->addWidget(row[1], r, 1, Qt::AlignTop); }
                 ++r;
             }
+            grid->setRowStretch(r, 1);
             scroll->setWidget(page);
             work->addTab(scroll, label);
         };
