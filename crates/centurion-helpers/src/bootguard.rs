@@ -26,12 +26,20 @@ pub fn boot_id() -> String {
     std::fs::read_to_string("/proc/sys/kernel/random/boot_id").map(|s| s.trim().to_owned()).unwrap_or_default()
 }
 
-pub fn read() -> Value {
-    crate::read_root_file(GUARD_FILE, 16 * 1024)
-        .and_then(|s| serde_json::from_str::<Value>(&s).ok())
-        .filter(Value::is_object)
-        .unwrap_or_else(|| json!({}))
+const DAMAGED: &str = "the boot guard state file is damaged or unreadable; resume the presets to start it afresh";
+
+/// No file yet: an empty state. A file that is there but cannot be read as a state: None.
+fn state(exists: bool, text: Option<String>) -> Option<Value> {
+    if !exists { return Some(json!({})); }
+    text.and_then(|s| serde_json::from_str::<Value>(&s).ok()).filter(Value::is_object)
 }
+
+fn load() -> Option<Value> {
+    let exists = !matches!(std::fs::symlink_metadata(GUARD_FILE), Err(e) if e.kind() == std::io::ErrorKind::NotFound);
+    state(exists, crate::read_root_file(GUARD_FILE, 16 * 1024))
+}
+
+pub fn read() -> Value { load().unwrap_or_else(|| json!({})) }
 
 fn write(v: &Value) -> Result<(), String> {
     crate::secure_dir(GUARD_DIR)?;
@@ -47,7 +55,7 @@ fn previous_boot_died(v: &Value, current: &str) -> bool {
 /// (evaluated here too, so a preset service that starts before `arm` has run
 /// still decides correctly).
 pub fn should_skip() -> Option<String> {
-    let v = read();
+    let Some(v) = load() else { return Some(DAMAGED.to_owned()) };
     if v["tripped"] == true {
         return Some(v["reason"].as_str().unwrap_or("boot presets are paused").to_owned());
     }
@@ -62,7 +70,8 @@ fn now() -> u64 { SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs
 /// Start of a boot: trips the guard if the previous boot died armed, else arms
 /// it for this boot. Idempotent within one boot.
 pub fn arm() -> Result<Value, String> {
-    let mut v = read();
+    // A damaged state cannot say how the last boot ended: pause, as after a crash.
+    let mut v = load().unwrap_or_else(|| json!({"tripped": true, "tripped_at": now(), "reason": DAMAGED}));
     let cur = boot_id();
     if cur.is_empty() { return Err("no boot_id".into()); }
     if v["boot_id"] == json!(cur) { return Ok(v); }
@@ -126,5 +135,14 @@ mod tests {
         assert!(!previous_boot_died(&json!({"state": "armed", "boot_id": "b"}), "b"));  // same boot, still in window
         assert!(!previous_boot_died(&json!({"state": "ok", "boot_id": "a"}), "b"));
         assert!(!previous_boot_died(&json!({}), "b"));
+    }
+
+    #[test]
+    fn damaged_state_is_not_an_empty_one() {
+        assert_eq!(state(false, None), Some(json!({})));  // first boot: no file yet
+        assert_eq!(state(true, None), None);               // there, but unreadable or not root's
+        assert_eq!(state(true, Some("{\"state\": \"ar".into())), None);
+        assert_eq!(state(true, Some("[]".into())), None);
+        assert_eq!(state(true, Some(r#"{"state": "ok"}"#.into())), Some(json!({"state": "ok"})));
     }
 }
