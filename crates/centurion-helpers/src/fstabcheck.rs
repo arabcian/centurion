@@ -33,17 +33,18 @@ const EXTRA_TYPES: &[&str] = &["swap", "auto", "none", "ntfs-3g", "nfs", "nfs4",
 
 /// udev escapes in /dev/disk/by-label names ("My\x20Disk").
 fn udev_unescape(s: &str) -> String {
-    let mut out = String::new();
+    let mut out = Vec::new();
     let b = s.as_bytes();
+    let hex = |c: u8| (c as char).to_digit(16).map(|d| d as u8);
     let mut i = 0;
     while i < b.len() {
         if b[i] == b'\\' && i + 3 < b.len() && b[i + 1] == b'x' {
-            if let Ok(v) = u8::from_str_radix(&s[i + 2..i + 4], 16) { out.push(v as char); i += 4; continue; }
+            if let (Some(h), Some(l)) = (hex(b[i + 2]), hex(b[i + 3])) { out.push(h << 4 | l); i += 4; continue; }
         }
-        out.push(b[i] as char);
+        out.push(b[i]);
         i += 1;
     }
-    out
+    String::from_utf8_lossy(&out).into_owned()
 }
 
 /// fstab escapes spaces as \040.
@@ -220,6 +221,14 @@ mod tests {
 
     const GOOD: &str = "UUID=0a1b2c3d-1111-2222-3333-444455556666 / ext4 defaults 0 1\nUUID=1234-ABCD /boot vfat umask=0077 0 2\n\
                         LABEL=Data\\040Disk /mnt/data ntfs3 defaults,nofail 0 0\n/dev/nvme0n1p3 none swap sw 0 0\ntmpfs /tmp tmpfs defaults 0 0\n";
+
+    #[test]
+    fn udev_names_keep_their_utf8() {
+        assert_eq!(udev_unescape("M\u{fc}zik"), "M\u{fc}zik");
+        assert_eq!(udev_unescape("My\\x20Disk"), "My Disk");
+        assert_eq!(udev_unescape("a\\x5cb"), "a\\b");
+        assert_eq!(udev_unescape("\\x1\u{e9}"), "\\x1\u{e9}", "no hex pair: kept, not a panic");
+    }
 
     #[test]
     fn a_correct_file_has_no_findings() {
