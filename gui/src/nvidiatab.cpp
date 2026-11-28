@@ -285,6 +285,82 @@ static QSpinBox *spin(int lo, int hi, const QString &suffix, int w) {
     return s;
 }
 
+namespace {
+
+// Keep related controls together while allowing the group box to shrink.
+class CurveControlLayout final : public QLayout {
+public:
+    explicit CurveControlLayout(int spacing) { setSpacing(spacing); setContentsMargins(0, 0, 0, 0); }
+    ~CurveControlLayout() override { while (count()) delete takeAt(0); }
+
+    void addItem(QLayoutItem *item) override { items_.append(item); }
+    int count() const override { return items_.size(); }
+    QLayoutItem *itemAt(int index) const override { return items_.value(index); }
+    QLayoutItem *takeAt(int index) override {
+        return index >= 0 && index < count() ? items_.takeAt(index) : nullptr;
+    }
+    void addGroup(QHBoxLayout *group) {
+        addChildLayout(group);
+        addItem(group);
+    }
+
+    QSize minimumSize() const override {
+        QSize size(0, 0);
+        for (auto *item : items_) size = size.expandedTo(item->minimumSize());
+        return size;
+    }
+    QSize sizeHint() const override {
+        QSize size(0, 0);
+        for (auto *item : items_) {
+            const QSize hint = item->sizeHint();
+            size.rwidth() += hint.width();
+            size.setHeight(qMax(size.height(), hint.height()));
+        }
+        size.rwidth() += qMax(0, count() - 1) * spacing();
+        return size;
+    }
+    bool hasHeightForWidth() const override { return true; }
+    int heightForWidth(int width) const override { return arrange(QRect(0, 0, width, 0), false); }
+    void setGeometry(const QRect &rect) override {
+        QLayout::setGeometry(rect);
+        arrange(rect, true);
+    }
+
+private:
+    int arrange(const QRect &rect, bool place) const {
+        int x = 0, y = 0, rowHeight = 0;
+        for (auto *item : items_) {
+            const QSize hint = item->sizeHint();
+            const int width = qBound(item->minimumSize().width(), rect.width(), hint.width());
+            if (x > 0 && x + width > rect.width()) {
+                x = 0;
+                y += rowHeight + spacing();
+                rowHeight = 0;
+            }
+            if (place) item->setGeometry(QRect(rect.x() + x, rect.y() + y, width, hint.height()));
+            x += width + spacing();
+            rowHeight = qMax(rowHeight, hint.height());
+        }
+        return y + rowHeight;
+    }
+
+    QList<QLayoutItem *> items_;
+};
+
+void addCurveRow(QBoxLayout *parent, bool wrap, QHBoxLayout *first,
+                 std::initializer_list<QHBoxLayout *> next) {
+    if (!wrap) {
+        parent->addLayout(first);
+        return;
+    }
+    auto *flow = new CurveControlLayout(first->spacing() >= 0 ? first->spacing() : 6);
+    parent->addLayout(flow);
+    flow->addGroup(first);
+    for (auto *group : next) flow->addGroup(group);
+}
+
+} // namespace
+
 NvidiaTab::NvidiaTab(QWidget *parent) : QWidget(parent) {
     QWidget *workspace = this;
     if (theme::experimentalEnabled()) {
@@ -323,9 +399,14 @@ NvidiaTab::NvidiaTab(QWidget *parent) : QWidget(parent) {
     throttle_->setToolTip(tr("Why the GPU is not boosting higher right now (NVML clock event reasons).\n"
                           "power = at the power limit · thermal = temperature limit · — = boosting freely.\n"
                           "While undervolting: 'power' at the same clocks with less power means the UV works."));
-    for (QLabel *l : {temp_, hotspot_, vram_, power_, clock_, memClock_, throttle_}) { stats->addWidget(l); stats->addSpacing(10); }
-    stats->addStretch();
-    sv->addLayout(stats);
+    auto *clocks = experimental ? new QHBoxLayout : stats;
+    auto *limit = experimental ? new QHBoxLayout : stats;
+    for (QLabel *value : {temp_, hotspot_, vram_, power_}) { stats->addWidget(value); stats->addSpacing(10); }
+    for (QLabel *value : {clock_, memClock_}) { clocks->addWidget(value); clocks->addSpacing(10); }
+    limit->addWidget(throttle_);
+    limit->addSpacing(10);
+    if (!experimental) stats->addStretch();
+    addCurveRow(sv, experimental, stats, {clocks, limit});
 
     auto *prow = new QHBoxLayout;
     if (!theme::experimentalEnabled()) prow->addWidget(lbl("Profile:", theme::MUTED));
@@ -355,16 +436,18 @@ NvidiaTab::NvidiaTab(QWidget *parent) : QWidget(parent) {
     navigationtargets::mark(bDrv, QStringLiteral("nv.driver"), QStringLiteral("Driver options"), QStringLiteral("module parameters sürücü seçenekleri"));
     bDrv->setToolTip(tr("nvidia / nvidia-drm module options (modprobe.d), applied at the next boot."));
     connect(bDrv, &QPushButton::clicked, this, [this] { NvRegDialog(this).exec(); });
-    prow->addWidget(bApplyProf);
-    prow->addWidget(bDef);
-    prow->addWidget(bDel);
-    prow->addWidget(bDrv);
+    auto *profileActions = experimental ? new QHBoxLayout : prow;
+    auto *profileExtras = experimental ? new QHBoxLayout : prow;
+    profileActions->addWidget(bApplyProf);
+    profileActions->addWidget(bDef);
+    profileActions->addWidget(bDel);
+    profileExtras->addWidget(bDrv);
     auto *compareProfiles = new QPushButton(tr("Compare…"));
     connect(compareProfiles, &QPushButton::clicked, this, [this] {
         profilediff::show(this, profileNames(), [](const QString &name) { return profilediff::read(PROFILES_DIR + '/' + name + ".json"); });
     });
-    prow->addWidget(compareProfiles);
-    sv->addLayout(prow);
+    profileExtras->addWidget(compareProfiles);
+    addCurveRow(sv, experimental, prow, {profileActions, profileExtras});
     root->addWidget(status);
 
     // Point info
@@ -386,8 +469,9 @@ NvidiaTab::NvidiaTab(QWidget *parent) : QWidget(parent) {
         recompute();
     });
     ih->addWidget(pointSpin_);
-    ih->addStretch();
-    ih->addWidget(lbl("Flatten after index:", theme::MUTED));
+    auto *flatten = experimental ? new QHBoxLayout : ih;
+    if (!experimental) ih->addStretch();
+    flatten->addWidget(lbl("Flatten after index:", theme::MUTED));
     flattenSpin_ = spin(-1, 127, "", 64);
     flattenSpin_->setSpecialValueText(" ");
     flattenSpin_->setValue(-1);
@@ -424,14 +508,14 @@ NvidiaTab::NvidiaTab(QWidget *parent) : QWidget(parent) {
         recompute();
         log(QStringLiteral("Flatten applied from index %1").arg(s));
     });
-    ih->addWidget(flattenSpin_);
+    flatten->addWidget(flattenSpin_);
 
     // Curve
     auto *curve = new QGroupBox("V/F Curve");
     navigationtargets::mark(curve, QStringLiteral("nv.curve"), QStringLiteral("V/F Curve"), QStringLiteral("voltage frequency undervolt voltaj frekans eğrisi"));
     auto *cv = new QVBoxLayout(curve);
     cv->setSpacing(4);
-    cv->addLayout(ih);
+    addCurveRow(cv, experimental, ih, {flatten});
     vf_ = new VfCurveWidget;
     vf_->setToolTip(tr("Click a point to select it, drag a selected point to move it.\n"
                     "Ctrl+click toggles a point, Shift+click selects a range, Ctrl/Shift+drag on empty space box-selects.\n"
@@ -468,7 +552,8 @@ NvidiaTab::NvidiaTab(QWidget *parent) : QWidget(parent) {
     connect(readLayer, &QCheckBox::toggled, this, updateLayers);
     layers->addWidget(baseLayer); layers->addWidget(readLayer);
     layers->addWidget(new QLabel(tr("Solid: draft")));
-    layers->addStretch();
+    auto *layerActions = experimental ? new QHBoxLayout : layers;
+    if (!experimental) layers->addStretch();
     auto *diff = new QPushButton(tr("Point comparison…"));
     navigationtargets::mark(diff, QStringLiteral("nv.points"), QStringLiteral("Point comparison"), QStringLiteral("readback delta nokta karşılaştırma"));
     connect(diff, &QPushButton::clicked, this, [this] {
@@ -495,10 +580,11 @@ NvidiaTab::NvidiaTab(QWidget *parent) : QWidget(parent) {
         connect(bb, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
         layout->addWidget(bb); dlg.exec();
     });
-    layers->addWidget(diff);
+    layerActions->addWidget(diff);
     auto *bTransactions = new QPushButton(tr("V/F History"));
     connect(bTransactions,&QPushButton::clicked,this,&NvidiaTab::showCurveTransactions);
-    layers->addWidget(bTransactions); cv->addLayout(layers);
+    layerActions->addWidget(bTransactions);
+    addCurveRow(cv, experimental, layers, {layerActions});
     // Compact zoom/pan bar (wheel = zoom at cursor, Shift+wheel = pan, +/−/0 keys).
     auto *gb = new QHBoxLayout;
     gb->setSpacing(6);
@@ -545,9 +631,10 @@ NvidiaTab::NvidiaTab(QWidget *parent) : QWidget(parent) {
     auto *coverageBar = new QHBoxLayout;
     coverageBar->addWidget(observeButton_);
     coverageBar->addWidget(historyButton);
-    coverageBar->addWidget(lbl(tr("Voltage is estimated"), theme::MUTED));
-    coverageBar->addStretch();
-    cv->addLayout(coverageBar);
+    auto *coverageHint = experimental ? new QHBoxLayout : coverageBar;
+    coverageHint->addWidget(lbl(tr("Voltage is estimated"), theme::MUTED));
+    if (!experimental) coverageBar->addStretch();
+    addCurveRow(cv, experimental, coverageBar, {coverageHint});
     gb->addSpacing(4);
     gb->addWidget(lbl("Zoom", theme::MUTED));
     gb->addWidget(zoomSl);
@@ -568,23 +655,24 @@ NvidiaTab::NvidiaTab(QWidget *parent) : QWidget(parent) {
         zoomLbl->setText(QStringLiteral("%1×").arg(vf_->zoom(), 0, 'f', 1));
     });
     panSl->setEnabled(false);
-    gb->addStretch();
+    auto *graphActions = experimental ? new QHBoxLayout : gb;
+    if (!experimental) gb->addStretch();
     auto *bAll = new QPushButton("Select All");
     connect(bAll, &QPushButton::clicked, vf_, &VfCurveWidget::selectAll);
     auto *bRg = new QPushButton("Reset Graph");
     bRg->setToolTip(tr("Discard unapplied edits and show the last curve read from the GPU"));
     connect(bRg, &QPushButton::clicked, this, [this] { if (busy_) return; flatFrom_ = -1; profiles_->setCurrentIndex(-1); resetGraphToLastRead(); });
-    gb->addWidget(bAll);
-    gb->addWidget(bRg);
+    graphActions->addWidget(bAll);
+    graphActions->addWidget(bRg);
     undoCurveBtn_ = new QPushButton(tr("Undo curve"));
     redoCurveBtn_ = new QPushButton(tr("Redo curve"));
     undoCurveBtn_->setToolTip(tr("Undo an unapplied V/F edit; never writes to the GPU."));
     redoCurveBtn_->setToolTip(undoCurveBtn_->toolTip());
     connect(undoCurveBtn_, &QPushButton::clicked, this, [this] { restoreCurveDraft(false); });
     connect(redoCurveBtn_, &QPushButton::clicked, this, [this] { restoreCurveDraft(true); });
-    gb->addWidget(undoCurveBtn_); gb->addWidget(redoCurveBtn_);
+    graphActions->addWidget(undoCurveBtn_); graphActions->addWidget(redoCurveBtn_);
     updateCurveHistory();
-    cv->addLayout(gb);
+    addCurveRow(cv, experimental, gb, {graphActions});
     if (!theme::experimentalEnabled()) root->addWidget(curve, 1);
 
     // Controls
@@ -593,8 +681,8 @@ NvidiaTab::NvidiaTab(QWidget *parent) : QWidget(parent) {
     cvl->setSpacing(4);
     auto *ch = new QHBoxLayout;
     auto *ch2 = new QHBoxLayout;
-    cvl->addLayout(ch);
-    cvl->addLayout(ch2);
+    auto *vramControls = experimental ? new QHBoxLayout : ch;
+    auto *mizerControls = experimental ? new QHBoxLayout : ch2;
     ch->addWidget(lbl("Core:", theme::MUTED));
     coreSpin_ = spin(CORE_MIN, CORE_MAX, " MHz", 96);
     coreSpin_->setToolTip(tr("Core offset for the V/F curve. Like LACT's curve shift it is applied from 30 % of the curve up\n"
@@ -605,8 +693,8 @@ NvidiaTab::NvidiaTab(QWidget *parent) : QWidget(parent) {
     ch->addWidget(lbl("Memory:", theme::MUTED));
     memSpin_ = spin(-3000, 3000, " MHz", 96);
     ch->addWidget(memSpin_);
-    ch->addSpacing(8);
-    ch->addWidget(lbl("VRAM lock:", theme::MUTED));
+    if (!experimental) ch->addSpacing(8);
+    vramControls->addWidget(lbl("VRAM lock:", theme::MUTED));
     lockMinSpin_ = spin(0, 20000, " MHz", 92);
     navigationtargets::mark(lockMinSpin_, QStringLiteral("nv.vram.min"), QStringLiteral("VRAM lock minimum"), QStringLiteral("memory clock bellek frekans kilidi"));
     lockMinSpin_->setSpecialValueText("–");
@@ -615,17 +703,17 @@ NvidiaTab::NvidiaTab(QWidget *parent) : QWidget(parent) {
     navigationtargets::mark(lockMaxSpin_, QStringLiteral("nv.vram.max"), QStringLiteral("VRAM lock maximum"), QStringLiteral("memory clock bellek frekans kilidi"));
     lockMaxSpin_->setSpecialValueText("–");
     lockMaxSpin_->setToolTip(tr("Max memory clock (MHz) — the actual lock target."));
-    ch->addWidget(lockMinSpin_);
-    ch->addWidget(lbl("–", theme::MUTED));
-    ch->addWidget(lockMaxSpin_);
+    vramControls->addWidget(lockMinSpin_);
+    vramControls->addWidget(lbl("–", theme::MUTED));
+    vramControls->addWidget(lockMaxSpin_);
     auto *bLock = new QPushButton("Lock"), *bUnlock = new QPushButton("Unlock");
     bLock->setToolTip(tr("Lock VRAM clock to Min–Max now"));
     bUnlock->setToolTip(tr("Unlock VRAM clock"));
     connect(bLock, &QPushButton::clicked, this, &NvidiaTab::vramLock);
     connect(bUnlock, &QPushButton::clicked, this, &NvidiaTab::vramUnlock);
-    ch->addWidget(bLock);
-    ch->addWidget(bUnlock);
-    ch->addStretch();
+    vramControls->addWidget(bLock);
+    vramControls->addWidget(bUnlock);
+    if (!experimental) ch->addStretch();
     // Core clock cap (NVML locked clocks). The driver will not take per-point
     // offsets below its floor, so a flatten can stop short of its target; a cap
     // at the flatten frequency makes the GPU use the lowest-voltage point that
@@ -681,8 +769,8 @@ NvidiaTab::NvidiaTab(QWidget *parent) : QWidget(parent) {
     });
     ch2->addWidget(bCap);
     ch2->addWidget(bUncap);
-    ch2->addSpacing(8);
-    ch2->addWidget(lbl("PowerMizer:", theme::MUTED));
+    if (!experimental) ch2->addSpacing(8);
+    mizerControls->addWidget(lbl("PowerMizer:", theme::MUTED));
     powerMizer_ = new QComboBox;
     navigationtargets::mark(powerMizer_, QStringLiteral("nv.powermizer"), QStringLiteral("PowerMizer"), QStringLiteral("performance power profile güç performans profili"));
     powerMizer_->setEnabled(false);
@@ -696,8 +784,10 @@ NvidiaTab::NvidiaTab(QWidget *parent) : QWidget(parent) {
                        "Could not set PowerMizer", [this](bool, const QJsonObject &) { syncPowerMizer(); }))
             syncPowerMizer();  // busy: the box must not keep showing a mode that was not set
     });
-    ch2->addWidget(powerMizer_);
-    ch2->addStretch();
+    mizerControls->addWidget(powerMizer_);
+    if (!experimental) ch2->addStretch();
+    addCurveRow(cvl, experimental, ch, {vramControls});
+    addCurveRow(cvl, experimental, ch2, {mizerControls});
     readBtn_ = new QPushButton("Read Curve");
     connect(readBtn_, &QPushButton::clicked, this, &NvidiaTab::readCurve);
     auto *bApply = new QPushButton("Apply Offsets");
@@ -729,17 +819,12 @@ NvidiaTab::NvidiaTab(QWidget *parent) : QWidget(parent) {
                       readCurve();  // memory offset comes back from NVML
                   });
     });
-    auto *curveActions = ch2;
-    if (experimental) {
-        curveActions = new QHBoxLayout;
-        curveActions->setSpacing(theme::GAP_XS);
-        curveActions->addStretch();
-        cvl->addLayout(curveActions);
-    }
+    auto *curveActions = experimental ? new QHBoxLayout : ch2;
+    auto *resetActions = experimental ? new QHBoxLayout : ch2;
     for (auto *button : {readBtn_, bValidate, bApply}) curveActions->addWidget(button);
-    if (experimental) curveActions->addSpacing(theme::GAP_S);
-    curveActions->addWidget(resetBtn_);
-    curveActions->addWidget(bResetAll);
+    resetActions->addWidget(resetBtn_);
+    resetActions->addWidget(bResetAll);
+    if (experimental) addCurveRow(cvl, true, curveActions, {resetActions});
 
     if (theme::experimentalEnabled()) {
         // Give the actual V/F graph the full page width. The former right
