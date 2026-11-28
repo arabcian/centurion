@@ -100,9 +100,9 @@ fn read_private(p: &str) -> Option<Value> {
 pub struct Failures { pub count: u32, pub until: u64 }
 
 impl Failures {
-    fn load() -> Failures {
-        let v = read_private(STATE_FILE).unwrap_or(Value::Null);
-        Failures { count: v["failures"].as_u64().unwrap_or(0) as u32, until: v["until"].as_u64().unwrap_or(0) }
+    fn load() -> Failures { Failures::from_value(&read_private(STATE_FILE).unwrap_or(Value::Null)) }
+    fn from_value(v: &Value) -> Failures {
+        Failures { count: v["failures"].as_u64().unwrap_or(0).min(u64::from(u32::MAX)) as u32, until: v["until"].as_u64().unwrap_or(0) }
     }
     fn save(&self) -> Result<(), String> {
         crate::secure_dir(STATE_DIR)?;
@@ -333,6 +333,13 @@ mod tests {
     #[test]
     fn non_ascii_digest_text_is_invalid_not_a_panic() {
         assert!(unhex("aéb").is_empty());  // 4 bytes: the 2-byte pair would split é
+    }
+
+    #[test]
+    fn huge_failure_count_stays_disabled() {
+        let f = Failures::from_value(&json!({"failures": 4_294_967_296u64, "until": 7}));
+        assert!(f.disabled(), "{f:?}");
+        assert_eq!(Failures::from_value(&Value::Null), Failures::default());
     }
 
     #[test]
