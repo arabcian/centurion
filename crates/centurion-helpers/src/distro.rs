@@ -262,10 +262,13 @@ pub fn foreign_packages(family: &str) -> Vec<String> {
 }
 
 /// A package query's output lines. Bounded: a locked or broken database must not hang a configuration backup
-/// (the automatic one runs unattended), so the command is killed after COMMAND_TIMEOUT and its output dropped.
+/// (the automatic one runs unattended), so the command is killed after 20 s and its output dropped.
 fn command_lines(name: &str, args: &[&str]) -> Vec<String> {
+    command_lines_within(name, args, std::time::Duration::from_secs(20))
+}
+
+fn command_lines_within(name: &str, args: &[&str], timeout: std::time::Duration) -> Vec<String> {
     use std::io::Read as _;
-    const COMMAND_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(20);
     const MAX_OUTPUT: u64 = 16 << 20;
     let Some(bin) = ["/usr/bin", "/bin", "/usr/sbin", "/sbin"].iter().map(|d| Path::new(d).join(name)).find(|p| p.is_file()) else {
         return Vec::new();
@@ -280,16 +283,18 @@ fn command_lines(name: &str, args: &[&str]) -> Vec<String> {
         let _ = (&mut stdout).take(MAX_OUTPUT).read_to_end(&mut buf);
         buf
     });
-    let deadline = std::time::Instant::now() + COMMAND_TIMEOUT;
+    let deadline = std::time::Instant::now() + timeout;
     let ok = loop {
         match child.try_wait() {
             Ok(Some(st)) => break st.success(),
             Ok(None) if std::time::Instant::now() < deadline => std::thread::sleep(std::time::Duration::from_millis(50)),
-            _ => { let _ = child.kill(); let _ = child.wait(); break false; }
+            _ => { crate::kill_reap(&mut child); break false; }
         }
     };
-    let out = reader.join().unwrap_or_default();
+    // Not joined on failure: after a timeout the pipe may still be held open (a child stuck in D state, or one of
+    // its own children), and the reader ends with the process.
     if !ok { return Vec::new(); }
+    let out = reader.join().unwrap_or_default();
     String::from_utf8_lossy(&out).lines().map(str::trim).filter(|l| !l.is_empty()).map(str::to_owned).collect()
 }
 
@@ -438,6 +443,16 @@ mod tests {
         assert!(command_lines("centurion-no-such-tool", &[]).is_empty());
         assert!(command_lines("false", &[]).is_empty());
         assert_eq!(command_lines("echo", &["one", "two"]), vec!["one two".to_string()]);
+    }
+
+    /// A timed-out query must return at its deadline even when something still holds its stdout open
+    /// (a background child here; a process stuck in D state on a hung disk in the field).
+    #[test]
+    fn command_timeout_does_not_wait_for_the_pipe() {
+        let t = std::time::Instant::now();
+        let out = command_lines_within("sh", &["-c", "sleep 5 & exec sleep 5"], std::time::Duration::from_millis(200));
+        assert!(out.is_empty());
+        assert!(t.elapsed() < std::time::Duration::from_secs(3), "took {:?}", t.elapsed());
     }
 
     #[test]
