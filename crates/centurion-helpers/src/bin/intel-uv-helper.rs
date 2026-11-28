@@ -20,7 +20,7 @@
 //! Profile format: see intel_uv::parse_profile.
 
 use centurion_helpers::intel_uv::{self, parse_profile};
-use centurion_helpers::intel_uv_daemon::{apply_boot, clear_hold, parse_boot, write_hold};
+use centurion_helpers::intel_uv_daemon::{apply_boot, boot_within_gui_floor, clear_hold, within_gui_floor, write_hold};
 use centurion_helpers::*;
 use centurion_helpers::stream::{emit_line, wait_stdin};
 use serde_json::{json, Value};
@@ -31,19 +31,6 @@ const BOOT_DIR: &str = "/etc/centurion";
 const BOOT_FILE: &str = "/etc/centurion/intel-uv-boot.json";
 /// Early, readable refusal of an offset below this CPU's floor (intel_uv::uv_floor_mv: -200 mV, -50 mV on
 /// Core Ultra). intel_uv::apply enforces the same floor on every write, the boot service and daemon included.
-fn within_gui_floor(p: &intel_uv::Profile) -> Result<(), String> {
-    let floor = intel_uv::uv_floor_mv();
-    match p.voltage.iter().find(|(_, _, mv)| *mv < floor) {
-        Some((plane, _, mv)) => Err(format!("voltage.{plane}: {mv} mV is below this CPU's {floor} mV floor")),
-        None => Ok(()),
-    }
-}
-
-fn boot_within_gui_floor(c: &Value) -> Result<(), String> {
-    let b = parse_boot(c)?;
-    b.ac.iter().chain(&b.battery).try_for_each(within_gui_floor)
-}
-
 /// The boot profile is applied by root at every boot and resume, so it lives
 /// in a verified root-owned directory and is replaced atomically (the old
 /// version used create_dir_all under the caller's umask: `umask 000; pkexec`

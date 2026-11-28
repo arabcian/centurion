@@ -74,6 +74,7 @@
 #![allow(clippy::type_complexity)]
 
 use centurion_helpers::autotune;
+use centurion_helpers::tune::clean_values;
 use centurion_helpers::tune::{self, TUNABLES};
 use centurion_helpers::*;
 use serde_json::{json, Map, Value};
@@ -1473,45 +1474,6 @@ fn op_isolate_join(req: &Value) -> Value {
            Err(e) => json!({"ok": false, "error": e}),
         }
     })
-}
-
-/// Known keys with values that validate against *this* machine; knobs this machine lacks are not stored.
-fn clean_values(values: &Map<String, Value>) -> Result<(Map<String, Value>, Vec<Value>), Vec<Value>> {
-    let mut clean = Map::new();
-    let mut rejected = Vec::new();
-    let mut dropped = Vec::new();
-    for (k, v) in values {
-        match tune::find(k) {
-            // Not present right now (a CCD parked, SMT off, another pstate mode, a device asleep): kept, so the
-            // stored preset stays whole -- apply_values skips it while it is absent. Dropping it made a scene's
-            // "replace" treat the key as left over and put it back to its original. A choice is checked against
-            // live options, which an absent row has none of: kept as given if it has a value's shape.
-            Some(t) if tune::files(t).is_empty() && !t.debugfs => match tune::validate(t, v) {
-                Ok(s) => { clean.insert(k.clone(), json!(s)); }
-                Err(_) if t.kind == tune::Kind::Choice && tune::options(t).is_empty()
-                    && v.as_str().map(str::trim).is_some_and(|s| !s.is_empty() && s.len() <= 64
-                        && s.bytes().all(|b| b.is_ascii_alphanumeric() || b"_+-.".contains(&b))) => {
-                    clean.insert(k.clone(), json!(v.as_str().unwrap().trim()));
-                }
-                // As before for an absent row: left out, not fatal; now reported.
-                Err(e) => dropped.push(json!({"key": k, "error": format!("not available here and not storable: {e}")})),
-            },
-            Some(t) => match tune::validate(t, v) {
-                Ok(s) => { clean.insert(k.clone(), json!(s)); }
-                Err(e) => rejected.push(json!({"key": k, "error": e})),
-            },
-            None if tune::RETIRED_KEYS.contains(&k.as_str()) => {}
-            None => rejected.push(json!({"key": k, "error": "unknown key"})),
-        }
-    }
-    if !rejected.is_empty() { return Err(rejected); }
-    // Values the safety audit refuses are never stored (reported, not fatal:
-    // one bad legacy key must not block a whole batch of scene presets).
-    for i in autotune::audit(&clean, &autotune::AuditCtx::live()).into_iter().filter(|i| i.reject) {
-        clean.remove(&i.key);
-        dropped.push(json!({"key": i.key, "error": format!("refused by the safety audit: {}", i.msg)}));
-    }
-    Ok((clean, dropped))
 }
 
 fn preset_name(s: &str) -> Option<String> {
