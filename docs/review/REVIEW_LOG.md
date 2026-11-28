@@ -10,16 +10,18 @@ Python static testleri kaynakta metin arıyor (≈441 assert); bunları kıran b
 - Aşama 0 (envanter + plan): TAMAMLANDI, **onay bekleniyor**.
 - Kod değişikliği: yok.
 
-## Başlangıç durumu (2026-11-28, commit b745ba0, dal experimental)
+## Başlangıç durumu (2026-11-28, commit 123c3c7, dal experimental)
 
-Ortam: rustc/cargo 1.97.0, cmake 3.28.3, Qt 6.4.2 (Ubuntu paketleri, CI ile aynı paket listesi kuruldu).
+Ortam: rustc/cargo 1.97.0, cmake 3.28.3, Qt 6.4.2 (CI'daki apt paket listesi kuruldu).
+Not: ilk ölçüm container'ın eski klonunda (b745ba0) yapılmıştı; uzak dalda ~55 yeni commit vardı,
+birleştirildi ve her şey yeniden çalıştırıldı. Aşağıdaki sayılar birleştirilmiş uçtan.
 
 | Komut | Sonuç |
 |---|---|
-| `cargo test --workspace --locked` | GEÇTİ — 686 geçti, 0 kaldı, 9 ignored (perf/sim/live testleri), 41 suite |
-| `cargo clippy --workspace --all-targets --locked -- -D warnings` | **KALDI** — 1 hata: `crates/centurion-helpers/src/sysadmin.rs:171` `clippy::manual_pattern_char_comparison` (yeni clippy sürümünün lint'i). Bu lint `-A` ile susturulunca geri kalan her şey temiz (EXIT 0). Satır udev `RUN/PROGRAM/IMPORT{program}` engel listesinde → kırmızı çizgi, onay bekliyor. |
-| `cmake … -DCENTURION_SANITIZE=ON -DCENTURION_LTO=OFF` + build + `ctest` | GEÇTİ — 73/73 (CI bayraklarıyla, ASAN/UBSAN açık, `QT_QPA_PLATFORM=offscreen`) |
-| CI'daki 43 `python3` test adımı | GEÇTİ — 43/43 |
+| `cargo test --workspace --locked` | GEÇTİ — 726 geçti, 0 kaldı, 9 ignored, 41 suite |
+| `cargo clippy --workspace --all-targets --locked -- -D warnings` | GEÇTİ (eski uçtaki `sysadmin.rs:171` lint hatası upstream'de zaten düzeltilmiş) |
+| `cmake … -DCENTURION_SANITIZE=ON -DCENTURION_LTO=OFF` + build + `ctest` | GEÇTİ — 77/77 (CI bayrakları: ASAN/UBSAN, `QT_QPA_PLATFORM=offscreen`) |
+| CI'daki 45 `python3` test adımı (rust + gui job'ları) | GEÇTİ — 45/45 |
 | `cargo-deny` (CI'da ayrı job) | ÇALIŞTIRILMADI — görev listesinde yok, araç kurulu değil |
 
 Ignored testler: `cowork::chunk_times`, `autotune::perf_bench::bench_big_signature`, `autotune::live_autotune`,
@@ -27,7 +29,8 @@ Ignored testler: `cowork::chunk_times`, `autotune::perf_bench::bench_big_signatu
 
 ## Envanter
 
-Toplam: Rust ≈ 64.0k satır (testler dahil), GUI `gui/src` ≈ 71.2k satır, test dosyaları ≈ 9.0k satır.
+Toplam (123c3c7): Rust ≈ 66.0k satır (testler dahil), GUI `gui/src` ≈ 73.1k satır, test dosyaları ≈ 9.6k satır.
+Tablolardaki dosya bazlı sayılar b745ba0'dan; fark küçük (ör. optimizetab 4669, backup.rs 2898, netguard.rs 2551).
 
 Risk seviyeleri: **R1** = root + donanıma (MSR/EC/WMI/SMU/sysfs/NVAPI) yazma; **R2** = root + sistem dosyası/ağ/
 yapılandırma yazma; **R3** = root olmayan veya salt okuma/saf mantık; **G1** = ayrıcalıklı helper çağıran GUI;
@@ -103,9 +106,7 @@ Her aşama tek oturuma sığacak boyutta tutuldu (~4–8k satır).
 
 ## Bekleyen onaylar
 
-1. **Clippy başlangıçta kırmızı** (`sysadmin.rs:171`). Önerilen düzeltme davranışı birebir koruyor:
-   `split(|c: char| c == '=' || … )` → `split(['=', '+', '-', ':', '!'])`. Ancak satır udev engel listesinde
-   (kırmızı çizgi). Uygulamak için onay gerekli; aksi halde her aşamada "clippy: başlangıçtaki tek hata dışında temiz" diye raporlanacak.
+1. Aşama 0 planının onayı.
 
 ## Okunan dosyalar
 
