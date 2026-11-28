@@ -439,7 +439,7 @@ pub const CALIBRATION_HOLD: &str = "/run/centurion/calibrating.json";
 /// The pid holding the calibration hold, if that process is alive.
 pub fn calibration_hold() -> Option<i64> {
     let v: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(CALIBRATION_HOLD).ok()?).ok()?;
-    let pid = v["pid"].as_i64()?;
+    let pid = v["pid"].as_i64().filter(|p| *p > 1)?;
     match v["start"].as_u64() {
         Some(st) => session_alive(Some(pid), Some(st)).then_some(pid),
         None => Path::new(&format!("/proc/{pid}")).exists().then_some(pid),
