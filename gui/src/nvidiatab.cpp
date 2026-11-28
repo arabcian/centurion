@@ -41,6 +41,7 @@
 #include <QSlider>
 #include <QSplitter>
 #include <QScrollArea>
+#include <QFontDatabase>
 #include <QGridLayout>
 #include <QSettings>
 #include <QSignalBlocker>
@@ -306,13 +307,19 @@ NvidiaTab::NvidiaTab(QWidget *parent) : QWidget(parent) {
     auto *status = new QGroupBox("GPU Status");
     auto *sv = new QVBoxLayout(status);
     auto *stats = new QHBoxLayout;
-    temp_ = lbl("Temp: -- °C", theme::ACCENT, true);
-    power_ = lbl("Power: -- W", theme::WARN, true);
-    clock_ = lbl("Clock: -- MHz", theme::INFO, true);
-    memClock_ = lbl("Mem Clock: -- MHz", theme::OK, true);
-    hotspot_ = lbl("Hotspot: -- °C", theme::DANGER, true);
-    vram_ = lbl("VRAM: -- °C", theme::PURPLE, true);
+    const bool experimental = theme::experimentalEnabled();
+    temp_ = lbl("Temp: -- °C", experimental ? theme::FG_DIM : theme::ACCENT, !experimental);
+    power_ = lbl("Power: -- W", experimental ? theme::FG_DIM : theme::WARN, !experimental);
+    clock_ = lbl("Clock: -- MHz", experimental ? theme::FG_DIM : theme::INFO, !experimental);
+    memClock_ = lbl("Mem Clock: -- MHz", experimental ? theme::FG_DIM : theme::OK, !experimental);
+    hotspot_ = lbl("Hotspot: -- °C", experimental ? theme::FG_DIM : theme::DANGER, !experimental);
+    vram_ = lbl("VRAM: -- °C", experimental ? theme::FG_DIM : theme::PURPLE, !experimental);
     throttle_ = lbl("Limit: --", theme::FG_DIM);
+    if (experimental) {
+        const QFont numeric = QFontDatabase::systemFont(QFontDatabase::FixedFont);
+        for (auto *value : {temp_, hotspot_, vram_, power_, clock_, memClock_})
+            value->setFont(numeric);
+    }
     throttle_->setToolTip(tr("Why the GPU is not boosting higher right now (NVML clock event reasons).\n"
                           "power = at the power limit · thermal = temperature limit · — = boosting freely.\n"
                           "While undervolting: 'power' at the same clocks with less power means the UV works."));
