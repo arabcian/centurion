@@ -381,18 +381,19 @@ pub fn live_game_sessions(state: &Value) -> i64 {
 /// Serialises multi-step hardware transactions (MSR mailbox write → read,
 /// acpi_call write → read) between our own helpers and the daemon, which
 /// would otherwise be able to interleave and read each other's replies.
-pub struct FdLock(libc::c_int);
-impl FdLock {
-    pub fn exclusive<F: AsRawFd>(f: &F) -> io::Result<FdLock> {
+/// Borrows the file: it cannot be closed (and its number reused) while the lock is held.
+pub struct FdLock<'a>(libc::c_int, std::marker::PhantomData<&'a ()>);
+impl<'a> FdLock<'a> {
+    pub fn exclusive<F: AsRawFd>(f: &'a F) -> io::Result<FdLock<'a>> {
         let fd = f.as_raw_fd();
         loop {
-            if unsafe { libc::flock(fd, libc::LOCK_EX) } == 0 { return Ok(FdLock(fd)); }
+            if unsafe { libc::flock(fd, libc::LOCK_EX) } == 0 { return Ok(FdLock(fd, std::marker::PhantomData)); }
             let e = io::Error::last_os_error();
             if e.kind() != io::ErrorKind::Interrupted { return Err(e); }
         }
     }
 }
-impl Drop for FdLock {
+impl Drop for FdLock<'_> {
     fn drop(&mut self) { unsafe { libc::flock(self.0, libc::LOCK_UN); } }
 }
 

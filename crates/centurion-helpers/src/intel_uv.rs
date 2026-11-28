@@ -445,7 +445,7 @@ impl Msr {
     /// flock() on the msr device descriptor: separate opens (separate
     /// processes) conflict, so this serialises mailbox transactions system-wide
     /// among cooperating tools without any extra lock file.
-    fn txn(&self) -> io::Result<crate::FdLock> { crate::FdLock::exclusive(&self.f) }
+    fn txn(&self) -> io::Result<crate::FdLock<'_>> { crate::FdLock::exclusive(&self.f) }
 }
 
 /// Result of `Msr::mailbox_rmw`.

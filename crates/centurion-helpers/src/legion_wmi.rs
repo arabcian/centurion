@@ -222,15 +222,15 @@ fn acpi_raw_inner(expr: &str) -> Result<String, String> {
     use std::io::{Read, Write};
     const MAX_REPLY: u64 = 4096;
     if let Some(fake) = acpi_fake() { return acpi_reply(fake(expr).as_bytes()); }
-    let mut f = OpenOptions::new().read(true).write(true).custom_flags(libc::O_CLOEXEC).open(ACPI_CALL)
+    let f = OpenOptions::new().read(true).write(true).custom_flags(libc::O_CLOEXEC).open(ACPI_CALL)
         .map_err(|e| format!("{ACPI_CALL}: {e}"))?;
     let _lock = crate::FdLock::exclusive(&f).map_err(|e| format!("{ACPI_CALL} lock: {e}"))?;
-    f.write_all(expr.as_bytes()).map_err(|e| format!("acpi_call write: {e}"))?;
+    (&f).write_all(expr.as_bytes()).map_err(|e| format!("acpi_call write: {e}"))?;
     // One large read(): acpi_call clears its result after the first read, and
     // read_to_end's small probe read loses any reply longer than the probe
     // (buffers such as WQA6 came back empty; short integers happened to fit).
     let mut raw = vec![0u8; MAX_REPLY as usize];
-    let n = f.read(&mut raw).map_err(|e| format!("acpi_call read: {e}"))?;
+    let n = (&f).read(&mut raw).map_err(|e| format!("acpi_call read: {e}"))?;
     raw.truncate(n);
     acpi_reply(&raw)
 }
