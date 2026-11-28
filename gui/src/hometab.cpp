@@ -1,3 +1,4 @@
+#include "unlock.h"
 #include "navigationtargets.h"
 #include "hometab.h"
 #include "workspacefields.h"
@@ -214,6 +215,18 @@ static QPushButton *profileButton(const QString &label, const QString &profile) 
         const QString accent = theme::profileAccent(profile);
         b->setIcon(profileDot(accent));
         const QByteArray a = accent.toLatin1();
+        if (theme::experimentalEnabled()) {
+            // Flat keys: the profile's colour is its marker; the active key is a raised neutral surface.
+            b->setStyleSheet(QStringLiteral(
+                "QPushButton { background: transparent; color: %1; border: 1px solid transparent; border-left: 2px solid %2;"
+                " border-radius: 6px; border-top-left-radius: 0; border-bottom-left-radius: 0;"
+                " padding: 3px 12px 3px 10px; font-weight: 500; text-align: left; }"
+                "QPushButton:hover { background: %3; color: %4; }"
+                "QPushButton:checked { background: %5; color: %4; border-color: %6; border-left-color: %7; font-weight: 600; }")
+                .arg(theme::FG_DIM, theme::rgba(a.constData(), 0.45), theme::rgba(theme::FG, 0.05), theme::FG,
+                     theme::rgba(theme::FG, 0.08), theme::BORDER, accent));
+            return;
+        }
         // A plate per profile with its LED colour on the left edge; the active one is lit
         // (a wash of its colour fading to the right, a matching hairline frame).
         b->setStyleSheet(QStringLiteral(
@@ -528,6 +541,10 @@ HomeTab::HomeTab(QWidget *parent) : QWidget(parent), handler_(pp::primaryHandler
         startup->setToolTip(tr("Open navigation preferences (Ctrl+Shift+F)"));
         connect(startup, &QPushButton::clicked, this, [this] { Q_EMIT navigationPreferencesRequested(); });
         preferencesRow->addRow(startup);
+        auto *pinButton = new QPushButton(tr("Set or change unlock PIN…"));
+        pinButton->setToolTip(tr("The 4-digit PIN that unlocks Centurion for writing new values. Setting it asks for the administrator password once."));
+        connect(pinButton, &QPushButton::clicked, this, [this] { unlock::Manager::instance().changePin(this); });
+        preferencesRow->addRow(pinButton);
         auto *settingsButton = new QPushButton(tr("Preferences"));
         settingsButton->setObjectName(QStringLiteral("btnMini"));
         auto *popup = new QMenu(settingsButton);
@@ -592,7 +609,8 @@ HomeTab::HomeTab(QWidget *parent) : QWidget(parent), handler_(pp::primaryHandler
     navigationtargets::mark(profileBox, QStringLiteral("home.power"), QStringLiteral("Power Profile"), QStringLiteral("platform profile güç profili"));
     profileBox->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Expanding);
     grid_ = new QGridLayout(profileBox);
-    grid_->setContentsMargins(6, 2, 6, 4);
+    if (theme::experimentalEnabled()) grid_->setContentsMargins(0, 0, 0, 0);  // the card's padding is the inset
+    else grid_->setContentsMargins(6, 2, 6, 4);
     grid_->setHorizontalSpacing(8);
     grid_->setVerticalSpacing(4);
 
@@ -667,10 +685,11 @@ HomeTab::HomeTab(QWidget *parent) : QWidget(parent), handler_(pp::primaryHandler
         auto *gridHost = new QWidget;
         if (experimental) gridHost->setObjectName(QStringLiteral("homeWorkspace"));
         auto *cells = new QGridLayout(gridHost);
-        cells->setContentsMargins(0,0,0,0); cells->setSpacing(6);
+        cells->setContentsMargins(0,0,0,0); cells->setSpacing(experimental ? theme::GAP_S : 6);
         int index = 0;
         for (const auto &entry : panels) if (entry.second) {
-            entry.second->setSizePolicy(QSizePolicy::Preferred,QSizePolicy::Expanding);
+            // Experimental: cards take their content's height; the page's leftover space goes below them.
+            entry.second->setSizePolicy(QSizePolicy::Preferred,experimental ? QSizePolicy::Preferred : QSizePolicy::Expanding);
             cells->addWidget(entry.second,index/2,index%2); ++index;
         }
         // Only a window too small for the content scrolls.
@@ -696,7 +715,7 @@ HomeTab::HomeTab(QWidget *parent) : QWidget(parent), handler_(pp::primaryHandler
             if (defaultOrder.contains(id) && !order->contains(id)) order->append(id);
         for (const auto &id : defaultOrder) if (!order->contains(id)) order->append(id);
         auto layoutState=std::make_shared<QPair<QList<QWidget *>,int>>();
-        auto arrange = [cells,panels,order,layoutState](int width) {
+        auto arrange = [cells,panels,order,layoutState,experimental](int width) {
             auto &[lastVisible,lastColumns]=*layoutState;
             QList<QWidget *> visible;
             for (const auto &id : *order) for (const auto &entry : panels)
@@ -710,7 +729,8 @@ HomeTab::HomeTab(QWidget *parent) : QWidget(parent), handler_(pp::primaryHandler
             for (int i=0; i<visible.size(); ++i)
                 cells->addWidget(visible[i],i/columns,i%columns,1,columns==2 && i==visible.size()-1 && i%2==0 ? 2:1);
             cells->setColumnStretch(0,1); cells->setColumnStretch(1,columns==2?1:0);
-            for (int i=0; i<4; ++i) cells->setRowStretch(i,i==(visible.size()-1)/columns?1:0);
+            const int rows = int(visible.size()+columns-1)/columns;
+            for (int i=0; i<5; ++i) cells->setRowStretch(i,experimental ? (i==rows?1:0) : (i==(visible.size()-1)/columns?1:0));
         };
         // New children are hidden only by an explicit visibility choice, not because Home itself is hidden.
         profileBox->show(); if (dev) dev->show();
@@ -776,7 +796,12 @@ HomeTab::HomeTab(QWidget *parent) : QWidget(parent), handler_(pp::primaryHandler
             if (sensorDetail) sensorDetail->setChecked(true);
             arrange(scroll->viewport()->width());
         });
-        root->addWidget(dashboardMenu,0,Qt::AlignRight);
+        if (experimental) {  // beside Preferences: one header row instead of a row of its own
+            dashboardMenu->setObjectName(QStringLiteral("btnMini"));
+            headRow->addWidget(dashboardMenu, 0, Qt::AlignVCenter);
+        } else {
+            root->addWidget(dashboardMenu,0,Qt::AlignRight);
+        }
         scroll->reflow=arrange;
         arrange(scroll->viewport()->width());
         root->addWidget(scroll, 1);
@@ -1122,7 +1147,7 @@ void HomeTab::applyEcExtras(const QJsonObject &o) {
     QStringList parts;
     if (ecFansWanted_) {
         const QJsonObject fans = o.value("fans").toObject();
-        static const struct { const char *key, *name; } ORDER[] = {{"cpu", "CPU"}, {"gpu", "GPU"}, {"pch", "System"}};
+        static const struct { const char *key, *name; } ORDER[] = {{"cpu", "CPU"}, {"gpu", "GPU"}, {"pch", "System"}, {"sys2", "System 2"}};
         for (const auto &f : ORDER)
             if (fans.value(QLatin1String(f.key)).isDouble())
                 parts << tr("%1 %2 RPM").arg(QLatin1String(f.name)).arg(fans.value(QLatin1String(f.key)).toInt());
@@ -1312,6 +1337,9 @@ QGroupBox *HomeTab::buildDeviceBox() {
             if (force) prewrite::backupThen(QStringLiteral("igpu"), this, send);
             else send();
         };
+        auto syncIgpuLock = [ig](bool unlocked) { ig->setEnabled(unlocked); };
+        connect(&unlock::Manager::instance(), &unlock::Manager::changed, ig, syncIgpuLock);
+        syncIgpuLock(unlock::Manager::instance().unlocked());
         connect(ig, &QComboBox::activated, this, [setIgpu](int i) { (*setIgpu)(i, false); });
         connect(nvBack, &QPushButton::clicked, this, [this, nvBack, gh] {
             nvBack->setEnabled(false);
@@ -1519,6 +1547,7 @@ QGroupBox *HomeTab::buildDeviceBox() {
         if (curveBtn) mh->addWidget(curveBtn);
         mh->addWidget(maxAllBtn_);
         mh->addWidget(maxBannerBtn_);
+        connect(&unlock::Manager::instance(), &unlock::Manager::changed, this, [this] { refreshDevice(); });
         if (theme::experimentalEnabled() && fullSpeedRow >= 0) {
             // One "Fans" row: Turbo on the left, curve / max on the right.
             g->removeWidget(fullSpeed_);
@@ -1573,12 +1602,15 @@ QGroupBox *HomeTab::buildDeviceBox() {
                 auto *cb = new QCheckBox(tr(d.text));
                 cb->setToolTip(tr(d.tip));
                 cb->setChecked(t.value(d.key).toBool());
+                auto syncLock = [cb](bool unlocked) { cb->setEnabled(unlocked); };
+                connect(&unlock::Manager::instance(), &unlock::Manager::changed, cb, syncLock);
+                syncLock(unlock::Manager::instance().unlocked());
                 const QString key = d.key;
                 connect(cb, &QCheckBox::clicked, this, [this, cb, key](bool on) {
                     cb->setEnabled(false);
                     privileged::run(helperPath(), QJsonObject{{"wmae_toggle", "set"}, {"key", key}, {"on", on}}, this,
                                     [this, cb, key, on](const privileged::Result &r) {
-                        cb->setEnabled(true);
+                        cb->setEnabled(unlock::Manager::instance().unlocked());
                         if (!r.ok()) { QSignalBlocker b(cb); cb->setChecked(!on); showStatus(tr("%1 failed: %2").arg(key, r.message()), 8000); }
                         else showStatus(tr("%1 → %2").arg(key, on ? tr("on") : tr("off")));
                     });
@@ -1728,7 +1760,7 @@ void HomeTab::applyDevice(const DeviceSnap &snap) {
             } else if (f.autoBox->isChecked() || f.target->text().isEmpty() || f.target->isEnabled() == false) {
                 f.autoBox->setChecked(true);
             }
-            const bool locked = f.autoBox->isChecked() || f.maxBox->isChecked();
+            const bool locked = !unlock::Manager::instance().unlocked() || f.autoBox->isChecked() || f.maxBox->isChecked();
             f.target->setEnabled(!locked);
             f.set->setEnabled(!locked);
         }
@@ -1740,7 +1772,12 @@ void HomeTab::setMaxMode(bool on, bool ecFullSpeed) {
     if (!maxBannerBtn_) return;
     maxBannerText_->setVisible(on);
     maxBannerBtn_->setVisible(on);
-    if (maxAllBtn_) maxAllBtn_->setVisible(!on);
+    const bool unlocked = unlock::Manager::instance().unlocked();
+    maxBannerBtn_->setEnabled(unlocked || ecFullSpeed);
+    if (maxAllBtn_) {
+        maxAllBtn_->setVisible(!on);
+        maxAllBtn_->setEnabled(unlocked);
+    }
     if (on) {
         maxBannerText_->setText(ecFullSpeed
             ? tr("<span style='color:%1'><b>EC Full Speed on</b> — all fans at maximum</span>").arg(theme::WARN)
@@ -1749,9 +1786,9 @@ void HomeTab::setMaxMode(bool on, bool ecFullSpeed) {
     }
     // The banner stands in for every per-fan control (the RPM readout stays live).
     for (const FanRow &f : std::as_const(fans_)) {
-        f.autoBox->setEnabled(!on);
-        f.maxBox->setEnabled(!on);
-        if (on) { f.target->setEnabled(false); f.set->setEnabled(false); }
+        f.autoBox->setEnabled(!on && unlocked);
+        f.maxBox->setEnabled(!on && unlocked);
+        if (on || !unlocked) { f.target->setEnabled(false); f.set->setEnabled(false); }
     }
     if (fullSpeed_) fullSpeed_->setEnabled(!on || ecFullSpeed);
 }

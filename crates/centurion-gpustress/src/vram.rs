@@ -191,15 +191,41 @@ pub fn run(pci: &str, percent: u32, seconds: u64) -> i32 {
     let t = t0.elapsed().as_secs_f64();
     match outcome {
         Ok(Halt::Stopped) => end("stopped", t, st.passes, st.errors, "stopped"),
-        Ok(Halt::Deadline) if st.errors > 0 => end("fail", t, st.passes, st.errors, &format!("{} wrong word(s)", st.errors)),
-        Ok(Halt::Deadline) => end("pass", t, st.passes, st.errors, "no errors"),
+        Ok(Halt::Deadline) => {
+            let (status, message) = deadline_verdict(&st);
+            end(status, t, st.passes, st.errors, &message)
+        }
         Err(e) => vk_end(e, t, st.passes, st.errors),
+    }
+}
+
+fn deadline_verdict(st: &State) -> (&'static str, String) {
+    if st.errors > 0 {
+        ("fail", format!("{} wrong word(s)", st.errors))
+    } else if st.passes == 0 {
+        ("init_failed", format!("time expired before a full VRAM pass ({} bytes checked)", st.bytes_checked))
+    } else {
+        ("pass", "no errors".into())
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn deadline_requires_a_full_verified_pass() {
+        let mut st = State::default();
+        assert_eq!(deadline_verdict(&st).0, "init_failed");
+        st.bytes_checked = 4096;
+        assert_eq!(deadline_verdict(&st).0, "init_failed");
+        st.errors = 1;
+        assert_eq!(deadline_verdict(&st).0, "fail");
+        st.errors = 0;
+        st.passes = 1;
+        assert_eq!(deadline_verdict(&st).0, "pass");
+    }
+
 
     /// The Rust patterns must equal vram.wgsl: run the shader on a CPU device (lavapipe) and compare every word,
     /// then check that `verify` accepts the data and reports one corrupted word exactly.

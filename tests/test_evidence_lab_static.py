@@ -15,9 +15,9 @@ class EvidenceLabIntegration(unittest.TestCase):
         self.assertIn('Some("diagnostics")', src('crates/centurion-helpers/src/bin/health-reader.rs'))
         self.assertIn('health_diagnostics::report()', src('crates/centurion-helpers/src/bin/health-reader.rs'))
 
-    def test_all_five_health_capabilities(self):
+    def test_all_health_capabilities(self):
         s=src('crates/centurion-helpers/src/health_diagnostics.rs')
-        for key in ['"mce"','"topology"','"aer"','"xid_cases"','"f2fs_events"','"radio_events"','"radio_summary"']:
+        for key in ['"mce"','"topology"','"aer"','"xid_cases"','"fs_events"','"fs_mounts"','"radio_events"','"radio_summary"','"components"']:
             self.assertIn(key,s)
         self.assertIn('300_000_000',s)
         self.assertIn('CCD not verified',s)
@@ -25,13 +25,22 @@ class EvidenceLabIntegration(unittest.TestCase):
     def test_all_health_tabs_wired_to_real_data(self):
         s=src('gui/src/healthevidence.cpp')
         reports=src('gui/src/evidencereports.cpp')
+        components=src('gui/src/componentreports.cpp')
         dispatch=src('gui/src/advancedhealth.cpp')
-        for code, fn in [('H02','mceAtlas'),('H03','aerDelta'),('H04','xidCases'),('H05','f2fsGuard'),('H09','radioLedger')]:
-            self.assertIn('reportFor(QStringLiteral("'+code+'")',s)
+        # Every This Boot sub-tab is one report over the same scan, dispatched by its code.
+        self.assertIn('investigations::reportFor(QLatin1String(COMPONENTS[i].code), data)',s)
+        for code, fn in [('H02','mceAtlas'),('H03','aerDelta'),('H04','xidCases'),('H05','fsGuard'),('H09','radioLedger')]:
+            self.assertIn('{"'+code+'", ',s)
             self.assertIn('code == QStringLiteral("'+code+'")) return er::'+fn,dispatch)
-        for field in ['aer','xid_cases','mce','f2fs_events','radio_events']:
+        for code, fn in [('H19','kernel'),('H20','storage'),('H21','gpu'),('H22','power'),('H23','memory'),('H24','usb'),('H25','audio'),('H26','firmware')]:
+            self.assertIn('{"'+code+'", ',s)
+            self.assertIn('code == QStringLiteral("'+code+'")) return cr::'+fn+'(',dispatch)
+            self.assertIn('r.code = QStringLiteral("'+code+'")',components)
+            self.assertIn('"'+code+'"',dispatch[dispatch.index('QStringList opsFor'):dispatch.index('diag::Report reportFor')])
+        for field in ['aer','xid_cases','mce','fs_events','fs_mounts','radio_events']:
             self.assertIn('scan.value(QStringLiteral("'+field+'"))',reports)
-        self.assertIn('new HealthEvidencePage',src('gui/src/healthtab.cpp'))
+        self.assertIn('scan.value(QStringLiteral("components"))',components)
+        self.assertIn('new HealthEvidencePage',src('gui/src/diagnosticspage.cpp'))  # a tab of Diagnostics
         self.assertIn('helperPath(QStringLiteral("health-reader"))',dispatch)
 
     def test_classification_and_gui_trigger_both_updated(self):
@@ -40,7 +49,7 @@ class EvidenceLabIntegration(unittest.TestCase):
         for term in ['"f2fs"','"bluetooth"','"wifi"']:
             self.assertIn(term,r)
         for term in ['"F2FS-fs"','"Bluetooth:"','"mt792"']:
-            self.assertIn(term,ui)
+            self.assertIn(term,ui+src('gui/src/kmsgwake.h'))
         self.assertIn('QLatin1String("f2fs")',src('gui/src/eventinfo.cpp'))
         self.assertIn('QLatin1String("bluetooth")',src('gui/src/eventinfo.cpp'))
 
@@ -68,7 +77,7 @@ class EvidenceLabIntegration(unittest.TestCase):
             self.assertIn(title,ui)
         for special in ['S01','S03','S06']:
             self.assertIn('{"@diag", "'+special+'"}',ui)
-        for f in ['src/diagnostictools.cpp','src/healthevidence.cpp']:
+        for f in ['src/diagnostictools.cpp','src/healthevidence.cpp','src/componentreports.cpp']:
             self.assertIn(f,src('gui/CMakeLists.txt'))
 
     def test_privileged_diagnostics_are_read_only(self):
@@ -105,7 +114,8 @@ class EvidenceLabIntegration(unittest.TestCase):
         c=src('gui/CMakeLists.txt')
         assert 'centurion-diagnostictools-test' in c and 'add_test(NAME diagnostictools' in c
         r=src('crates/centurion-helpers/src/health_diagnostics.rs')
-        for case in ['cpu_identifiers_do_not_infer_ccd','xid_154_only_preceding_same_gpu','radio_ledger_groups_device_without_inventing_hardware_ids']:
+        for case in ['cpu_identifiers_do_not_infer_ccd','xid_154_only_preceding_same_gpu','radio_ledger_groups_device_without_inventing_hardware_ids',
+                     'components_group_kernel_records_without_repeating_other_tabs','every_disk_file_system_is_a_volume']:
             assert f'fn {case}' in r
 
 if __name__ == '__main__': unittest.main(verbosity=2)

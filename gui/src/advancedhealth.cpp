@@ -1,6 +1,7 @@
 #include "advancedhealth.h"
 
 #include "advanceddiagnostics.h"
+#include "componentreports.h"
 #include "diagnostictools.h"
 #include "diagreportview.h"
 #include "diagsources.h"
@@ -23,6 +24,7 @@
 #include <QLabel>
 #include <QLineEdit>
 #include <QScrollBar>
+#include <QStandardItemModel>
 #include <QSignalBlocker>
 #include <QPlainTextEdit>
 #include <QPointer>
@@ -77,7 +79,8 @@ namespace investigations {
 QStringList opsFor(const QString &code) {
     QStringList ops;
     if (QStringList{"H01", "H12", "H13", "H15"}.contains(code)) ops << QStringLiteral("boots");
-    if (QStringList{"H02", "H03", "H04", "H05", "H09", "H13", "H16"}.contains(code)) ops << QStringLiteral("diagnostics");
+    if (QStringList{"H02", "H03", "H04", "H05", "H09", "H13", "H16", "H19", "H20", "H21", "H22", "H23", "H24", "H25", "H26"}.contains(code))
+        ops << QStringLiteral("diagnostics");
     if (code == QStringLiteral("H06")) ops << QStringLiteral("nvme_deep");
     return ops;
 }
@@ -91,7 +94,7 @@ diag::Report reportFor(const QString &code, const QHash<QString, QJsonObject> &d
     if (code == QStringLiteral("H02")) return er::mceAtlas(ev, coreMap());
     if (code == QStringLiteral("H03")) return er::aerDelta(ev, diagsrc::loadJson(diagsrc::dataDir() + QStringLiteral("/aer-last-sample.json")));
     if (code == QStringLiteral("H04")) return er::xidCases(ev);
-    if (code == QStringLiteral("H05")) return er::f2fsGuard(ev, er::f2fsVolumes(ev), diagsrc::savedEvents());
+    if (code == QStringLiteral("H05")) return er::fsGuard(ev, er::fsVolumes(ev), diagsrc::savedEvents());
     if (code == QStringLiteral("H06")) return ad::nvmeHealth(d.value(QStringLiteral("nvme_deep")));
     if (code == QStringLiteral("H09")) return er::radioLedger(ev, diagsrc::savedEvents());
     if (code == QStringLiteral("H10")) return ad::usbStability(diagsrc::savedKernel(), ad::usbPresent());
@@ -99,6 +102,16 @@ diag::Report reportFor(const QString &code, const QHash<QString, QJsonObject> &d
     if (code == QStringLiteral("H13")) return ad::coCrossLink(ad::coRecordsFromSystem(), boots, ev);
     if (code == QStringLiteral("H15")) return ad::flightCoverage(boots);
     if (code == QStringLiteral("H16")) return ad::gpuMemory(ev, ad::nvidiaGpus(), {});
+    // This Boot's component tabs: the scan's kernel-log records of the component, and its sysfs state now.
+    namespace cr = componentreports;
+    if (code == QStringLiteral("H19")) return cr::kernel(ev, cr::kernelState());
+    if (code == QStringLiteral("H20")) return cr::storage(ev, cr::storageState());
+    if (code == QStringLiteral("H21")) return cr::gpu(ev, cr::drmCards());
+    if (code == QStringLiteral("H22")) return cr::power(ev, cr::powerState());
+    if (code == QStringLiteral("H23")) return cr::memory(ev, cr::memoryState());
+    if (code == QStringLiteral("H24")) return cr::usb(ev);
+    if (code == QStringLiteral("H25")) return cr::audio(ev, diagsrc::read(QStringLiteral("/proc/asound/cards")));
+    if (code == QStringLiteral("H26")) return cr::firmware(ev);
     if (code == QStringLiteral("S06")) return diagnostictools::nvidiaParams();
     return systemdiagnostics::byCode(code);
 }
@@ -133,8 +146,14 @@ AdvancedHealthPage::AdvancedHealthPage(QWidget *parent) : QWidget(parent) {
     v->addWidget(help);
     auto *top = new QHBoxLayout;
     feature_ = new QComboBox;
-    for (const auto &[code, name] : features())
+    for (const auto &[code, name] : features()) {
+        if (QLatin1String(code) == QLatin1String("H06")) {  // the everyday checks above, the rest under one heading
+            feature_->addItem(QStringLiteral("── ") + tr("More checks") + QStringLiteral(" ──"), QString());
+            if (auto *model = qobject_cast<QStandardItemModel *>(feature_->model()))
+                model->item(feature_->count() - 1)->setEnabled(false);
+        }
         feature_->addItem(tr(name), QString::fromLatin1(code));
+    }
     top->addWidget(feature_, 1);
     category_ = new QComboBox;
     for (const advanceddiagnostics::TriageCategory &c : advanceddiagnostics::triageCategories())
@@ -160,6 +179,8 @@ AdvancedHealthPage::AdvancedHealthPage(QWidget *parent) : QWidget(parent) {
 
     stack_ = new QStackedWidget;
     view_ = new DiagReportView;
+    view_->setCompact(true);  // snapshot, history and evidence tools behind one "More…" menu
+    connect(view_, &DiagReportView::showBoots, this, &AdvancedHealthPage::showBoots);
     stack_->addWidget(view_);
     // H17: incidents on the left, what one means and its note on the right.
     incidentPage_ = new QWidget;
@@ -271,9 +292,11 @@ void AdvancedHealthPage::run() {
             QList<diag::Report> reports;
             for (const QString &c : codes) reports << investigations::reportFor(c, data);
             view_->setReport(advanceddiagnostics::triage(label, reports));
-            showRelated(category_->currentData().toString());
+            showRelated(toolcatalog::relatedFor(category_->currentData().toString()));
         } else {
             view_->setReport(investigations::reportFor(code, data));
+            // H01 counts faults per boot: the boots and their fault kinds are on Boot History.
+            if (code == QStringLiteral("H01")) showRelated({"page:boot", "page:monitor", "page:curves"});
         }
         gpuQuery_->setEnabled(code == QStringLiteral("H16"));
         message_->setText(failed.isEmpty() ? QString() : tr("Not available: %1. The report says Unknown where that data was needed.").arg(failed.join(QStringLiteral("; "))));
@@ -290,7 +313,7 @@ void AdvancedHealthPage::startTriage(const QString &category) {
     run();
 }
 
-void AdvancedHealthPage::showRelated(const QString &category) {
+void AdvancedHealthPage::showRelated(const QStringList &targets) {
     auto *row = static_cast<QGridLayout *>(related_->layout());
     while (QLayoutItem *item = row->takeAt(0)) {
         delete item->widget();
@@ -300,7 +323,7 @@ void AdvancedHealthPage::showRelated(const QString &category) {
     title->setProperty("role", "muted");
     row->addWidget(title, 0, 0, 1, 3);
     int links = 0;
-    for (const QString &target : toolcatalog::relatedFor(category)) {
+    for (const QString &target : targets) {
         const QString name = targetLabel_ ? targetLabel_(target) : QString();
         if (name.isEmpty()) continue;  // not on this system (no dGPU, no battery …)
         auto *b = new QPushButton(name);

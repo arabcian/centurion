@@ -97,7 +97,8 @@ QStringList pageKeywords(const QString &key) {
     static const QHash<QString, QStringList> p = {
         {"overview", words("genel bakış|özet|summary|overview|durum|status")},
         {"monitor", words("xid|gsp|mce|aer|hata|error|olay|event|çökme|crash|uyarı|alert|nvidia|lockup|oom|donma|freeze")},
-        {"evidence", words("xid|mce|aer|f2fs|kanıt|evidence|firmware|radyo|radio|wifi")},
+        {"diagnostics", words("boot|açılış|önyükleme|çökme|crash|kapanma|shutdown|donma|freeze|güncelleme sonrası|after update|xid|mce|aer|f2fs|ext4|btrfs|xfs|exfat|ntfs|dosya sistemi|file system|disk|depolama|storage|çekirdek|kernel|bellek|memory|usb|ses|audio|termal|thermal|acpi|sürücü|driver|kanıt|evidence|firmware|radyo|radio|wifi|triage|sorun|problem|regression|fault|incident|bulgu|finding")},
+        {"evidence", words("xid|mce|aer|f2fs|ext4|btrfs|xfs|exfat|ntfs|dosya sistemi|file system|disk|depolama|storage|çekirdek|kernel|bellek|memory|usb|ses|audio|termal|thermal|acpi|sürücü|driver|kanıt|evidence|firmware|radyo|radio|wifi")},
         {"investigations", words("triage|sorun|problem|h18|başla|start|regression|nvme|usb|uyku|sleep|çökme|crash|incident|not|ecc|gpu memory")},
         {"boot", words("boot|açılış|önyükleme|çökme|crash|kapanma|shutdown|donma|freeze|güncelleme sonrası|after update")},
         {"capabilities", words("eksik özellik|missing feature|capability|destek|support|desteklenmiyor|unsupported|neden yok")},

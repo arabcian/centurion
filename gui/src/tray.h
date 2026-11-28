@@ -3,11 +3,13 @@
 #include "notify.h"
 #include <QStringList>
 #include <QSystemTrayIcon>
+#include <QTimer>
 
 class MainWindow;
 class QMenu;
 
 QIcon appIcon(int size = 64);
+QIcon sessionLockIcon(bool unlocked);
 
 class Tray : public QSystemTrayIcon {
     Q_OBJECT
@@ -31,5 +33,7 @@ private:
     QMenu *menu_;
     Notifier *notifier_;
     bool cooldown_ = false;
+    QTimer adminRelease_;       // drops the keyboard's administrator rights 1 minute after the menu closes
+    bool adminFromTray_ = false;
     QStringList deferred_;  // one line per alert held while a game ran
 };

@@ -15,7 +15,8 @@
 // itself fails, the core climbs back towards stock by the step from the failure; the first value that
 // passes is its result. Excluded cores stay at stock.
 // The short probes include steady load and all ten boost/idle transitions. When every core is done, the
-// whole set is verified for 20 minutes (verifyTrial), including all-core loads up to the power limit. Correlated verification failures make the implicated
+// whole set is verified for 30 minutes (verifyTrial), including all-core loads up to the power limit and a thread
+// hopping between the undervolted cores. Correlated verification failures make the implicated
 // core(s) less negative; untraceable failures back off all undervolted cores; then it runs again.
 //
 // The state is a plain JSON snapshot (save / load), so a search interrupted by a crash can resume: the trial
@@ -48,8 +49,8 @@ struct LevelSpec {
     int confirmAllCore;  // confirmation: cycles with every core loaded
 };
 LevelSpec spec(Level l);
-/// Per-core: length of the final verification of the whole set (more with over 35 cores, see verifyTrial).
-inline constexpr int VERIFY_SECONDS = 1200;
+/// Per-core: length of the final verification of the whole set (more with over 44 cores, see verifyTrial).
+inline constexpr int VERIFY_SECONDS = 1800;
 QString name(Level l);
 std::optional<Level> levelFrom(const QString &s);
 

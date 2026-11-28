@@ -33,6 +33,9 @@ public:
 Q_SIGNALS:
     /// A finding's fix button changed the system: the owner reads the report again.
     void fixApplied();
+    /// A finding about boots was clicked: the owner opens Boot History with these boots (their ids) highlighted;
+    /// `why` is the finding's title.
+    void showBoots(const QStringList &bootIds, const QString &why);
 
 private:
     void clearBody();

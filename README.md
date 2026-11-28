@@ -62,7 +62,7 @@ tab (which does wake it).
 | `centurion-netguard daemon\|status\|list\|whois IP\|CIDR\|ASn\|DOMAIN` | Network guard daemon and queries |
 | `centurion-intel-uv read\|apply\|reset\|monitor\|measure\|throttlestop FILE\|turbo\|daemon` | Standalone Intel undervolt (root) |
 | `centurion-cooltest status\|run [--seconds N]\|baseline\|forget` | Cooling health test as the user (Health → Cooling): fixed CPU load, compared with a baseline of the same firmware settings |
-| `centurion-cpustress info\|percore\|allcore --load sse\|avx2\|avx512 --seconds N [--cycles N] [--transitions] [--cpus LIST]` | CPU stability test as the user (Health → Curve stability → CPU test): per-core or all-core work with a known result, for Curve Optimizer / undervolt offsets; `percore\|allcore --load co [--seconds 24\|60] [--cycles N] [--kernel 0-2] [--cpus LIST]`: 60 s verification cycles (40 s steady + 20 s transitions) or 24 s per-core probes (12 s steady + ten 1.2 s transitions) used by Ryzen Curve → CO Search |
+| `centurion-cpustress info\|percore\|allcore --load sse\|avx2\|avx512 --seconds N [--cycles N] [--transitions] [--cpus LIST]` | CPU stability test as the user (Health → Curve stability → CPU test): per-core or all-core work with a known result, for Curve Optimizer / undervolt offsets; `percore\|allcore --load co [--seconds 24\|60] [--cycles N] [--kernel 0-2] [--cpus LIST]`: 60 s verification cycles (40 s steady + 20 s transitions) or 24 s per-core probes (12 s steady + ten 1.2 s transitions) used by Ryzen Curve → CO Search; `percore --load hop --seconds N [--cpus LIST]`: one thread hopping between cores (CO Search verification) |
 | `centurion-display list\|set-refresh HZ\|brightness\|set-brightness PCT` | Internal panel refresh rate (KDE kscreen-doctor, wlr-randr or xrandr) and backlight brightness (sysfs, logind SetBrightness or brightnessctl) as the user — used by Scenes |
 
 ## D-Bus API
@@ -213,16 +213,14 @@ Build (`cargo build --release`, `cmake -S gui -B gui/build …`), then
 
 ### Gentoo
 
-```sh
-./make-dist.sh    # → dist/centurion-2.0.0.tar.xz (crates vendored, builds offline)
-```
-
-Copy the tarball into your `DISTDIR` and emerge the ebuild from
-`packaging/gentoo/sys-power/centurion/` in a local overlay.
+Put `packaging/gentoo/sys-power/centurion/` into a local overlay and emerge the live
+ebuild (`centurion-9999`, built from git). Optional tools from the Gentoo repository
+are USE flags (see `metadata.xml`); tools from other overlays (zenpower3, zenergy,
+wlr-randr, brightnessctl, MangoHud) are used when they are installed.
 
 ### After installing
 
-1. Log out and back in once (keyboard-lighting udev rule and polkit rules take effect).
+1. Log out and back in once (the polkit rules take effect).
 2. Start **Centurion** from the menu — it lives in the tray and
    starts at login. Missing tray → the window opens instead.
 3. The first time the window opens, a setup wizard shows what was found, the
@@ -328,8 +326,8 @@ re-save your scenes. Details: [docs/AUTOTUNE.md](docs/AUTOTUNE.md).
   *Optimizations → CPU* CCD settings and the NVIDIA driver options.
 - **BIOS setting reverts at boot:** check `/var/log/centurion/writes.log`
   for what Centurion wrote and when.
-- **Lighting asks for admin rights:** re-login or replug the keyboard once so
-  the udev `uaccess` rule applies.
+- **Lighting asks for admin rights:** lighting goes through pkexec; only a
+  wheel/sudo admin at the machine is not asked for a password.
 
 ## Requirements
 
@@ -344,10 +342,10 @@ re-save your scenes. Details: [docs/AUTOTUNE.md](docs/AUTOTUNE.md).
 | GPU power limits, fan curve, GPU mode, instant boot, EC temps | `acpi_call` kernel module |
 | NVIDIA tab | proprietary NVIDIA driver (NvAPI / NVML are loaded at runtime) |
 | AMD GPU tab | `amdgpu` with `ppfeaturemask` bit `0x4000` for Overdrive |
-| Ryzen tab | `ryzen_smu` ≥ 0.1.7 (required with Secure Boot / kernel lockdown; CO goes through the driver's own `smu_args` + `rsmu_cmd`/`mp1_smu_cmd` mailbox), or root write access to PCI config (kernel lockdown off); no `ryzenadj` needed. Cezanne, Rembrandt, Phoenix, Hawk Point, Dragon Range, Fire Range, Strix Halo: all-core + per-core; Strix Point, Krackan: all-core only |
+| Ryzen tab | `ryzen_smu` ≥ 0.1.9 (required with Secure Boot / kernel lockdown; CO goes through the driver's own `smu_args` + `rsmu_cmd`/`mp1_smu_cmd` mailbox), or root write access to PCI config (kernel lockdown off); no `ryzenadj` needed. Cezanne, Rembrandt, Phoenix, Hawk Point, Dragon Range, Fire Range, Strix Halo: all-core + per-core; Strix Point, Krackan: all-core only |
 | live memory timings, extra CPU sensors *(optional)* | `ryzen_smu`, `zenpower` / `zenergy` |
 | BIOS memory timings | efivarfs (`/sys/firmware/efi/efivars`) |
-| Lighting tab without a password | udev + systemd-logind or elogind (`uaccess`) |
+| Lighting tab without a password | membership in `wheel` / `sudo` (polkit) |
 | Health → Sleep (per-sleep log) | the `centurion-sleep-log` system-sleep hook (installed for systemd and elogind) |
 | Scenes → refresh rate | `kscreen-doctor` (KDE), `wlr-randr` (wlroots) or `xrandr` (X11) |
 | Scenes → screen brightness | `dbus-send` or `busctl` (logind / elogind SetBrightness), or `brightnessctl` |
@@ -386,7 +384,7 @@ The GUI runs as your user. A local, active `wheel`/`sudo` admin runs the
 helpers without a password. Firmware-persistent changes, backups and
 network-guard rules always ask for the administrator password.
 Debian/Ubuntu admins are in `sudo`; Gentoo and most others use `wheel`.
-The lighting helper normally runs as you through a udev `uaccess` rule.
+The lighting helper runs through pkexec; there is no udev `uaccess` rule on the keyboard.
 
 Data lives in `~/.config/centurion/` (scenes, presets, AMD GPU
 profiles), `~/.config/ryzen-curve-optimizer/` (CPU profiles), `/etc/nvcurve/`

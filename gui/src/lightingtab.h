@@ -91,6 +91,11 @@ public:
     void setBrightness(int b);
     void setLightsOn(bool on);  // off = brightness 0; on = last non-zero level
     void reload(bool elevate = false);
+    bool adminGranted() const { return adminGranted_; }
+    /// Asks for administrator rights now and reads the keyboard through them (Lighting banner, tray).
+    void grantAdmin();
+    /// Drops the rights: the tab stops using pkexec until the next grant. No-op when none were granted.
+    void releaseAdmin();
     bool hasUnappliedChanges() const { return dirty(); }
     /// Something else (scene, tray) changed the device: re-read unless edits are pending.
     void refreshIfClean() { if (ready_ && !busy_ && !dirty()) reload(false); }
@@ -145,6 +150,7 @@ private:
     QPushButton *undo_ = nullptr, *redo_ = nullptr;
     int active_ = 0, editProfile_ = 0, brightness_ = 0, lastOn_ = 5;
     bool logo_ = false, ready_ = false, busy_ = false, filling_ = false;
+    bool adminGranted_ = false;  // "Use administrator rights" succeeded: later reloads go through pkexec too
     QColor paint_ = QColor(0xe0, 0xa4, 0x58);
 
     QLabel *banner_, *status_, *brightLabel_, *selLabel_, *budget_, *keysLabel_;

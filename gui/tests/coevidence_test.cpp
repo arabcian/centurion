@@ -93,7 +93,7 @@ int main(int argc, char **argv) {
         Search s(Mode::PerCore, Level::Fast, -30, cpu8());
         for (const Core &c : s.cores()) s.setStart(c.ccd, c.slot, -10);
         std::optional<Trial> t;
-        while ((t = s.next()) && !t->what.startsWith("20-minute")) s.report({!t->perCore.contains(-11), {}});
+        while ((t = s.next()) && !t->what.startsWith("30-minute")) s.report({!t->perCore.contains(-11), {}});
         CHECK(t.has_value());
         const QList<int> before = s.values();
         int i5 = -1;

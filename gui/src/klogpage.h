@@ -1,10 +1,11 @@
 #pragma once
-// Health → Kernel log: every kernel message of level warning or worse, saved
+// Health → Kernel log: every kernel message of level warning or worse, plus the hardware faults
+// health.rs::classify recognises at any level (NVIDIA Xid is logged below warning), saved
 // across boots. Source: `tune-helper {"op":"klog","since":N}` (reads /dev/kmsg).
 //
 // Capture is event-driven: while the app runs, /dev/kmsg is watched with a
 // socket notifier and the helper is started only after a warning-or-worse
-// record appeared (debounced) — no periodic process spawns. If the kernel log
+// record or a recognised hardware fault (kmsgwake.h) appeared (debounced) — no periodic process spawns. If the kernel log
 // is restricted (dmesg_restrict=1) it is read through pkexec only when the
 // page is shown or "Refresh" is pressed, never in the background.
 // The log file survives reboots until cleared; the ring buffer does not.
@@ -70,7 +71,7 @@ private:
     quint64 focusSeq_ = 0;
     bool needsRoot_ = false, busy_ = false, shownOnce_ = false;
     QSet<QString> muted_;                 // normalized messages hidden by the user (gui.ini klog/muted)
-    QHash<QString, QString> rowKey_;      // text of each rendered row → its message key (for the menu)
-    QHash<QString, QString> rowMsg_;      // text of each rendered row → the kernel message itself
+    struct RowMessage { QString key, message; };
+    QHash<QString, RowMessage> rowMessages_;  // rendered line → context menu data
     int hiddenMuted_ = 0;                 // rows left out by the mute list in the last render
 };

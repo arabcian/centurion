@@ -18,7 +18,7 @@ xml = etree.parse(str(root / 'i18n/centurion_tr.ts'))
 
 areas = ["Processor, Memory & Board", "GPU, Drivers & Displays", "Drives & File Systems", "Wi-Fi, Bluetooth & Network",
          "Power, Battery & Temperatures", "PCIe & USB Devices", "Kernel, Firmware & Security", "Config Files, Audio & Snapshot"]
-nav = ["System Overview", "Events & Alerts", "Boot History", "Curve Stability", "Kernel Log",
+nav = ["System Overview", "Events & Alerts", "Diagnostics", "Curve Stability", "Kernel Log",
        "Kernel Parameters", "Sleep & Wake", "Battery Use", "dGPU Power", "Drive Health",
        "Network Protection", "System Tools"]
 # Symptom tiles come from advanceddiagnostics::triageCategories() (their own translations).

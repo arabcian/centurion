@@ -1,3 +1,4 @@
+#include "unlock.h"
 #include "cosearchdialog.h"
 #include "cofirstfailure.h"
 #include "coarchive.h"
@@ -390,6 +391,12 @@ static void refreshCoreColors(QTableWidget *table) {
 CoSearchDialog::CoSearchDialog(QWidget *parent) : QDialog(parent), notifier_(new Notifier(this)) {
     setWindowTitle(tr("Ryzen CO Search Assistant (Experimental)"));
     resize(1000, 680);
+    const auto syncLock = [this](bool unlocked) {
+        if (!unlocked && operationActive()) cancel();
+        setEnabled(unlocked);
+    };
+    connect(&unlock::Manager::instance(), &unlock::Manager::changed, this, syncLock);
+    syncLock(unlock::Manager::instance().unlocked());
     auto *v = new QVBoxLayout(this);
     auto *explainer = new QLabel(tr(
         "Finds negative Curve Optimizer offsets with FFT / integer workload and boost/idle transitions. "
@@ -399,8 +406,8 @@ CoSearchDialog::CoSearchDialog(QWidget *parent) : QDialog(parent), notifier_(new
         "first failure ends that core and keeps its last passing value, and nothing as negative as the failed "
         "value is tried on it again. If a core's Start fails, it climbs back towards stock by the step. A value "
         "that crashed the machine is never tried on that core again, in any later search either. Untick a core to "
-        "leave it at stock. The final per-core set is then verified for 20 minutes with the whole curve applied, "
-        "single-core loads alternating with all-core loads up to the power limit. "
+        "leave it at stock. The final per-core set is then verified for 30 minutes with the whole curve applied, "
+        "single-core loads alternating with all-core loads up to the power limit, and one thread hopping from core to core. "
         "The curve is reset to stock when the search ends; the result is saved as a Ryzen Curve profile, not applied. "
         "Passing is NOT proof of long-term stability. A hard freeze may still require rebooting: the search can resume after it."));
     explainer->setWordWrap(true);
@@ -419,7 +426,7 @@ CoSearchDialog::CoSearchDialog(QWidget *parent) : QDialog(parent), notifier_(new
     level_->addItem(tr("Medium"), name(Level::Medium));
     level_->addItem(tr("Long"), name(Level::Long));
     level_->setToolTip(tr("Per-core: 24-second probes (12 s steady + all 10 boost/idle patterns), then a "
-                          "20-minute verification of the whole set at every level.\n"
+                          "30-minute verification of the whole set at every level.\n"
                           "Fast: 1 probe cycle. Medium: 2 probe cycles. Long: 3 probe cycles.\n"
                           "All-core trials use full 60-second cycles; its confirmation is 1 / 2 / 3 cycles per core "
                           "and 1 / 2 / 5 all-core cycles."));
@@ -487,7 +494,7 @@ CoSearchDialog::CoSearchDialog(QWidget *parent) : QDialog(parent), notifier_(new
     loadResult_ = new QPushButton(tr("Use result as Start"));
     loadResult_->setToolTip(tr("Copy the Result column into the Start column (per-core), to continue from it in the next search."));
     verifyBtn_ = new QPushButton(tr("Verify a profile…"));
-    verifyBtn_->setToolTip(tr("Run only the 20-minute verification (per-core profile) or the confirmation (all-core) on a saved "
+    verifyBtn_->setToolTip(tr("Run only the 30-minute verification (per-core profile) or the confirmation (all-core) on a saved "
                               "Ryzen Curve profile, without searching: after a BIOS update, or when the weather got warmer. "
                               "A failing core backs off as in a search; the result is saved as a new profile."));
     guardsBtn_ = new QPushButton(tr("Crash guards…"));
@@ -943,8 +950,8 @@ void CoSearchDialog::probeTools(std::function<void(bool)> then) {
         toolProbe_ = nullptr; p->deleteLater(); preparing_ = false;
         go_->setEnabled(goWas); verifyBtn_->setEnabled(verifyWas); guardsBtn_->setEnabled(guardsWas); stop_->setEnabled(stopWas);
         if (cancelled) { note(tr("CPU stress tool capability check cancelled.")); then(false); return; }
-        if (!exitedOk || *overflow || *timedOut || !doc.isObject() || !loads.value("power").isBool()) {
-            QMessageBox::warning(this,tr("Outdated centurion-cpustress"),tr("The CPU stress tool did not return valid power-load capabilities. Check that it matches this Centurion version."));
+        if (!exitedOk || *overflow || *timedOut || !doc.isObject() || !loads.value("power").isBool() || !loads.value("hop").isBool()) {
+            QMessageBox::warning(this,tr("Outdated centurion-cpustress"),tr("The CPU stress tool did not return the loads this version needs (power, hop). Check that it matches this Centurion version."));
             then(false); return;
         }
         if (!loads.value("power").toBool()) {
@@ -1151,7 +1158,7 @@ void CoSearchDialog::refreshTable() {
             const bool isolated = trial_ && search_->perCoreSearching();
             if (st.excluded) { status = tr("excluded (stock)"); tone = theme::MUTED; excluded = true; }
             else if (isolated && trial_->perCore.value(i) != 0) { status = tr("testing %1").arg(trial_->perCore[i]); tone = theme::ACCENT; testing = true; }
-            else if (trial_ && !isolated && !trial_->perCore.isEmpty()) { status = tr("20-minute verification"); tone = theme::PURPLE; }
+            else if (trial_ && !isolated && !trial_->perCore.isEmpty()) { status = tr("30-minute verification"); tone = theme::PURPLE; }
             else if (st.done && st.failed) { status = tr("done: %1 passed, %2 failed").arg(st.pass).arg(*st.failed); tone = theme::OK; done = true; }
             else if (st.done) { status = tr("done: %1").arg(st.pass); tone = theme::OK; done = true; }
             else if (st.failed && st.pass == 0) { status = tr("start failed, climbing; never %1 or below").arg(*st.failed); tone = theme::WARN; }
@@ -1255,7 +1262,7 @@ void CoSearchDialog::refreshTable() {
 }
 
 std::optional<ryzen::Layout> CoSearchDialog::preflight(Mode mode) {
-    if (running_ || perfTest_ || preparing_ || recoveryBusy_) return std::nullopt;
+    if (!unlock::Manager::instance().unlocked() || running_ || perfTest_ || preparing_ || recoveryBusy_) return std::nullopt;
     if (QFileInfo::exists(journalPath())) {
         // Never overwrite an unresolved crash history with a fresh, unguarded search.
         offerResume();
@@ -1280,6 +1287,10 @@ std::optional<ryzen::Layout> CoSearchDialog::preflight(Mode mode) {
               "the last helper-written state must explicitly be reset/0 before this search.")); return std::nullopt;
     }
     const ryzen::Layout layout = ryzen::detect();
+    // Only a per-core search writes by slot; the all-core one does not depend on the mapping.
+    if (const QString why = mode == Mode::PerCore ? ryzen::slotMappingProblem(layout) : QString(); !why.isEmpty()) {
+        QMessageBox::warning(this, tr("Core slots cannot be matched"), why); return std::nullopt;
+    }
     if (mode == Mode::PerCore && !layout.parked.isEmpty()) {
         QMessageBox::warning(this, tr("CCD parked"), tr("A CCD is parked by Optimizations: its cores cannot be tested alone. Unpark it first.")); return std::nullopt;
     }
@@ -1287,7 +1298,7 @@ std::optional<ryzen::Layout> CoSearchDialog::preflight(Mode mode) {
 }
 
 void CoSearchDialog::start() {
-    if (operationActive()) return;
+    if (!unlock::Manager::instance().unlocked() || operationActive()) return;
     if (QFileInfo::exists(journalPath())) { offerResume(); return; }
     probeTools([this](bool ok) { if (ok) startPrepared(); });
 }
@@ -1361,7 +1372,7 @@ void CoSearchDialog::startPrepared() {
 }
 
 void CoSearchDialog::verifyProfile() {
-    if (operationActive()) return;
+    if (!unlock::Manager::instance().unlocked() || operationActive()) return;
     if (QFileInfo::exists(journalPath())) { offerResume(); return; }
     probeTools([this](bool ok) { if (ok) verifyPrepared(); });
 }

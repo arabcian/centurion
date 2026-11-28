@@ -13,7 +13,9 @@
 #include "diagnostichistory.h"
 #include "sleeppage.h"
 #include "klogpage.h"
+#include "kmsgwake.h"
 #include "kernelparamspage.h"
+#include "lazywidget.h"
 #include "dgpupage.h"
 #include "netpage.h"
 #include "overviewpage.h"
@@ -24,7 +26,7 @@
 #include "privileged.h"
 #include "sysinfo.h"
 #include "systools.h"
-#include "healthevidence.h"
+#include "diagnosticspage.h"
 #include "advancedhealth.h"
 #include "advanceddiagnostics.h"
 #include "theme.h"
@@ -163,7 +165,8 @@ private:
 static QString pageAbout(const QString &key) {
     static const QHash<QString, const char *> ABOUT = {
         {QStringLiteral("overview"), QT_TRANSLATE_NOOP("HealthTab", "One card per area with its level, and suggested next steps.")},
-        {QStringLiteral("evidence"), QT_TRANSLATE_NOOP("HealthTab", "MCE topology, AER changes, NVIDIA Xid cases, F2FS failures and radio firmware faults.")},
+        {QStringLiteral("diagnostics"), QT_TRANSLATE_NOOP("HealthTab", "What went wrong: every boot and its faults, this boot's evidence, and checks that compare boots and versions.")},
+        {QStringLiteral("evidence"), QT_TRANSLATE_NOOP("HealthTab", "This boot's faults per component: CPU, kernel, memory, PCIe, disks, file systems, GPUs, thermal, USB, audio, radios and firmware.")},
         {QStringLiteral("investigations"), QT_TRANSLATE_NOOP("HealthTab", "Read-only boot regression, NVMe, USB, sleep, CO, GPU and incident investigations.")},
         {QStringLiteral("monitor"), QT_TRANSLATE_NOOP("HealthTab", "Hardware and driver errors from the kernel, explained, with saved history per day.")},
         {QStringLiteral("boot"), QT_TRANSLATE_NOOP("HealthTab", "Every boot: how it ended, its kernel events, the curves in effect, crash records and patterns.")},
@@ -294,17 +297,17 @@ HealthTab::HealthTab(QWidget *parent) : QWidget(parent) {
     addPage(general, overview_, tr("System Overview"), QStringLiteral("overview"));
     auto *monitor = new QWidget;
     addPage(problems, monitor, tr("Events & Alerts"), QStringLiteral("monitor"));
-    addPage(problems, new HealthEvidencePage, tr("Evidence Lab"), QStringLiteral("evidence"));
-    investigations_ = new AdvancedHealthPage;
-    addPage(problems, investigations_, tr("Investigations"), QStringLiteral("investigations"));
+    // Boot History, this boot's evidence and the checks that compare boots: one page, three tabs.
+    diagnostics_ = new DiagnosticsPage;
+    investigations_ = diagnostics_->findings();
+    boot_ = diagnostics_->boots();
+    addPage(problems, diagnostics_, tr("Diagnostics"), QStringLiteral("diagnostics"));
     investigations_->setTargetLabel([this](const QString &target) { return targetLabel(target); });
     connect(investigations_, &AdvancedHealthPage::openTarget, this, [this](const QString &target) { navigateTo(target); });
     connect(overview_, &OverviewPage::triage, this, [this](const QString &category) {
-        showPage(investigations_);
+        showDiagnostics(DiagnosticsPage::Findings);
         investigations_->startTriage(category);
     });
-    boot_ = new BootPage;
-    addPage(problems, boot_, tr("Boot History"), QStringLiteral("boot"));
     addPage(problems, insights::capabilityPage(), tr("Capability Doctor"), QStringLiteral("capabilities"));
 
     auto *curves = new CurvePage;
@@ -315,9 +318,8 @@ HealthTab::HealthTab(QWidget *parent) : QWidget(parent) {
     addPage(advanced, curves, tr("Curve Stability"), QStringLiteral("curves"));
     klog_ = new KlogPage;
     addPage(advanced, klog_, tr("Kernel Log"), QStringLiteral("klog"));
-    addPage(advanced, new KernelParamsPage, tr("Kernel Parameters"), QStringLiteral("kernelparams"));
-    auto *sleep = new SleepPage;
-    addPage(hardware, sleep, tr("Sleep & Wake"), QStringLiteral("sleep"));
+    addPage(advanced, new LazyWidget([] { return new KernelParamsPage; }), tr("Kernel Parameters"), QStringLiteral("kernelparams"));
+    addPage(hardware, new LazyWidget([] { return new SleepPage; }), tr("Sleep & Wake"), QStringLiteral("sleep"));
     if (BatteryPage::present()) {
         auto *battery = new BatteryPage;
         connect(battery, &BatteryPage::dgpuAwake, this, &HealthTab::dgpuAwake);
@@ -486,7 +488,11 @@ HealthTab::HealthTab(QWidget *parent) : QWidget(parent) {
             showToolCatalog();  // clicking the currently selected rail item is also a navigation action
     });
     connect(navSearch, &QLineEdit::textChanged, this, &HealthTab::filterNavigation);
-    const QString lastPage = guiSettings().value(QStringLiteral("health/page"), QStringLiteral("overview")).toString();
+    QString lastPage = guiSettings().value(QStringLiteral("health/page"), QStringLiteral("overview")).toString();
+    if (const int tab = DiagnosticsPage::tabForKey(lastPage); tab >= 0) {   // a page of an earlier version
+        diagnostics_->showTab(static_cast<DiagnosticsPage::Tab>(tab));
+        lastPage = QStringLiteral("diagnostics");
+    }
     QTreeWidgetItem *initial = pageItems_.value(overview_);
     for (auto it = pageItems_.cbegin(); it != pageItems_.cend(); ++it) {
         if (it.value()->data(0, Qt::UserRole).toString() == lastPage) { initial = it.value(); break; }
@@ -499,12 +505,12 @@ HealthTab::HealthTab(QWidget *parent) : QWidget(parent) {
     connect(overview_, &OverviewPage::openPage, this, [monitor, this](const QString &target) {
         QWidget *page = nullptr;
         if (target == QLatin1String("monitor")) page = monitor;
-        else if (target == QLatin1String("boot")) page = boot_;
+        else if (target == QLatin1String("boot")) { diagnostics_->showTab(DiagnosticsPage::Boots); page = diagnostics_; }
         else if (target == QLatin1String("backup")) page = backup_;
         else if (target == QLatin1String("battery")) page = findChild<BatteryPage *>();
         else if (target == QLatin1String("cooling")) page = cooling_;
         else if (target == QLatin1String("dgpu")) page = findChild<DgpuPage *>();
-        else if (target == QLatin1String("sleep")) page = findChild<SleepPage *>();
+        else if (target == QLatin1String("sleep")) page = pageByKey(target);
         else if (target == QLatin1String("klog")) page = klog_;
         else if (target == QLatin1String("tools")) {
             showToolCatalog();
@@ -532,7 +538,7 @@ HealthTab::HealthTab(QWidget *parent) : QWidget(parent) {
     bandText_->setWordWrap(true);
     bandRow->addWidget(bandText_, 1);
     auto *bBandShow = new QPushButton(tr("Show"));
-    connect(bBandShow, &QPushButton::clicked, this, [this] { showPage(boot_); });
+    connect(bBandShow, &QPushButton::clicked, this, [this] { showDiagnostics(DiagnosticsPage::Boots); });
     bandRow->addWidget(bBandShow);
     auto *bBandHide = new QPushButton(tr("Dismiss"));
     connect(bBandHide, &QPushButton::clicked, this, [this] {
@@ -800,14 +806,7 @@ QList<QVariantMap> HealthTab::eventsSince(quint64 seq) const {
 }
 
 void HealthTab::drainKmsg() {
-    // Must cover every kind health.rs::classify knows: a line that is not listed here never starts a scan
-    // (health.rs' test `gui_wakes_for_every_classified_line` reads this list and checks it).
-    // ";xe " / ";BUG:" ... are anchored at the start of the message (the record is "pri,seq,ts,flags;message").
-    static const char *const KEYS[] = {"NVRM", "Hardware Error", "achine check", "achine Check", "AER",
-                                       "PCIe Bus Error", "lockup", "LOCKUP", "stall", "D3cold", "amdgpu",
-                                       ";nvme nvme", "EXT4-fs error", "BTRFS error", "csum failed", ";XFS", "GPU HANG", ";xe ",
-                                       "Microcode SW error", "mt79", "mt792", "firmware crashed", "firmware timeout", "Bluetooth:", "btusb", "btmtk", "F2FS-fs", "f2fs:", "critical temperature",
-                                       "Package temperature above", "Out of memory", ";Oops:", ";BUG:", ";WARNING: CPU:"};
+    // The wake list is shared with the Kernel log page: see kmsgwake.h.
     char buf[8192];
     bool relevant = false;
     for (int i = 0; i < 512; ++i) {  // bounded: a flood must not pin the GUI thread
@@ -816,7 +815,7 @@ void HealthTab::drainKmsg() {
         if (n <= 0) break;                      // EAGAIN: drained
         if (relevant) continue;
         buf[n] = 0;
-        for (const char *k : KEYS) if (std::strstr(buf, k)) { relevant = true; break; }
+        if (kmsgwake::wakes(buf)) relevant = true;
     }
     if (relevant) debounce_->start();
 }
@@ -1092,6 +1091,11 @@ void HealthTab::showPage(QWidget *page) {
     pages_->setCurrentWidget(page);
 }
 
+void HealthTab::showDiagnostics(int tab) {
+    diagnostics_->showTab(static_cast<DiagnosticsPage::Tab>(tab));
+    showPage(diagnostics_);
+}
+
 void HealthTab::addToolPage(QWidget *page, const QString &label, const QString &key) {
     addTool(page, label, key);
     if (toolResults_) {
@@ -1253,6 +1257,10 @@ QWidget *HealthTab::toolButton(const Tool &t, bool featured) {
 
 void HealthTab::rebuildToolCatalog() {
     if (!toolScroll_ || !toolSearch_) return;
+    // Its cards are a few hundred widgets: built only where they can be seen. Hidden (another page, a
+    // tool, the window in the tray), the catalog is marked stale and built when it is shown (eventFilter).
+    if (!toolScroll_->isVisible()) { toolCatalogStale_ = true; return; }
+    toolCatalogStale_ = false;
     const QString query = toolSearch_->text().trimmed();
     const int width = std::max(toolScroll_->viewport()->width(), 300);
     // A compact list has room for real explanations. Four columns of labels were hard to scan.
@@ -1496,6 +1504,8 @@ void HealthTab::rebuildToolCatalog() {
 }
 
 bool HealthTab::eventFilter(QObject *watched, QEvent *event) {
+    if (toolScroll_ && watched == toolScroll_->viewport() && event->type() == QEvent::Show && toolCatalogStale_)
+        rebuildToolCatalog();
     if (toolScroll_ && watched == toolScroll_->viewport() && event->type() == QEvent::Resize &&
         (std::clamp(std::max(toolScroll_->viewport()->width(), 300) / 480, 1, 2) != toolColumns_ ||
          std::clamp(std::max(toolScroll_->viewport()->width(), 300) / 390, 1, 3) != toolFeaturedColumns_))
@@ -1552,6 +1562,7 @@ QList<HealthTab::NavigationEntry> HealthTab::navigationEntries() const {
 }
 
 QWidget *HealthTab::pageByKey(const QString &key) const {
+    if (DiagnosticsPage::tabForKey(key) >= 0) return diagnostics_;   // Boot History, Evidence Lab and Investigations are tabs now
     for (auto it = pageItems_.cbegin(); it != pageItems_.cend(); ++it)
         if (it.value()->data(0, Qt::UserRole).toString() == key) return it.key();
     return nullptr;
@@ -1563,6 +1574,8 @@ QString HealthTab::targetLabel(const QString &target) const {
         return t ? t->label : QString();
     }
     if (target.startsWith(QLatin1String("page:"))) {
+        if (const int tab = DiagnosticsPage::tabForKey(target.mid(5)); tab >= 0)
+            return pageItems_.value(diagnostics_)->text(0) + QStringLiteral(" › ") + diagnostics_->tabTitle(tab);
         QWidget *page = pageByKey(target.mid(5));
         return page ? pageItems_.value(page)->text(0) : QString();
     }
@@ -1580,6 +1593,8 @@ bool HealthTab::navigateTo(const QString &target) {
     if (target.startsWith(QLatin1String("page:"))) {
         QWidget *page = pageByKey(target.mid(5));
         if (!page) return false;
+        if (const int tab = DiagnosticsPage::tabForKey(target.mid(5)); tab >= 0)
+            diagnostics_->showTab(static_cast<DiagnosticsPage::Tab>(tab));
         if (page == toolDirectory_ && toolMode_->currentIndex() != 0) {
             const bool was = replaying_;
             replaying_ = true;

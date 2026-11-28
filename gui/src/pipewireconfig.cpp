@@ -1,6 +1,7 @@
 #include "pipewireconfig.h"
 
 #include "sysadmin.h"
+#include "unlock.h"
 
 #include <QCheckBox>
 #include <QComboBox>
@@ -325,6 +326,17 @@ PipewireConfigDialog::PipewireConfigDialog(QWidget *parent) : QDialog(parent) {
     intro->setProperty("role", "muted");
     v->addWidget(intro);
 
+    // Read-only until Centurion is unlocked. The dialog is modal, so the main window's lock button is out of reach:
+    // it carries its own unlock button.
+    auto *lockRow = new QHBoxLayout;
+    lockNote_ = new QLabel(tr("Centurion is locked: the settings below are read-only. Unlock it with your PIN to change them."));
+    lockNote_->setWordWrap(true);
+    unlockBtn_ = new QPushButton(tr("Unlock…"));
+    connect(unlockBtn_, &QPushButton::clicked, this, [this] { unlock::Manager::instance().requestUnlock(this); });
+    lockRow->addWidget(lockNote_, 1);
+    lockRow->addWidget(unlockBtn_);
+    v->addLayout(lockRow);
+
     table_ = new QTableWidget(NOPTS, 5);
     table_->setHorizontalHeaderLabels({tr("Set"), tr("Option"), tr("Value"), tr("Default"), tr("Setting")});
     table_->verticalHeader()->hide();
@@ -345,23 +357,38 @@ PipewireConfigDialog::PipewireConfigDialog(QWidget *parent) : QDialog(parent) {
     v->addWidget(status_);
 
     auto *row = new QHBoxLayout;
-    auto *apply = new QPushButton(tr("Save and restart sound servers"));
-    auto *reset = new QPushButton(tr("Remove all changes"));
-    reset->setToolTip(tr("Deletes the 50-centurion.conf files and restarts the sound servers."));
+    apply_ = new QPushButton(tr("Save and restart sound servers"));
+    reset_ = new QPushButton(tr("Remove all changes"));
+    reset_->setToolTip(tr("Deletes the 50-centurion.conf files and restarts the sound servers."));
     auto *close = new QPushButton(tr("Close"));
-    row->addWidget(apply);
-    row->addWidget(reset);
+    row->addWidget(apply_);
+    row->addWidget(reset_);
     row->addStretch(1);
     row->addWidget(close);
     v->addLayout(row);
 
-    connect(apply, &QPushButton::clicked, this, &PipewireConfigDialog::save);
-    connect(reset, &QPushButton::clicked, this, &PipewireConfigDialog::removeAll);
+    connect(apply_, &QPushButton::clicked, this, &PipewireConfigDialog::save);
+    connect(reset_, &QPushButton::clicked, this, &PipewireConfigDialog::removeAll);
+    connect(&unlock::Manager::instance(), &unlock::Manager::changed, this, [this] { applyLock(); });
     connect(close, &QPushButton::clicked, this, &QDialog::accept);
     connect(table_, &QTableWidget::currentCellChanged, this, [this](int r) {
         if (r >= 0 && r < NOPTS) hint_->setText(tx(OPTS[r].hint));
     });
     load();
+    applyLock();
+}
+
+void PipewireConfigDialog::applyLock() {
+    const bool on = unlock::Manager::instance().unlocked();
+    for (int i = 0; i < NOPTS; ++i) {
+        auto *set = table_->item(i, 0);
+        set->setFlags(on ? set->flags() | Qt::ItemIsUserCheckable : set->flags() & ~Qt::ItemIsUserCheckable);
+        table_->cellWidget(i, 2)->setEnabled(on);
+    }
+    apply_->setEnabled(on);
+    reset_->setEnabled(on);
+    lockNote_->setVisible(!on);
+    unlockBtn_->setVisible(!on);
 }
 
 void PipewireConfigDialog::load() {
@@ -402,6 +429,7 @@ void PipewireConfigDialog::load() {
 }
 
 void PipewireConfigDialog::save() {
+    if (!unlock::Manager::instance().unlocked()) return;
     QStringList lines[5];
     int quantum[4] = {32, 1024, 2048, 8192};  // min, default, max, limit: the order PipeWire requires
     for (int i = 0; i < NOPTS; ++i) {
@@ -442,6 +470,7 @@ void PipewireConfigDialog::save() {
 }
 
 void PipewireConfigDialog::removeAll() {
+    if (!unlock::Manager::instance().unlocked()) return;
     for (Section s : {Core, Pulse, Wp, Stream}) {
         const QString err = writeFile(pathOf(s), QString());
         if (!err.isEmpty()) { status_->setText(tr("%1: %2").arg(pathOf(s), err)); return; }

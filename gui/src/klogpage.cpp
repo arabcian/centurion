@@ -3,6 +3,7 @@
 #include "diagsources.h"
 #include "eventinfo.h"
 #include "klogview.h"
+#include "kmsgwake.h"
 #include "privileged.h"
 #include "theme.h"
 
@@ -77,8 +78,9 @@ KlogPage::KlogPage(QWidget *parent) : QWidget(parent) {
     v->setContentsMargins(8, 6, 8, 6);
 
     auto *top = new QHBoxLayout;
-    auto *about = new QLabel(QStringLiteral("Kernel messages of level warning or worse, saved across reboots "
-                                            "(the kernel's own ring buffer is lost at every boot)."));
+    auto *about = new QLabel(QStringLiteral("Kernel messages of level warning or worse, plus the hardware faults Centurion recognises "
+                                            "(NVIDIA Xid, machine checks, PCIe, NVMe, …) even when the kernel logged them at a lower level "
+                                            "(shown as WARN), saved across reboots (the kernel's own ring buffer is lost at every boot)."));
     about->setWordWrap(true);
     about->setProperty("role", "muted");
     v->addWidget(about);
@@ -289,6 +291,7 @@ void KlogPage::drainKmsg() {
         char *end = nullptr;
         const long pri = std::strtol(buf, &end, 10);
         if (end != buf && (pri & 7) <= 4) relevant = true;
+        else if (kmsgwake::wakes(buf)) relevant = true;  // hardware faults the kernel logged below warning (NVIDIA Xid)
     }
     if (relevant) debounce_->start();
 }
@@ -408,7 +411,7 @@ void KlogPage::updateInfo() {
     QString s = QStringLiteral("Saved log: %1 · %2 KiB").arg(a.absoluteFilePath()).arg((sz + 1023) / 1024);
     if (needsRoot_) s += QStringLiteral("\nKernel log is restricted (kernel.dmesg_restrict=1): captured through pkexec when this page is opened or on Refresh, "
                                         "not in the background. sysctl kernel.dmesg_restrict=0 enables continuous capture.");
-    else s += QStringLiteral("\nCapturing continuously (a scan runs only when the kernel logs a warning or error).");
+    else s += QStringLiteral("\nCapturing continuously (a scan runs only when the kernel logs a warning, an error or a recognised hardware fault).");
     s += QLatin1Char('\n') + tr("%1 displayed row(s).").arg(displayedRows_);
     if (tailLimited_) s += QLatin1Char(' ') + tr("Showing at most the newest %1 matching records before grouping. Refine the filter to see older records.").arg(MAX_SHOWN_LINES);
     if (hiddenMuted_) s += QLatin1Char('\n') + tr("%1 muted line(s) hidden — right-click a line to unmute its message.").arg(hiddenMuted_);
@@ -438,24 +441,26 @@ void KlogPage::render() {
     klogview::ContextWindow context(focusBoot_, focusSeq_, CONTEXT_BEFORE, CONTEXT_AFTER);
     tailLimited_ = false;
     QHash<QString, QString> firstBoot;
+    const bool onlyNew = onlyNew_->isChecked();
+    const bool currentBootKnown = klogview::fullBootId(boot);
     int matching=0; hiddenMuted_=0;
     std::deque<klogview::Line> shown;  // the newest lines of the scope, level and text filter
     const auto coverage = diagsrc::scanSavedLog(diagsrc::SavedLog::Kernel, LOG_MAX_BYTES, [&](const QString &l, bool) {
-        const std::optional<klogview::Line> p = klogview::parse(l);
+        auto p = klogview::parse(l);
         if (!p) return false;
         if (focused) { context.append(*p); return true; }
-        const bool identified = klogview::fullBootId(p->boot);
-        if (identified && !firstBoot.contains(p->key)) firstBoot.insert(p->key, p->boot);
-        if (!all && (!klogview::fullBootId(boot) || p->boot != boot)) return true;
+        const bool trackFirstBoot = onlyNew && klogview::fullBootId(p->boot);
+        if (trackFirstBoot && !firstBoot.contains(p->key)) firstBoot.insert(p->key, p->boot);
+        if (!all && (!currentBootKnown || p->boot != boot)) return true;
         if (p->level > levelMax) return true;
         if (!matches(l) || !valid) return true;
         QJsonObject event;
         if (!typed.kind.isEmpty() || typed.code>=0) event=eventinfo::classifyLine(p->msg);
         if (!typed.matches(*p,event.value(QStringLiteral("kind")).toString(),event.value(QStringLiteral("code")).toInt(-1),devicePattern)) return true;
         if (muted_.contains(p->key) && !showMuted_->isChecked()) { ++hiddenMuted_; return true; }
-        if (onlyNew_->isChecked() && identified && firstBoot.value(p->key)!=p->boot) return true;
+        if (trackFirstBoot && firstBoot.value(p->key)!=p->boot) return true;
         ++matching;
-        shown.push_back(*p);
+        shown.push_back(std::move(*p));
         if (shown.size() > MAX_SHOWN_LINES) { shown.pop_front(); tailLimited_ = true; }
         return true;
     });
@@ -471,13 +476,11 @@ void KlogPage::render() {
         rows = context.rows();
         mark = context.mark();
     } else {
-        const std::vector<klogview::Line> keep(shown.begin(),shown.end());
-        rows = klogview::group(keep, group_->isChecked());
+        rows = klogview::group(shown, group_->isChecked());
     }
 
     displayedRows_ = int(rows.size());
-    rowKey_.clear();
-    rowMsg_.clear();
+    rowMessages_.clear();
     focusBar_->setVisible(focused);
     const bool advancedActive=!typed.boot.isEmpty() || !typed.kind.isEmpty() || !typed.device.isEmpty() || !typed.fromDate.isEmpty() || !typed.toDate.isEmpty() || typed.code!=-1;
     filterInfo_->setText(focused ? tr("Context ignores all display filters.") : !valid ? tr("Invalid boot identity, event code or date range.") : tr("Matching saved records: %1. Legacy eight-character boot tags are not full boot identities; use All saved boots to inspect them separately.").arg(matching) + (advancedActive ? tr(" Advanced filters active.") : QString()));
@@ -495,8 +498,7 @@ void KlogPage::render() {
         if (!klogview::fullBootId(l.boot)) plain += tr(" [legacy boot tag]");
         if (r.count > 1) plain += tr("  ×%1, last %2").arg(r.count).arg(r.last.mid(11));
         if (muted_.contains(l.key)) plain += tr("  [muted]");
-        rowKey_.insert(plain.trimmed(), l.key);  // the context menu finds the message by its line text
-        rowMsg_.insert(plain.trimmed(), l.msg);
+        rowMessages_.insert(plain.trimmed(), {l.key, l.msg});
         const char *c = l.level <= 2 ? theme::DANGER : l.level == 3 ? theme::WARN : theme::FG_DIM;
         html += QStringLiteral("<span style='color:%1%2'>%3%4</span>\n").arg(QString::fromLatin1(c),
                                                                              i == mark ? QStringLiteral(";font-weight:bold") : QString(),
@@ -525,9 +527,9 @@ void KlogPage::contextMenu(const QPoint &pos) {
     std::unique_ptr<QMenu> menu(text_->createStandardContextMenu(pos));
     QTextCursor c = text_->cursorForPosition(pos);
     c.select(QTextCursor::LineUnderCursor);
-    if (const auto it = rowKey_.constFind(c.selectedText().trimmed()); it != rowKey_.constEnd()) {
-        const QString key = it.value();
-        const QString msg = rowMsg_.value(c.selectedText().trimmed());
+    if (const auto it = rowMessages_.constFind(c.selectedText().trimmed()); it != rowMessages_.constEnd()) {
+        const QString key = it->key;
+        const QString msg = it->message;
         menu->addSeparator();
         const QJsonObject ev = eventinfo::classifyLine(msg);
         if (!ev.isEmpty()) {

@@ -55,8 +55,8 @@ static void startAll(Search &s, int v) {
     for (const Core &c : s.cores()) s.setStart(c.ccd, c.slot, v);
 }
 
-/// The final whole-set trial: all-core confirmation or per-core 20-minute verification.
-static bool isFinal(const Trial &t) { return t.what.startsWith("confirmation") || t.what.startsWith("20-minute"); }
+/// The final whole-set trial: all-core confirmation or per-core 30-minute verification.
+static bool isFinal(const Trial &t) { return t.what.startsWith("confirmation") || t.what.startsWith("30-minute"); }
 
 /// Offsets in the simulated CPU's order (by first CPU), whatever order the search tests them in.
 static QMap<int, int> byCpu(const Search &s, const QList<int> &v) {
@@ -379,7 +379,7 @@ int main(int argc, char **argv) {
             s.report(sim.run(s, *t));
         }
         CHECK(t.has_value());
-        CHECK(t && t->what.startsWith("20-minute"));
+        CHECK(t && t->what.startsWith("30-minute"));
         CHECK(t->perCore == s.values());
         CHECK(t->seconds() == VERIFY_SECONDS);
     }
@@ -429,7 +429,7 @@ int main(int argc, char **argv) {
         CHECK(d.next()->allCore == -5);  // default start: the previous fixed behaviour
     }
 
-    // The 20-minute verification: whole curve applied; light and heavy parts alternate, power limit twice.
+    // The 30-minute verification: whole curve applied; light and heavy parts alternate, power limit twice, hop.
     for (int n : {1, 2, 3, 4, 6, 8, 16, 17, 18, 25}) {  // 2n cores
         Search s(Mode::PerCore, Level::Fast, -30, cpu(n));
         startAll(s, -10);
@@ -437,7 +437,7 @@ int main(int argc, char **argv) {
         for (const Core &c : s.cores()) sim.stable[c.cpus.first()] = -10;
         std::optional<Trial> t;
         while ((t = s.next()) && !isFinal(*t)) s.report(sim.run(s, *t));
-        CHECK(t && t->what.startsWith("20-minute") && t->perCore == s.values());
+        CHECK(t && t->what.startsWith("30-minute") && t->perCore == s.values());
         if (!t) continue;
         const int cores = 2 * n;
         QStringList firsts;
@@ -445,19 +445,21 @@ int main(int argc, char **argv) {
         CHECK(t->tests[0].args == (QStringList{"percore", "--load", "co", "--cycles", "1", "--kernel", "0", "--seconds", "24", "--cpus", firsts.join(',')}));
         CHECK(t->tests[1].args == (QStringList{"allcore", "--load", "power", "--seconds", "180"}) && t->tests[1].seconds == 180);
         CHECK(t->tests[2].args == (QStringList{"allcore", "--load", "co", "--cycles", "2", "--kernel", "1"}));
-        CHECK(t->tests.last().args.mid(0, 3) == (QStringList{"allcore", "--load", "power"}) && t->tests.last().seconds >= 60);
+        CHECK(t->tests[3].args == (QStringList{"percore", "--load", "hop", "--seconds", "300", "--cpus", firsts.join(',')}) && t->tests[3].seconds == 300);
+        CHECK(t->tests.last().args.mid(0, 3) == (QStringList{"allcore", "--load", "power"}) && t->tests.last().seconds >= 130);
         CHECK(t->tests.last().args.last() == QString::number(t->tests.last().seconds));
-        CHECK(t->seconds() == std::max(VERIFY_SECONDS, cores * 24 + 360));
+        CHECK(t->seconds() == std::max(VERIFY_SECONDS, cores * 24 + 430 + 300));
         for (const Test &x : t->tests) {
             CHECK(x.seconds > 0);
             if (x.args.contains("sse")) CHECK(x.args.contains("--transitions") && x.seconds / cores >= 5);
             const qsizetype c = x.args.indexOf("--cycles");
             if (c >= 0) CHECK(x.args[c + 1].toInt() >= 1 && x.args[c + 1].toInt() <= 100);
         }
-        if (cores == 8) CHECK(t->tests.size() == 6 && t->tests[4].args.contains("sse"));  // room for classic SSE too
-        if (cores == 16) {                                                                // no room for classic SSE
-            CHECK(t->tests.size() == 5 && t->tests[3].seconds == 384 && t->tests[4].seconds == 132);
+        if (cores == 8) CHECK(t->tests.size() == 7 && t->tests[4].seconds == 768 && t->tests[5].seconds == 104 && t->tests[6].seconds == 136);
+        if (cores == 16) {  // one more single-core cycle, 18 s of classic SSE per core, then the power limit
+            CHECK(t->tests.size() == 7 && t->tests[4].seconds == 384 && t->tests[5].seconds == 288 && t->tests[6].seconds == 144);
         }
+        if (cores == 50) CHECK(t->tests.size() == 5 && t->seconds() == 50 * 24 + 730);  // over 44 cores: longer than 30 minutes
     }
     {
         // Only undervolted cores are loaded alone; excluded / stock cores are not.
@@ -468,6 +470,17 @@ int main(int argc, char **argv) {
         std::optional<Trial> t;
         while ((t = s.next()) && !isFinal(*t)) s.report(sim.run(s, *t));
         CHECK(t && t->tests[0].args.last() == "0,1");  // CPU 2 (stable 0) and CPU 3 (excluded) at stock
+        CHECK(t && t->tests[3].args.contains("hop") && t->tests[3].args.last() == "0,1");
+    }
+    {
+        // One undervolted core: nothing to hop between; its time goes to the other parts.
+        Search s(Mode::PerCore, Level::Fast, -30, cpu(2));
+        startAll(s, -10);
+        Sim sim{{{0, -10}, {1, 0}, {2, 0}, {3, 0}}};
+        std::optional<Trial> t;
+        while ((t = s.next()) && !isFinal(*t)) s.report(sim.run(s, *t));
+        CHECK(t && t->seconds() == VERIFY_SECONDS);
+        for (const Test &x : t ? t->tests : QList<Test>{}) CHECK(!x.args.contains("hop"));
     }
 
     // Per-core: each core goes down to its own threshold, never past the limit.

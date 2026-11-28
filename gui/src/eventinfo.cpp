@@ -202,7 +202,7 @@ Info explain(const QJsonObject &e) {
         i.causes = {tr("Storage I/O or controller failure"), tr("Earlier unclean shutdown"),
                     tr("Unstable RAM or other hardware (not proven by this event)")};
         i.steps = {tr("Back up important files before any repair attempt."),
-                   tr("Open Evidence Lab → F2FS Integrity and inspect the surrounding kernel log."),
+                   tr("Open Diagnostics → This Boot → File Systems and inspect the surrounding kernel log."),
                    tr("Inspect the drive's SMART data and NVMe error history."),
                    tr("Do not run fsck.f2fs against a mounted read-write filesystem. Use appropriate offline recovery guidance if needed.")};
         i.urgency = tr("Serious: avoid unnecessary writes until the cause is understood.");
@@ -211,16 +211,20 @@ Info explain(const QJsonObject &e) {
         i.causes = {tr("A failing or disconnecting drive"), tr("Unstable RAM (data corrupted before it was written)"),
                     tr("An earlier crash or power loss")};
         QStringList steps{tr("Back up important files now and avoid large writes.")};
-        if (text.contains(QLatin1String("BTRFS")))
+        const FsRef fs = fsOfMessage(text);
+        if (fs.fstype == QLatin1String("btrfs"))
             steps << tr("Run btrfs scrub start / and check btrfs device stats /: they show which files are affected.")
                   << tr("Checksum errors on a healthy drive point at RAM: run a memory test.");
-        else if (text.contains(QLatin1String("XFS")))
+        else if (fs.fstype == QLatin1String("xfs"))
             steps << tr("Run xfs_repair on the unmounted file system (from a live USB).");
-        else
+        else if (fs.fstype.isEmpty() || fs.fstype.startsWith(QLatin1String("ext")))
             steps << tr("Run e2fsck -f on the unmounted file system (from a live USB, or schedule a check at boot).");
+        else
+            steps << fsRepairAction(fs.fstype);
         steps << tr("Check the drive in Drive health.");
+        if (!fs.fstype.isEmpty()) i.facts << tr("File system: %1").arg(fs.fstype);
         i.steps = steps;
-        if (const QString dev = cap(text, R"(\(device ([^)\s,:]+))"); !dev.isEmpty()) i.facts << tr("Device: %1").arg(dev);
+        if (!fs.dev.isEmpty()) i.facts << tr("Device: %1").arg(fs.dev);
         i.urgency = tr("Serious: data may be damaged.");
     } else if (kind == QLatin1String("igpu") || kind == QLatin1String("amdgpu")) {
         const bool amd = kind == QLatin1String("amdgpu") || text.contains(QLatin1String("amdgpu"));
@@ -352,8 +356,18 @@ QJsonObject classifyLine(const QString &m) {
     if (m.startsWith(QLatin1String("nvme nvme")) && (has("timeout") || has("resetting") || has("controller is down")))
         return ev("nvme", "error", has("controller is down") ? QStringLiteral("NVMe controller is down") : QStringLiteral("NVMe timeout"));
     // Only the kernel's own error reports: "BTRFS info … scrub finished with 0 errors" is not one.
-    if (has("EXT4-fs error") || m.startsWith(QLatin1String("BTRFS error")) || (m.startsWith(QLatin1String("BTRFS warning")) && has("csum failed"))
-        || (m.startsWith(QLatin1String("XFS")) && (has("Corruption") || has("corruption detected"))))
+    // The same file systems and wording as health.rs is_fs_error.
+    auto starts = [&m](const char *s) { return m.startsWith(QLatin1String(s)); };
+    const QString lower = m.toLower();
+    if (has("EXT4-fs error") || starts("EXT2-fs error") || starts("EXT3-fs error") || (starts("EXT4-fs") && has("Remounting filesystem read-only"))
+        || starts("Aborting journal on device") || (starts("JBD2:") && has("IO error"))
+        || starts("BTRFS error") || starts("BTRFS critical") || starts("BTRFS: error") || (starts("BTRFS warning") && has("csum failed"))
+        || (starts("XFS") && (has("Corruption") || has("corruption detected") || has("has been shut down") || has("metadata I/O error") || has("log I/O error")))
+        || (starts("FAT-fs") && has("error")) || (starts("exFAT-fs") && has("error")) || (starts("UDF-fs") && has("error"))
+        || starts("NILFS error") || starts("UBIFS error") || starts("SQUASHFS error")
+        || (lower.startsWith(QLatin1String("ntfs3")) && (lower.contains(QLatin1String("corrupt")) || lower.contains(QLatin1String("i/o error")) || lower.contains(QLatin1String("failed to read"))))
+        || (lower.startsWith(QLatin1String("bcachefs")) && (lower.contains(QLatin1String(" error")) || lower.contains(QLatin1String("inconsistenc"))
+                                                          || lower.contains(QLatin1String("emergency read only")) || lower.contains(QLatin1String("emergency read-only")))))
         return ev("fs", "critical", QStringLiteral("File system error"));
     if ((has("i915") && has("GPU HANG")) || (m.startsWith(QLatin1String("xe ")) && (has("Timedout job") || has("trying reset"))))
         return ev("igpu", "error", QStringLiteral("Intel GPU hang"));
@@ -370,6 +384,55 @@ QJsonObject classifyLine(const QString &m) {
     }
     if (m.startsWith(QLatin1String("Oops:")) || m.startsWith(QLatin1String("BUG:"))) return ev("oops", "error", QStringLiteral("Kernel oops / bug"));
     return {};
+}
+
+FsRef fsOfMessage(const QString &m) {
+    // Each file system driver's own prefix; "dev" is the kernel's name of the block device.
+    struct Rule { const char *pattern, *fstype; };
+    static const Rule rules[] = {
+        {R"(^EXT([234])-fs (?:error |warning )?\((?:device )?(?<dev>[^)\s,:]+))", nullptr},
+        {R"(^Aborting journal on device (?<dev>\S+?)-\d+)", "ext4"},
+        {R"(^JBD2: .* on (?<dev>\S+?)-\d+)", "ext4"},
+        {R"(^BTRFS:? ?\w*\s*\((?:device )?(?<dev>[^)\s:,]+))", "btrfs"},
+        {R"(^BTRFS)", "btrfs"},
+        {R"(^XFS \((?<dev>[^)]+)\))", "xfs"},
+        {R"(^F2FS-fs \((?<dev>[^)]+)\))", "f2fs"},
+        {R"(^f2fs:)", "f2fs"},
+        {R"(^FAT-fs \((?<dev>[^)]+)\))", "vfat"},
+        {R"(^exFAT-fs \((?<dev>[^)]+)\))", "exfat"},
+        {R"(^UDF-fs: .*\(device (?<dev>[^)]+)\))", "udf"},
+        {R"(^NILFS error \(device (?<dev>[^)]+)\))", "nilfs2"},
+        {R"(^UBIFS error \((?<dev>[^\s)]+))", "ubifs"},
+        {R"(^SQUASHFS error)", "squashfs"},
+        {R"(^ntfs3(?:\(|: )(?<dev>[^):\s]+))", "ntfs3"},
+        {R"(^bcachefs \((?<dev>[^)]+)\))", "bcachefs"},
+    };
+    for (const Rule &r : rules) {
+        const QRegularExpressionMatch x = QRegularExpression(QLatin1String(r.pattern), QRegularExpression::CaseInsensitiveOption).match(m);
+        if (!x.hasMatch()) continue;
+        return {r.fstype ? QString::fromLatin1(r.fstype) : QStringLiteral("ext") + x.captured(1), x.captured(QStringLiteral("dev"))};
+    }
+    return {};
+}
+
+QString fsRepairAction(const QString &t) {
+    // Scrubs run on the mounted file system; every other tool needs it unmounted.
+    if (t == QLatin1String("btrfs"))
+        return tr("Back up first. Then run btrfs scrub start on the mounted volume and read btrfs device stats; btrfs check --readonly only on an unmounted one.");
+    if (t == QLatin1String("zfs")) return tr("Back up first. Then run zpool status -v and zpool scrub on the pool.");
+    QString tool;
+    if (t.startsWith(QLatin1String("ext"))) tool = QStringLiteral("e2fsck -f");
+    else if (t == QLatin1String("xfs")) tool = QStringLiteral("xfs_repair");
+    else if (t == QLatin1String("f2fs")) tool = QStringLiteral("fsck.f2fs -f");
+    else if (t == QLatin1String("vfat") || t == QLatin1String("msdos")) tool = QStringLiteral("fsck.vfat -a");
+    else if (t == QLatin1String("exfat")) tool = QStringLiteral("fsck.exfat");
+    else if (t == QLatin1String("ntfs3") || t == QLatin1String("ntfs") || t == QLatin1String("fuseblk")) tool = tr("ntfsfix (or chkdsk /f in Windows)");
+    else if (t == QLatin1String("bcachefs")) tool = QStringLiteral("bcachefs fsck");
+    else if (t == QLatin1String("jfs")) tool = QStringLiteral("fsck.jfs");
+    else if (t == QLatin1String("squashfs") || t == QLatin1String("erofs") || t == QLatin1String("iso9660"))
+        return tr("This is a read-only image: replace or re-create it (a damaged download or medium); there is nothing to repair in place.");
+    else tool = tr("the file system's own fsck tool");
+    return tr("Back up first. Then run %1 on the unmounted volume (from a live USB for the root file system).").arg(tool);
 }
 
 }  // namespace eventinfo

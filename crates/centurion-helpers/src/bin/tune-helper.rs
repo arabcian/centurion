@@ -117,10 +117,12 @@ const PRESET_DIR: &str = "/etc/centurion/presets";
 fn profile_role() -> bool { env!("CARGO_BIN_NAME") == "tune-profile-helper" }
 fn admin_role() -> bool { env!("CARGO_BIN_NAME") == "tune-admin-helper" }
 
-/// Ops that change what root applies at every boot, and the unlock PIN. Through pkexec only tune-admin-helper
-/// serves them (com.centurion.tune.admin: the administrator password every time); root callers without pkexec
-/// (centurion-calibrate, the boot service) still reach them through tune-helper.
-const ADMIN_OPS: &[&str] = &["set_boot", "preset_save", "preset_delete", "calibrate_on_boot", "wakeup_set", "set_wireless_pm_lock", "pin_set"];
+/// Ops that change what root applies at every boot (boot preset, boot calibration, wake sources, wireless power
+/// lock) and the unlock PIN: through pkexec only tune-admin-helper serves them (com.centurion.tune.admin: the
+/// administrator password every time); root callers without pkexec (centurion-calibrate, the boot service) still
+/// reach them through tune-helper. The preset store (preset_save/preset_delete) goes through tune-helper like
+/// every other new value: password-free in polkit, refused unless the window was unlocked with the PIN.
+const ADMIN_OPS: &[&str] = &["set_boot", "calibrate_on_boot", "wakeup_set", "set_wireless_pm_lock", "pin_set"];
 
 /// The unlock PIN's own ops (centurion_helpers::unlock), served by every role.
 const UNLOCK_OPS: &[&str] = &["pin_status", "unlock", "lock"];
@@ -517,7 +519,7 @@ fn apply_values_checked(st: &mut State, values: &Map<String, Value>, game: bool,
     let kept: Map<String, Value>;
     let values = if shadowed.is_empty() { values } else {
         for (k, g) in &shadowed {
-            results.push(json!({"key": k, "ok": true, "skipped": format!("controlled by {g} in the same preset")}));
+            results.push(json!({"key": k, "ok": true, "controlled_by": g, "skipped": format!("controlled by {g} in the same preset")}));
         }
         kept = values.iter().filter(|(k, _)| !shadowed.iter().any(|(s, _)| s == k)).map(|(k, v)| (k.clone(), v.clone())).collect();
         &kept
@@ -1816,6 +1818,9 @@ fn run() -> Value {
     } else { None };
     let out = match op {
         "snapshot" => json!({"ok": true}),
+        // A scene's own command line: nothing is written by root; the gate above (unlock.rs) is the point. The GUI
+        // runs the command (as the user) only after this accepts it, so an edited scene file cannot launch a new one.
+        "scene_command" => json!({"ok": true}),
         "apply" => op_apply(&req),
         "apply_preset" => op_apply_preset(&req, false),
         "apply_scene_preset" => op_apply_preset(&req, true),
@@ -1944,6 +1949,15 @@ mod tests {
         assert!(valid_receipt_boot("01234567-89ab-cdef-0123-456789abcdef"));
         for id in ["", "01234567", "00000000-0000-0000-0000-000000000000", "01234567-89ab-cdef-0123-456789abcdez"] {
             assert!(!valid_receipt_boot(id));
+        }
+    }
+    #[test]
+    fn boot_ops_need_the_password_and_the_preset_store_the_pin() {
+        for op in ["set_boot", "calibrate_on_boot", "wakeup_set", "set_wireless_pm_lock", "pin_set"] {
+            assert!(ADMIN_OPS.contains(&op), "{op} must need the administrator password (tune-admin-helper)");
+        }
+        for op in ["preset_save", "preset_delete"] {
+            assert!(!ADMIN_OPS.contains(&op) && !PROFILE_OPS.contains(&op), "{op} must stay in tune-helper, behind the PIN");
         }
     }
     #[test]

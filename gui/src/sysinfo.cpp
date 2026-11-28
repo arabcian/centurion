@@ -68,8 +68,8 @@ bool knownModel() {
         "16IAH", "16IAX", "16IMH", "16IRH", "16IRX", "16ITH",
         "18IAX", "NX",
         "15ACH", "15AHP", "15ALC", "15IPH", "15AKP", "15APH", "15ARH", "15ARP",
-        "15IAH", "15IAX", "15IHU", "15IMH", "15IRH", "15IRX", "15ITH",
-        "14AHP", "14APH", "14IRP", "14AKP", "14IRH",
+        "15ASH", "15IAH", "15IAX", "15IHU", "15IMH", "15IRH", "15IRX", "15ITH",
+        "14AHP", "14APH", "14IRP", "14AKP", "14IRH", "14IAP",
         "G5000", "R9000", "R7000", "Y9000", "Y7000",                // China market
         "17IR", "15IR", "15IC", "15IK",                             // limited compatibility
     };

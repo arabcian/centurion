@@ -123,6 +123,24 @@ fn apply_cc(mv: f64, others: &[(&'static str, u64, f64)], what: &str) -> Value {
     out
 }
 
+/// Whether a mailbox read response carries the offset `mv` (the quantisation step is ~0.98 mV).
+fn offset_matches(resp: u64, mv: f64) -> bool {
+    intel_uv::mb_status(resp) == 0 && (intel_uv::decode_mv(resp) - mv).abs() <= 1.0
+}
+
+/// The candidate must still be in force after the stress run: the service, the GUI or another tool
+/// may have written another offset meanwhile, and then the verdict says nothing about `mv`.
+fn candidate_active(mv: f64) -> Result<(), String> {
+    let msr = intel_uv::Msr::open(true).map_err(|e| format!("/dev/cpu/0/msr: {e}"))?;
+    for (name, idx) in [("core", 0u64), ("cache", 2u64)] {
+        let r = msr.mailbox(intel_uv::uv_read_cmd(idx)).map_err(|e| format!("{name}: {e}"))?;
+        if !offset_matches(r, mv) {
+            return Err(format!("{name} reads {:.2} mV (status {:#04x}), not the {mv} mV under test", intel_uv::decode_mv(r), intel_uv::mb_status(r)));
+        }
+    }
+    Ok(())
+}
+
 /// Kernel-log sequence number now (events after it are this step's).
 fn klog_seq() -> Result<u64, String> {
     let s = crate::health::scan(0);
@@ -154,6 +172,9 @@ fn stress_bin() -> std::path::PathBuf {
         .filter(|p| p.is_file()).unwrap_or_else(|| "centurion-cpustress".into())
 }
 
+// A signal during an unstable offset is a failure, even if SSE would pass.
+fn exit_code(status: std::process::ExitStatus) -> i32 { status.code().unwrap_or(1) }
+
 /// Exit code of one per-core pass: 0 pass, 1 errors, 3 cannot run, 4 stopped. AVX2 first, SSE
 /// when AVX2 cannot run here. `stop` (the caller's signal flag) ends the stressor too: it does not
 /// get a terminal's SIGINT when the search runs under ssh -T, a service or `kill`.
@@ -164,7 +185,7 @@ fn stress(seconds: u64, stop: &AtomicBool) -> i32 {
             .stdout(std::process::Stdio::null()).spawn() else { return 3 };
         loop {
             match child.try_wait() {
-                Ok(Some(s)) => return s.code().unwrap_or(3),
+                Ok(Some(s)) => return exit_code(s),
                 Ok(None) if stop.load(Ordering::SeqCst) => {
                     unsafe { libc::kill(child.id() as libc::pid_t, libc::SIGTERM) };  // it stops after the chunk
                     let _ = child.wait();
@@ -230,6 +251,16 @@ pub fn run(fresh: Option<Search>, stop: &AtomicBool) -> i32 {
                 let seq = klog_seq();
                 let code = stress(s.seconds, stop);
                 let events = seq.and_then(bad_events);
+                // Before any verdict: if another writer changed the offset, this result is not about `mv`.
+                if code != 4 && code != 3 {
+                    if let Err(e) = candidate_active(mv) {
+                        eprintln!("the offset under test was changed during the stress run ({e}) — step discarded, search stopped");
+                        s.testing = None;
+                        let _ = save(&s);
+                        let _ = apply_cc(s.good, &others, "back");
+                        return 1;
+                    }
+                }
                 match code {
                     4 => {  // stopped (Ctrl-C / signal): no verdict, back to the last good value
                         s.testing = None;
@@ -283,6 +314,23 @@ mod tests {
         assert_eq!(s.clone().next("old"), Next::Test(-65.0));
         assert!(matches!(s.next("new"), Next::Done(_)));
         assert_eq!((s.failed, s.testing, s.result()), (Some(-65.0), None, -50.0));
+    }
+
+    #[test]
+    fn stressor_killed_by_signal_is_a_failure() {
+        use std::os::unix::process::ExitStatusExt;
+        assert_eq!(exit_code(std::process::ExitStatus::from_raw(libc::SIGSEGV)), 1);
+        assert_eq!(exit_code(std::process::ExitStatus::from_raw(3 << 8)), 3);
+        assert_eq!(exit_code(std::process::ExitStatus::from_raw(0)), 0);
+    }
+
+    #[test]
+    fn candidate_must_still_be_in_force() {
+        let ticks = |mv: f64| ((mv * 1.024).round() as i64 & 0x7FF) as u64;
+        let resp = |mv: f64| ticks(mv) << 21;
+        assert!(offset_matches(resp(-50.0), -50.0));
+        assert!(!offset_matches(resp(-30.0), -50.0));   // someone else wrote -30 mV during the run
+        assert!(!offset_matches(resp(-50.0) | (1 << 32), -50.0));  // non-zero mailbox status
     }
 
     #[test]

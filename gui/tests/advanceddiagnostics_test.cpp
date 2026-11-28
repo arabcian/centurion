@@ -1,6 +1,8 @@
 // Health → Evidence Lab / Investigations reports over fixtures: no hardware, root or GPU is touched.
 #include "../src/advanceddiagnostics.h"
 #include "../src/evidencereports.h"
+#include "../src/eventinfo.h"
+#include "../src/componentreports.h"
 
 #include <QCoreApplication>
 #include <QDebug>
@@ -43,6 +45,20 @@ int main(int argc, char **argv) {
     CHECK(ad::aerTotal(QStringLiteral("RxErr 0\nBadTLP 3\nTOTAL_ERR_COR 3\n"), QStringLiteral("TOTAL_ERR_COR")) == QStringLiteral("3"));
     CHECK(ad::aerTotal(QStringLiteral("TOTAL_ERR_COR: 14\n"), QStringLiteral("TOTAL_ERR_COR")) == QStringLiteral("14"));
     CHECK(ad::aerTotal(QStringLiteral("TOTAL_ERR_COR overflow"), QStringLiteral("TOTAL_ERR_COR")).isEmpty());
+
+    // H01: a finding names the boots it is about, so the card can open Boot History on exactly those.
+    {
+        QJsonArray boots;
+        qint64 t = 1000000;
+        for (int i = 0; i < 6; ++i, t += 40000) boots.prepend(boot(QStringLiteral("old%1").arg(i), t, QStringLiteral("clean"), 10, {{"kernel", "6.12.1"}}));
+        const QJsonObject events[] = {{{"xid", 3}}, {{"mce", 2}}, {}, {}};
+        for (int i = 0; i < 4; ++i, t += 40000) boots.prepend(boot(QStringLiteral("new%1").arg(i), t, QStringLiteral("clean"), 5, {{"kernel", "6.13.0"}}, events[i]));
+        const diag::Report r = ad::bootRegression(boots, {}, {{"kernel", "6.13.0"}});
+        QStringList named;
+        for (const diag::Finding &f : r.findings)
+            if (f.title.contains(QStringLiteral("hardware faults"))) named = f.bootIds;
+        CHECK(named == QStringList({QStringLiteral("new0"), QStringLiteral("new1")}));  // the boots with faults, not the quiet ones
+    }
 
     // H01: unclean ends pile up after a kernel change.
     {
@@ -261,17 +277,138 @@ int main(int argc, char **argv) {
 
     // H05: F2FS's own need-fsck flag (superblock bit 2) and checkpoint error flag.
     {
-        er::F2fsVolume v{"/dev/nvme0n1p3", "/", "rw,lazytime", "nvme0n1p3", {{"sb_status", "0x4"}, {"cp_status", "0x1"}}};
-        CHECK(has(er::f2fsGuard({}, {v}, {}), Level::Attention, QStringLiteral("needing fsck")));
+        er::FsVolume v{"/dev/nvme0n1p3", "f2fs", "rw,lazytime", "nvme0n1p3", {"/"}, {{"sb_status", "0x4"}, {"cp_status", "0x1"}}};
+        CHECK(has(er::fsGuard({}, {v}, {}), Level::Attention, QStringLiteral("needing fsck")));
         v.sys = {{"sb_status", "0x0"}, {"cp_status", "0x8"}};
-        CHECK(er::f2fsGuard({}, {v}, {}).verdict() == Level::Attention);
+        CHECK(er::fsGuard({}, {v}, {}).verdict() == Level::Attention);
         v.sys = {{"sb_status", "0x0"}, {"cp_status", "0x81"}, {"errors", "0x0"}};
-        CHECK(er::f2fsGuard({}, {v}, {}).verdict() == Level::Ok);
+        CHECK(er::fsGuard({}, {v}, {}).verdict() == Level::Ok);
         // The kernel writes the flags in hex without "0x": "42" is CRC_RECOVERY|ORPHAN_PRESENT, not decimal 42 (0x2A, error bit set).
         v.sys = {{"sb_status", "1"}, {"cp_status", "42"}};
-        CHECK(er::f2fsGuard({}, {v}, {}).verdict() == Level::Ok);
+        CHECK(er::fsGuard({}, {v}, {}).verdict() == Level::Ok);
         v.sys = {{"sb_status", "1"}, {"cp_status", "c8"}};
-        CHECK(has(er::f2fsGuard({}, {v}, {}), Level::Attention, QStringLiteral("needing fsck")));
+        CHECK(has(er::fsGuard({}, {v}, {}), Level::Attention, QStringLiteral("needing fsck")));
+    }
+
+    // H05: every disk file system, each judged by the error state it keeps itself.
+    {
+        er::FsVolume ext{"/dev/sda1", "ext4", "rw,relatime", "sda1", {"/home"}, {{"errors_count", "3"}, {"first_error_func", "ext4_lookup"}, {"first_error_time", "1700000000"}}};
+        CHECK(has(er::fsGuard({}, {ext}, {}), Level::Attention, QStringLiteral("3 error(s)")));
+        ext.sys = {{"errors_count", "0"}};
+        CHECK(er::fsGuard({}, {ext}, {}).verdict() == Level::Ok);
+        er::FsVolume btrfs{"/dev/nvme0n1p2", "btrfs", "rw,subvol=/@", "nvme0n1p2", {"/", "/home"}, {{"devices", "1"}, {"missing", "0"}, {"write_errs", "0"},
+                                                                                                       {"read_errs", "0"}, {"corruption_errs", "7"}}};
+        CHECK(has(er::fsGuard({}, {btrfs}, {}), Level::Attention, QStringLiteral("corruption 7")));
+        btrfs.sys = {{"devices", "2"}, {"missing", "1"}, {"write_errs", "0"}};
+        CHECK(has(er::fsGuard({}, {btrfs}, {}), Level::Attention, QStringLiteral("without 1 of its 2")));
+        er::FsVolume zfs{"rpool/ROOT/default", "zfs", "rw,xattr", "default", {"/"}, {{"pool_state", "DEGRADED"}}};
+        CHECK(has(er::fsGuard({}, {zfs}, {}), Level::Attention, QStringLiteral("rpool is DEGRADED")));
+        // A file system that keeps no error state is judged by its kernel log; nearly full is worth a look.
+        er::FsVolume fat{"/dev/nvme0n1p1", "vfat", "rw,fmask=0077", "nvme0n1p1", {"/boot/efi"}, {}, 1000, 900};
+        CHECK(er::fsGuard({}, {fat}, {}).verdict() == Level::Ok);
+        fat.avail = 20;
+        CHECK(has(er::fsGuard({}, {fat}, {}), Level::Review, QStringLiteral("98% full")));
+        // This boot's errors name the file system and device; a volume read-only after them needs attention.
+        er::FsVolume xfs{"/dev/sdb1", "xfs", "ro,relatime", "sdb1", {"/data"}, {}};
+        const QJsonObject scan{{"boot_id", "b1"}, {"fs_supported", QJsonArray{"ext4", "xfs"}}, {"fs_events", QJsonArray{
+            QJsonObject{{"kind", "fs"}, {"text", "XFS (sdb1): Filesystem has been shut down due to log error (0x2)."}, {"ts_us", 5e6}}}}};
+        const diag::Report r = er::fsGuard(scan, {xfs}, {});
+        CHECK(has(r, Level::Attention, QStringLiteral("xfs on sdb1: 1 integrity error")));
+        CHECK(has(r, Level::Attention, QStringLiteral("read-only after 1 error")));
+        CHECK(r.tables.size() == 2 && r.tables.first().note.contains(QStringLiteral("ext4, xfs")));
+        CHECK(r.tables.last().rows.first().at(2) == QStringLiteral("xfs"));
+        // Earlier boots' errors from the saved log, any file system.
+        diagsrc::LogLine old;
+        old.boot = QStringLiteral("b0"); old.kind = QStringLiteral("fs"); old.text = QStringLiteral("exFAT-fs (sdc1): error, invalid access to FAT");
+        CHECK(has(er::fsGuard(QJsonObject{{"boot_id", "b1"}}, {fat}, {old}), Level::Review, QStringLiteral("1 earlier boot")));
+    }
+
+    // H19–H26: this boot's kernel log per component, and the sysfs state that explains it.
+    {
+        namespace cr = componentreports;
+        auto ev = [](const char *kind, const char *level, const char *title, const char *dev, const char *text) {
+            return QJsonObject{{"kind", kind}, {"level", level}, {"title", title}, {"dev", dev}, {"text", text}, {"ts_us", 61e6}};
+        };
+        auto scanOf = [](const char *component, const QJsonArray &events) {
+            return QJsonObject{{"boot_id", "b1"}, {"components", QJsonObject{{QLatin1String(component), events}}}};
+        };
+        // An older helper without component events, or an unreadable log: never "no problem".
+        CHECK(cr::usb(QJsonObject{{"boot_id", "b1"}}).verdict() == Level::Unknown);
+        CHECK(cr::usb(QJsonObject{{"components", QJsonObject{}}, {"components_error", "EPERM"}}).verdict() == Level::Unknown);
+        CHECK(cr::usb(scanOf("usb", {})).verdict() == Level::Ok);
+        // Kernel: a warning is a complaint (Review), an oops needs attention; taint B is bad memory.
+        const QJsonObject warn = scanOf("kernel", {ev("oops", "error", "Kernel warning in amdgpu", "", "WARNING: CPU: 3 PID: 1 at x [amdgpu]")});
+        CHECK(cr::kernel(warn, {}).verdict() == Level::Review);
+        CHECK(cr::kernel(scanOf("kernel", {ev("lockup", "critical", "CPU lockup / RCU stall", "", "watchdog: BUG: soft lockup")}), {}).verdict() == Level::Attention);
+        CHECK(has(cr::kernel(scanOf("kernel", {}), {1 << 5}), Level::Attention, QStringLiteral("bad memory page")));
+        CHECK(cr::kernel(scanOf("kernel", {}), {(1 << 0) | (1 << 12)}).verdict() == Level::Ok);  // NVIDIA: P and O only
+        CHECK(has(cr::kernel(scanOf("kernel", {}), {1 << 7}), Level::Review, QStringLiteral("Taint D")));
+        // Storage: block I/O errors per disk, a degraded RAID array, failed commands counted by the disk.
+        cr::StorageState st;
+        st.disks << cr::Disk{"sda", "Samsung SSD 870", 500107862016, 4, false};
+        st.mdstat = QStringLiteral("Personalities : [raid1]\nmd0 : active raid1 sdb1[1] sda1[0]\n      976630464 blocks super 1.2 [2/1] [U_]\n\nunused devices: <none>");
+        const diag::Report sr = cr::storage(scanOf("storage", {ev("blk_io", "critical", "Block device I/O error", "sda", "I/O error, dev sda, sector 2048"),
+                                                               ev("blk_io", "critical", "Block device I/O error", "sda", "I/O error, dev sda, sector 4096")}), st);
+        CHECK(has(sr, Level::Attention, QStringLiteral("Read / write failed (2×): sda")));
+        CHECK(has(sr, Level::Attention, QStringLiteral("md0 is degraded [U_]")));
+        CHECK(has(sr, Level::Review, QStringLiteral("sda: 4 command(s) failed")));
+        CHECK(sr.tables.size() == 3 && sr.tables.first().rows.size() == 1 && sr.tables.first().rows.first().at(2) == QStringLiteral("2"));
+        // GPU, power: a critical temperature is attention; ACPI firmware errors alone are information.
+        CHECK(cr::gpu(scanOf("gpu", {ev("amdgpu", "error", "AMD iGPU hang / reset", "amdgpu 0000:65:00.0", "amdgpu ring timeout")}), {}).verdict() == Level::Attention);
+        CHECK(cr::power(scanOf("power", {ev("thermal", "critical", "Critical temperature reached", "thermal thermal_zone0", "critical temperature reached")}), {}).verdict() == Level::Attention);
+        CHECK(cr::power(scanOf("power", {ev("thermal", "warn", "CPU package temperature above threshold", "CPU0", "Package temperature above threshold")}), {}).verdict() == Level::Review);
+        const diag::Report acpi = cr::power(scanOf("power", {ev("acpi", "warn", "ACPI firmware error", "", "ACPI BIOS Error (bug): Could not resolve symbol")}), {});
+        CHECK(acpi.verdict() != Level::Review && acpi.verdict() != Level::Attention && acpi.count(Level::Info) == 1);
+        cr::PowerState ps;
+        ps.zones << cr::ThermalZone{"thermal_zone1", "x86_pkg_temp", 97, 100} << cr::ThermalZone{"thermal_zone2", "acpitz", 0, 120};
+        CHECK(has(cr::power(scanOf("power", {}), ps), Level::Attention, QStringLiteral("within 5 °C")));
+        ps.zones.first().tempC = 60;
+        CHECK(cr::power(scanOf("power", {}), ps).verdict() == Level::Ok);
+        // Memory: EDAC counters and offline pages; OOM kills counted by the kernel even when the log rotated.
+        cr::MemoryState ms;
+        ms.edac << cr::EdacController{"mc0 · F19h", 3, 0};
+        ms.hardwareCorruptedKib = 0;
+        ms.oomKills = 2;
+        const diag::Report mr = cr::memory(scanOf("memory", {}), ms);
+        CHECK(has(mr, Level::Review, QStringLiteral("3 corrected memory error")) && has(mr, Level::Review, QStringLiteral("2 process(es) were killed")));
+        ms.hardwareCorruptedKib = 8;
+        CHECK(has(cr::memory(scanOf("memory", {}), ms), Level::Attention, QStringLiteral("8 kB of memory")));
+        // USB, audio, firmware.
+        CHECK(has(cr::usb(scanOf("usb", {ev("overcurrent", "error", "USB port over-current", "usb usb1-port3", "usb usb1-port3: over-current condition")})),
+                  Level::Attention, QStringLiteral("usb usb1-port3")));
+        const diag::Report ar = cr::audio(scanOf("audio", {}), QStringLiteral(" 0 [PCH            ]: HDA-Intel - HDA Intel PCH\n                      HDA Intel PCH at 0xfe000000 irq 150\n"));
+        CHECK(ar.verdict() == Level::Ok && ar.tables.first().rows.first().at(1) == QStringLiteral("HDA-Intel"));
+        CHECK(cr::audio(scanOf("audio", {}), QStringLiteral("--- no soundcards ---")).verdict() == Level::Review);
+        const diag::Report fr = cr::firmware(scanOf("firmware", {ev("fw_missing", "warn", "Firmware file not found", "iwlwifi 0000:00:14.3",
+                                                                    "iwlwifi 0000:00:14.3: Direct firmware load for iwlwifi-so-a0-gf-a0-89.ucode failed with error -2")}));
+        CHECK(fr.verdict() == Level::Info && fr.tables.first().rows.first().at(1) == QStringLiteral("iwlwifi iwlwifi-so-a0-gf-a0-89.ucode"));
+        CHECK(cr::firmware(scanOf("firmware", {ev("module", "error", "Kernel module does not match the kernel", "", "nvidia: Unknown symbol x")})).verdict() == Level::Attention);
+    }
+
+    // The kernel names file system and device in its own words, per driver.
+    {
+        auto is = [](const char *msg, const char *type, const char *dev) {
+            const eventinfo::FsRef f = eventinfo::fsOfMessage(QString::fromLatin1(msg));
+            return f.fstype == QLatin1String(type) && f.dev == QLatin1String(dev);
+        };
+        CHECK(is("EXT4-fs error (device nvme0n1p2): ext4_lookup:1855: inode #131073", "ext4", "nvme0n1p2"));
+        CHECK(is("EXT4-fs (sda1): Remounting filesystem read-only", "ext4", "sda1"));
+        CHECK(is("EXT2-fs error (device sdb1): ext2_check_page: bad entry", "ext2", "sdb1"));
+        CHECK(is("Aborting journal on device sda1-8.", "ext4", "sda1"));
+        CHECK(is("BTRFS error (device dm-0): bdev /dev/mapper/root errs: wr 0, rd 0, flush 0, corrupt 3, gen 0", "btrfs", "dm-0"));
+        CHECK(is("BTRFS: error (device sda1: state EA) in __btrfs_free_extent:3072: errno=-5 IO failure", "btrfs", "sda1"));
+        CHECK(is("XFS (sda1): Corruption detected. Unmount and run xfs_repair", "xfs", "sda1"));
+        CHECK(is("F2FS-fs (nvme0n1p3): checkpoint failed, I/O error", "f2fs", "nvme0n1p3"));
+        CHECK(is("FAT-fs (sdb1): error, fat_get_cluster: invalid cluster chain", "vfat", "sdb1"));
+        CHECK(is("exFAT-fs (sdc1): error, invalid access to FAT", "exfat", "sdc1"));
+        CHECK(is("ntfs3(sdb2): ino=5, Looks like your dir is corrupt", "ntfs3", "sdb2"));
+        CHECK(is("bcachefs (nvme0n1p3): btree node read error", "bcachefs", "nvme0n1p3"));
+        CHECK(is("SQUASHFS error: Unable to read fragment cache entry", "squashfs", ""));
+        CHECK(is("usb 1-2: device descriptor read/64, error -71", "", ""));
+        CHECK(eventinfo::fsRepairAction(QStringLiteral("exfat")).contains(QStringLiteral("fsck.exfat")));
+        CHECK(eventinfo::fsRepairAction(QStringLiteral("btrfs")).contains(QStringLiteral("scrub")));
+        CHECK(eventinfo::classifyLine(QStringLiteral("FAT-fs (sdb1): error, fat_get_cluster: invalid cluster chain")).value(QStringLiteral("kind")) == QStringLiteral("fs"));
+        CHECK(eventinfo::classifyLine(QStringLiteral("FAT-fs (sdb1): Volume was not properly unmounted.")).isEmpty());
     }
 
     // H09: firmware load failure per adapter.

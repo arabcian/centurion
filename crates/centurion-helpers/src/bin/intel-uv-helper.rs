@@ -84,14 +84,18 @@ fn run() -> Value {
         parse_profile(&v).and_then(|p| within_gui_floor(&p).map(|()| p)).map(|p| (v, p)).map_err(|e| json!({"ok": false, "error": format!("invalid profile: {e}")}))
     };
     let hold = obj.get("hold").and_then(Value::as_bool).unwrap_or(false);
-    // New offsets need the unlocked GUI (centurion_helpers::unlock); status, reset to 0 mV and the stored boot profile do not.
-    if matches!(obj.get("op").and_then(Value::as_str), Some("apply" | "probe_uv_lock" | "set_boot")) {
+    let op = obj.get("op").and_then(Value::as_str);
+    // Only the root boot/resume hooks apply the stored profile. They check the boot guard first.
+    if op == Some("boot") && std::env::var_os("PKEXEC_UID").is_some() {
+        return json!({"ok": false, "error": "boot is reserved for the root boot/resume service"});
+    }
+    if matches!(op, Some("apply" | "probe_uv_lock" | "set_boot" | "clear_boot")) {
         if let Some(r) = centurion_helpers::unlock::refuse(&req) { return r; }
     }
-    if matches!(obj.get("op").and_then(Value::as_str), Some("apply" | "reset")) {
+    if matches!(op, Some("apply" | "reset" | "probe_uv_lock" | "boot")) {
         if let Some(r) = centurion_helpers::refuse_during_calibration() { return r; }
     }
-    let mut out = match obj.get("op").and_then(Value::as_str) {
+    let mut out = match op {
         Some("status") => intel_uv::read_status(),
         Some("probe_uv_lock") => intel_uv::probe_uv_lock(),
         Some("probe_fabric") => intel_uv::probe_fabric(),
@@ -114,7 +118,7 @@ fn run() -> Value {
             Err(e) => e,
         },
         Some("reset") => {
-            let mut out = intel_uv::apply_atomic(&intel_uv::reset_profile());
+            let mut out = intel_uv::apply(&intel_uv::reset_profile());
             if out["ok"] == true { centurion_helpers::ocjournal::record("cpu_uv", "reset"); }
             if hold && out["ok"] == true {
                 if let Err(e) = write_hold(None) { out["hold_error"] = json!(e); out["ok"] = json!(false); }

@@ -3,7 +3,7 @@
 post_install() {
     cat <<'MSG'
 ==> Centurion installed (polkit security level 3).
-    Log out and back in once (keyboard-lighting udev rule, polkit rules).
+    Log out and back in once (polkit rules).
     Optional boot services — enable only what you use:
       systemctl enable centurion-boot-guard.service     # records clean shutdowns (recommended)
       systemctl enable nvcurve-autoload.service         # ★ default GPU curve

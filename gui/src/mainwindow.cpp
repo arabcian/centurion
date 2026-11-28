@@ -84,6 +84,8 @@
 // glibc keeps heap freed by the window's tabs, dialogs and previews mapped;
 // once it is back in the tray, hand that memory to the kernel.
 static void trimHeap() { ::malloc_trim(0); }
+/// Height of the four boxes at the foot of the experimental rail (lock, operations, favorites, hide labels).
+static constexpr int RAIL_BOX_HEIGHT = 32;
 
 MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
     setWindowTitle("Centurion");
@@ -101,18 +103,23 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
     tabs_->tabBar()->setAttribute(Qt::WA_StyledBackground, true);  // ...and the selector rail behind the tabs
     tabs_->setDocumentMode(true);
     tabs_->setUsesScrollButtons(true);
-    // Unlock PIN: writing new values needs this window unlocked (unlock.h). The button shows the state; a
-    // refused write asks for the PIN itself (privileged::setLockedHandler) and is sent again once unlocked.
+    // Writing new values requires an explicit unlock from this button.
     lockButton_ = new QToolButton;
     lockButton_->setObjectName(QStringLiteral("lockButton"));
+    lockButton_->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+    lockButton_->setIconSize(QSize(22, 22));
+    lockButton_->setMinimumHeight(36);
+    lockButton_->setCursor(Qt::PointingHandCursor);
     lockButton_->setPopupMode(QToolButton::MenuButtonPopup);
     auto *lockMenu = new QMenu(lockButton_);
-    lockMenu->addAction(tr("Change unlock PIN…"), this, [this] { unlock::Manager::instance().changePin(this); });
+    lockMenu->addAction(tr("Set or change unlock PIN…"), this, [this] { unlock::Manager::instance().changePin(this); });
     lockButton_->setMenu(lockMenu);
     auto showLock = [this](bool on) {
-        lockButton_->setText(on ? tr("🔓 Unlocked") : tr("🔒 Locked"));
-        lockButton_->setToolTip(on ? tr("New values can be written. Click to lock (closing the window locks too).")
-                                   : tr("Writing new values (undervolt, curves, power limits, kernel tunables) needs the PIN. Click to unlock."));
+        lockButton_->setIcon(sessionLockIcon(on));
+        lockButton_->setText(on ? tr("Unlocked") : tr("Locked"));
+        lockButton_->setToolTip((on ? tr("New values can be written. Click to lock. The window locks when closed or after 10 minutes without input.")
+                                    : tr("Writing new values (undervolt, curves, power limits, kernel tunables) needs the PIN. Click to unlock."))
+                                + QStringLiteral("\n") + tr("Set or change the PIN: the arrow next to this button."));
     };
     showLock(false);
     connect(&unlock::Manager::instance(), &unlock::Manager::changed, lockButton_, showLock);
@@ -120,7 +127,6 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
         auto &m = unlock::Manager::instance();
         if (m.unlocked()) m.lock(false); else m.requestUnlock(this);
     });
-    privileged::setLockedHandler([this](std::function<void(bool)> done) { unlock::Manager::instance().requestUnlock(this, std::move(done)); });
     if (!theme::experimentalEnabled()) setCentralWidget(tabs_);
     if (!theme::experimentalEnabled()) tabs_->setCornerWidget(lockButton_, Qt::TopRightCorner);
     if (!theme::experimentalEnabled()) {
@@ -410,9 +416,11 @@ void MainWindow::arrangeTabs() {
         // tooltip and the canonical ID used by HealthTab::openTab.
         const QString display = id == QLatin1String("Health") ? tr("Health Center")
                               : id == QLatin1String("Optimizations") ? tr("Optimize")
+                              : id == QLatin1String("Ryzen Curve") ? tr("CPU Curve")
+                              : id == QLatin1String("NVIDIA Curve") ? tr("GPU Curve")
                               : tr(id.toUtf8().constData());
         tabs_->setTabText(target, display);
-        tabs_->setTabToolTip(target, tr(id.toUtf8().constData()));
+        tabs_->setTabToolTip(target, display);
         ++target;
     }
     tabW_ = -1;
@@ -429,18 +437,19 @@ void MainWindow::installExperimentalShell() {
     shellLayout->setSpacing(0);
 
     expSplitter_ = new QSplitter(Qt::Horizontal, shell);
+    expSplitter_->setObjectName(QStringLiteral("expShellSplitter"));
     expSplitter_->setChildrenCollapsible(false);
     expSplitter_->setHandleWidth(6);
     shellLayout->addWidget(expSplitter_);
     expRail_ = new QFrame(expSplitter_);
     expRail_->setObjectName(QStringLiteral("expRail"));
     auto *rail = new QVBoxLayout(expRail_);
-    rail->setContentsMargins(6, 8, 6, 6);
-    rail->setSpacing(4);
+    rail->setContentsMargins(theme::GAP_S, theme::GAP_S, theme::GAP_S, theme::GAP_S);
+    rail->setSpacing(theme::GAP_XS);
     auto *brand = new QWidget;
     auto *brandRow = new QHBoxLayout(brand);
-    brandRow->setContentsMargins(5, 4, 0, 7);
-    brandRow->setSpacing(9);
+    brandRow->setContentsMargins(theme::GAP_XS, theme::GAP_XS, 0, theme::GAP_S);
+    brandRow->setSpacing(theme::GAP_S);
     auto *brandIcon = new QLabel;
     brandIcon->setObjectName(QStringLiteral("expBrandIcon"));
     brandIcon->setPixmap(appIcon(64).pixmap(26, 26));
@@ -471,8 +480,8 @@ void MainWindow::installExperimentalShell() {
     auto *nav = new QWidget;
     nav->setObjectName(QStringLiteral("expNavHost"));
     expNavLayout_ = new QVBoxLayout(nav);
-    expNavLayout_->setContentsMargins(0, 4, 0, 0);
-    expNavLayout_->setSpacing(3);
+    expNavLayout_->setContentsMargins(0, theme::GAP_XS, 0, 0);
+    expNavLayout_->setSpacing(2);
     navScroll->setWidget(nav);
     rail->addWidget(navScroll, 1);
     expToggle_ = new QPushButton(tr("Collapse navigation"));
@@ -482,23 +491,30 @@ void MainWindow::installExperimentalShell() {
         expUserToggled_ = true;
         setExperimentalCollapsed(!expCollapsed_);
     });
-    auto *operationsButton = new QPushButton;
-    operationsButton->setObjectName(QStringLiteral("btnMini"));
-    operationsButton->setText(QStringLiteral("…"));
-    operationsButton->setAccessibleName(tr("Active operations"));
-    operationsButton->setToolTip(tr("Active operations") + QStringLiteral(" · Ctrl+Shift+O"));
-    connect(operationsButton, &QPushButton::clicked, this, &MainWindow::showOperations);
+    // The four rail controls share one box: same height, full rail width, a glyph plus a short label (the label
+    // is dropped, the glyph kept, when the rail is collapsed; the tooltips say the rest).
+    expOperations_ = new QPushButton;
+    expOperations_->setObjectName(QStringLiteral("expRailAction"));
+    expOperations_->setAccessibleName(tr("Active operations"));
+    expOperations_->setToolTip(tr("Active operations") + QStringLiteral(" · Ctrl+Shift+O"));
+    connect(expOperations_, &QPushButton::clicked, this, &MainWindow::showOperations);
+    expToggle_->setFixedHeight(RAIL_BOX_HEIGHT);
+    expOperations_->setFixedHeight(RAIL_BOX_HEIGHT);
+    lockButton_->setFixedHeight(RAIL_BOX_HEIGHT);
+    lockButton_->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
     rail->addWidget(lockButton_);
-    rail->addWidget(operationsButton);
+    rail->addWidget(expOperations_);
     rail->addWidget(expToggle_);
     auto *collapseShortcut = new QShortcut(QKeySequence(QStringLiteral("Ctrl+B")), this);
     collapseShortcut->setContext(Qt::ApplicationShortcut);
     connect(collapseShortcut, &QShortcut::activated, expToggle_, &QPushButton::click);
-    auto *favoritesButton = new QPushButton(QStringLiteral("☆"));
-    favoritesButton->setAccessibleName(tr("Navigation favorites and startup page"));
-    favoritesButton->setToolTip(tr("Navigation favorites and startup page") + QStringLiteral(" · Ctrl+Shift+F"));
-    connect(favoritesButton, &QPushButton::clicked, this, &MainWindow::showNavigationPreferences);
-    rail->insertWidget(rail->count() - 1, favoritesButton);
+    expFavorites_ = new QPushButton;
+    expFavorites_->setObjectName(QStringLiteral("expRailAction"));
+    expFavorites_->setFixedHeight(RAIL_BOX_HEIGHT);
+    expFavorites_->setAccessibleName(tr("Navigation favorites and startup page"));
+    expFavorites_->setToolTip(tr("Navigation favorites and startup page") + QStringLiteral(" · Ctrl+Shift+F"));
+    connect(expFavorites_, &QPushButton::clicked, this, &MainWindow::showNavigationPreferences);
+    rail->insertWidget(rail->count() - 1, expFavorites_);
     expSplitter_->addWidget(expRail_);
 
     auto *content = new QWidget;
@@ -509,8 +525,8 @@ void MainWindow::installExperimentalShell() {
     auto *top = new QFrame;
     top->setObjectName(QStringLiteral("expTopbar"));
     auto *topRow = new QHBoxLayout(top);
-    topRow->setContentsMargins(18, 7, 14, 7);
-    topRow->setSpacing(8);
+    topRow->setContentsMargins(theme::GAP_L, theme::GAP_XS + 2, theme::GAP_M, theme::GAP_XS + 2);
+    topRow->setSpacing(theme::GAP_S);
     auto *titles = new QVBoxLayout;
     titles->setSpacing(0);
     expPath_ = new QLabel;
@@ -520,7 +536,7 @@ void MainWindow::installExperimentalShell() {
     titles->addWidget(expPath_);
     // The title, then one muted line on what the page is for (clips first on a narrow window).
     auto *titleRow = new QHBoxLayout;
-    titleRow->setSpacing(12);
+    titleRow->setSpacing(theme::GAP_M);
     titleRow->addWidget(expTitle_);
     expHint_ = new QLabel;
     expHint_->setObjectName(QStringLiteral("expTopHint"));
@@ -550,7 +566,6 @@ void MainWindow::installExperimentalShell() {
     connect(scenes_, &SceneEngine::activeSceneChanged, this, &MainWindow::syncStatusChips);
     connect(&pp::Watcher::instance(), &pp::Watcher::changed, this, &MainWindow::syncStatusChips);
     syncStatusChips();
-    topRow->addSpacing(4);
     // A search field in looks, a button in behaviour: it opens the navigator.
     auto *find = new QPushButton;
     find->setObjectName(QStringLiteral("expSearch"));
@@ -561,8 +576,8 @@ void MainWindow::installExperimentalShell() {
     find->setMaximumWidth(292);
     find->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
     auto *findRow = new QHBoxLayout(find);
-    findRow->setContentsMargins(10, 0, 7, 0);
-    findRow->setSpacing(8);
+    findRow->setContentsMargins(theme::GAP_S, 0, theme::GAP_XS, 0);
+    findRow->setSpacing(theme::GAP_S);
     auto *findIcon = new QLabel;
     theme::bindPresentation(findIcon, [findIcon] { findIcon->setPixmap(experimentalui::searchIcon(theme::MUTED).pixmap(14, 14)); });
     auto *findText = new QLabel(tr("Jump to a page or a control"));
@@ -577,10 +592,10 @@ void MainWindow::installExperimentalShell() {
     connect(find, &QPushButton::clicked, this, &MainWindow::showQuickNavigator);
     topRow->addWidget(find, 2);
     column->addWidget(top);
-    // A thin line in the power profile's colour (the Legion power-button LED): the mode reads at a glance.
+    // The top bar's hairline (the profile's colour stays on the chip's dot).
     expSignal_ = new QFrame;
     expSignal_->setObjectName(QStringLiteral("expSignal"));
-    expSignal_->setFixedHeight(2);
+    expSignal_->setFixedHeight(1);
     column->addWidget(expSignal_);
     syncStatusChips();
     tabs_->tabBar()->hide();
@@ -588,7 +603,7 @@ void MainWindow::installExperimentalShell() {
     // A gutter around every page, so content never touches the rail or the window edge.
     auto *pageHost = new QWidget;
     auto *pageLayout = new QVBoxLayout(pageHost);
-    pageLayout->setContentsMargins(8, 6, 8, 4);
+    pageLayout->setContentsMargins(theme::GAP_XS, theme::GAP_XS, theme::GAP_XS, theme::GAP_XS);  // pages add their own 8 px
     pageLayout->addWidget(tabs_);
     column->addWidget(pageHost, 1);
     expSplitter_->addWidget(content);
@@ -672,7 +687,6 @@ void MainWindow::rebuildExperimentalNavigation() {
         button->setProperty("navCode", code);
         button->setProperty("pageId", id);
         theme::bindPresentation(button, [button,id] { button->setIcon(experimentalui::navigationIcon(id)); });
-        button->setIconSize(QSize(18, 18));
         button->setText(expCollapsed_ ? QString() : label);
         const int position = expNavButtons_.size() + 1;
         button->setToolTip(position <= 9 ? QStringLiteral("%1  ·  Ctrl+%2").arg(label).arg(position) : label);
@@ -701,7 +715,7 @@ void MainWindow::setExperimentalCollapsed(bool collapsed) {
     for (const auto *button : std::as_const(expNavButtons_))
         expandedWidth = std::max(expandedWidth, button->fontMetrics().horizontalAdvance(button->property("navLabel").toString()) + 54);
     if (collapsed) {
-        expRail_->setFixedWidth(48);
+        expRail_->setFixedWidth(60);
     } else {
         const int maximum = std::max(480, expandedWidth);
         expRail_->setMaximumWidth(maximum);
@@ -712,8 +726,30 @@ void MainWindow::setExperimentalCollapsed(bool collapsed) {
     expSplitter_->setHandleWidth(collapsed ? 1 : 6);
     expSplitter_->handle(1)->setEnabled(!collapsed);
     expBrandLabel_->setVisible(!collapsed);
-    expToggle_->setText(collapsed ? QStringLiteral("»") : tr("«  Hide labels"));
+    lockButton_->setToolButtonStyle(collapsed ? Qt::ToolButtonIconOnly : Qt::ToolButtonTextBesideIcon);
+    lockButton_->setProperty("collapsed", collapsed);
+    lockButton_->style()->unpolish(lockButton_);
+    lockButton_->style()->polish(lockButton_);
+    const QSize iconSize = collapsed ? QSize(32, 32) : QSize(21, 21);
+    lockButton_->setFixedHeight(collapsed ? 44 : RAIL_BOX_HEIGHT);
+    lockButton_->setIconSize(collapsed ? iconSize : QSize(22, 22));
+    expToggle_->setText(collapsed ? QString() : tr("Hide labels"));
+    expToggle_->setAccessibleName(collapsed ? tr("Expand navigation") : tr("Hide labels"));
+    expOperations_->setText(collapsed ? QString() : tr("Operations"));
+    expFavorites_->setText(collapsed ? QString() : tr("Favorites"));
+    expToggle_->setIcon(experimentalui::navigationIcon(collapsed ? QStringLiteral("Expand") : QStringLiteral("Collapse")));
+    expOperations_->setIcon(experimentalui::navigationIcon(QStringLiteral("Operations")));
+    expFavorites_->setIcon(experimentalui::navigationIcon(QStringLiteral("Favorites")));
+    for (QPushButton *box : {expToggle_, expOperations_, expFavorites_}) {
+        box->setFixedHeight(collapsed ? 44 : RAIL_BOX_HEIGHT);
+        box->setIconSize(iconSize);
+        box->setProperty("collapsed", collapsed);
+        box->style()->unpolish(box);
+        box->style()->polish(box);
+    }
     for (auto *button : std::as_const(expNavButtons_)) {
+        button->setMinimumHeight(std::max(collapsed ? 44 : 32, button->fontMetrics().height() + 12));
+        button->setIconSize(iconSize);
         button->setText(collapsed ? QString() : button->property("navLabel").toString());
         button->setProperty("collapsed", collapsed);
         button->style()->unpolish(button);
@@ -727,8 +763,8 @@ void MainWindow::setExperimentalCollapsed(bool collapsed) {
     expRail_->layout()->setSizeConstraint(collapsed ? QLayout::SetNoConstraint : QLayout::SetDefaultConstraint);
     expRail_->layout()->invalidate();
     if (collapsed) {
-        expRail_->setFixedWidth(48);
-        expSplitter_->setSizes({48, std::max(1, expSplitter_->width() - 49)});
+        expRail_->setFixedWidth(60);
+        expSplitter_->setSizes({60, std::max(1, expSplitter_->width() - 61)});
     }
     if (expUserToggled_) {
         QSettings st(QSettings::IniFormat, QSettings::UserScope, QStringLiteral("centurion"), QStringLiteral("gui"));
@@ -889,12 +925,6 @@ void MainWindow::refreshStatusChipTheme() {
     if (!expProfileChip_) return;
     const QString profile = expProfileChip_->property("profileId").toString();
     if (!profile.isEmpty()) expProfileChip_->setIcon(experimentalui::dotIcon(QColor(theme::profileAccent(profile))));
-    if (!expSignal_) return;
-    const QString signal = profile.isEmpty() ? QString::fromLatin1(theme::ACCENT) : theme::profileAccent(profile);
-    const QByteArray hex = signal.toLatin1();
-    theme::setSheet(expSignal_, QStringLiteral("QFrame#expSignal { border: 0; background: qlineargradient(x1:0, y1:0, x2:1, y2:0, "
-                                               "stop:0 %1, stop:0.4 %2, stop:1 %3); }")
-                                    .arg(signal, theme::rgba(hex.constData(), 0.30), QString::fromLatin1(theme::BORDER_SOFT)));
 }
 
 QStringList MainWindow::activeOperations() const {
@@ -1076,15 +1106,25 @@ void MainWindow::showTab(const QString &label) {
 
 void MainWindow::hideEvent(QHideEvent *e) {
     if (!isMinimized()) QSettings(QSettings::IniFormat, QSettings::UserScope, QStringLiteral("centurion"), QStringLiteral("gui")).setValue(QStringLiteral("ui/window_geometry"), saveGeometry());
+    if (!isMinimized()) {
+        unlock::Manager::instance().lock(true);
+        if (lighting_) lighting_->releaseAdmin();  // closing the window also drops the keyboard's administrator rights
+    }
     QMainWindow::hideEvent(e);
     QTimer::singleShot(2000, this, [this] { if (!isVisible()) trimHeap(); });
 }
 
 void MainWindow::closeEvent(QCloseEvent *e) {
     if (!isMinimized()) QSettings(QSettings::IniFormat, QSettings::UserScope, QStringLiteral("centurion"), QStringLiteral("gui")).setValue(QStringLiteral("ui/window_geometry"), saveGeometry());
-    // Closing the window locks it again; scene steps keep running from the tray (unlock.h).
-    if (unlock::Manager::instance().unlocked()) unlock::Manager::instance().lock(true);
-    if (hideOnClose_ && !forceQuit_) { e->ignore(); hide(); return; }
+    if (hideOnClose_ && !forceQuit_) {
+        unlock::Manager::instance().lock(true);
+        if (lighting_) lighting_->releaseAdmin();
+        e->ignore();
+        hide();
+        return;
+    }
     if (!canQuit()) { e->ignore(); return; }
+    unlock::Manager::instance().lock(true);
+    if (lighting_) lighting_->releaseAdmin();
     QMainWindow::closeEvent(e);
 }

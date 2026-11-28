@@ -96,6 +96,6 @@ inline QJsonObject inspect(const QJsonObject &request, const QJsonObject &result
     if (id->device.isEmpty()) status = QStringLiteral("identity_unavailable");
     else if (mismatch) status = QStringLiteral("point_or_memory_mismatch");
     else if ((edited || reset) && !unresolved) status = QStringLiteral("point_match_only");
-    return {{"status",status},{"gpu",id->gpu},{"device",id->device},{"points",rows},{"plan_evidence",plan ? QStringLiteral("actual_apply_plan") : QStringLiteral("unavailable")},{"clock_lock_evidence",QStringLiteral("not_verified")},{"mem_offset_mhz",result.value("mem_offset_mhz")}};
+    return {{"status",status},{"gpu",id->gpu},{"device",id->device},{"points",rows},{"plan_evidence",plan ? QStringLiteral("actual_apply_plan") : QStringLiteral("unavailable")},{"clock_lock_evidence",QStringLiteral("not_verified")},{"mem_offset_mhz",result.value("mem_offset_mhz")},{"base_note",result.value("base_note")}};
 }
 }

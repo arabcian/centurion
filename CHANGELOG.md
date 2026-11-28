@@ -21,9 +21,20 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions follo
   shortcut, D-Bus, drift watch) and anything while the window is closed reuse approved values only: an edited scene
   is refused until it is applied once from the unlocked window. After this update, apply each automatic scene once
   by hand.
+- Scene `command` line: it now needs the same approval as the values root writes (new gated `tune-helper` op
+  `scene_command`). Applying a scene from the unlocked window approves its command; automatic applies run it only if
+  that exact line was approved before. Apply each scene that has a command once by hand.
+- Keyboard lighting: the udev `uaccess` rule on the ITE controller's hidraw node is gone (a session process could
+  send it any HID report); lighting goes through `lighting-helper` and pkexec (silent for a wheel/sudo admin at the
+  machine). The installer removes the old rule.
+- `health-reader` (kernel-log scan, ksnap, boot history…): the polkit default for `com.centurion.health.read` is now
+  `auth_admin_keep` instead of `yes`; only a wheel/sudo admin at the machine gets it silently.
+- Scene files are opened with the owning user's file-system identity (`setfsuid`), so a symlinked `~/.config` or
+  `scenes` directory cannot make root read a file the user cannot.
+- CI: every `uses:` in the workflow is pinned to a commit SHA (tag or branch noted in a comment).
 - New `tune-admin-helper` (polkit `com.centurion.tune.admin`, the administrator password every time): boot preset,
-  preset store, boot calibration, wake sources, wireless power lock and the PIN. tune-helper refuses these through
-  pkexec.
+  boot calibration, wake sources, wireless power lock and the unlock PIN. The preset store stays in `tune-helper`:
+  no password, but refused unless the window is unlocked with the PIN, like every other new value.
 - `sysadmin-helper` split: configuration files, module load/unload and NVIDIA driver options moved to
   `sysadmin-config-helper` (polkit `com.centurion.sysadmin.config`, the password every time); runtime actions stay.
   Added lines may no longer use modprobe `install`/`remove` (except `/bin/false`/`/bin/true`), udev
@@ -35,13 +46,64 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions follo
 - Intel undervolt: no offset below -200 mV on any path (pkexec, boot file, daemon, scenes, search), -50 mV on Core
   Ultra CPUs. The Intel tab's spin boxes follow the CPU's floor.
 
+- Keyboard lighting administrator rights: the Lighting page drops them when the Centurion window closes (reading
+  the keyboard again needs *Use administrator rights*), and the tray's Keyboard Lighting menu can enable them; those
+  end one minute after the tray menu closes. Reload keeps using rights that were granted.
+
 ### Changed
+- nvcurve: the curve readback now says whether the driver's offset-free base clocks (V3 tuples) are in use and, if
+  not, why: the driver refused the request, reports no tuples, or the V1 cross-check rejected them (with the points
+  that disagree). Shown as `Base clocks:` in `nvcurve read`, as `base_note` in its JSON and in the helper's result
+  files, and in the V/F history entry of each apply/reset. Before, a missing base only showed up as a silent `null`
+  (history: "Unknown"). The cross-check itself is unchanged.
+- Ryzen Curve → CO Search, per-core: the final verification of the whole set is 30 minutes instead of 20. It gains
+  `centurion-cpustress percore --load hop`: one verified thread jumping between the undervolted cores every
+  0.3–60 ms, with and without idle waits, over every ordered pair of cores (CoreCycler's core-to-core switching,
+  thousands of times instead of once per core), and the last power-limit part is at least 130 s. An older
+  `centurion-cpustress` without `hop` is refused before the search. See `docs/CO_STRESS_RESEARCH_2026-11-27.md`.
 - 61 rows that neither calibration nor Autotune touch and no built-in preset sets (network latency and buffering, the
   Wi-Fi/Bluetooth rows, elevator and discard fine tuning, NUMA/KSM/khugepaged internals, unmeasured scheduler feature
   bits) moved off the Optimizations tab to three System tools pages: Network tuning, Storage tuning and Kernel tuning.
   Same keys, presets, Restore originals and boot defaults; only the page and its own Apply checked button differ.
+- Memory: the tray app uses about half the memory it did (anonymous memory 60 → 33 MB at idle on a test machine,
+  RSS 107 → 80 MB). Under the application style sheet every widget is costly for as long as the program runs, so
+  Health builds Diagnostics → This Boot, Kernel Parameters and Sleep & Wake when they are first opened, and the
+  System tools catalog only while it is on screen; a combo box gets its popup (nine widgets) when it is first shown
+  instead of when the window is built. Pages look and behave the same.
+
+### Fixed
+- Health → Backups → Restore of an increment: the whole chain is checked before the first image is unpacked — each
+  image's decompressor (a chain may mix gzip/xz/zstd), that the key or passphrase opens every encrypted image, and
+  that no image is empty. Before, a decompressor missing at step 3 or a foreign key at step 2 stopped the restore
+  after steps 1–2 had already been written to the target (which can be the running system).
 
 ### Added
+- Diagnostics → *This Boot*: one sub-tab per component instead of five. New: Kernel (H19: lockups, oops / BUG /
+  warnings, hung tasks, taint flags), Storage (H20: NVMe, SATA, block I/O, medium errors, software RAID, device
+  mapper, SD / eMMC, per-disk failed-I/O counters), AMD / Intel GPU (H21), Thermal & Power (H22: temperature alarms,
+  throttle counters, thermal zones near their critical limit, ACPI errors, D3cold, failed suspend steps), Memory (H23:
+  OOM kills, allocation failures, EDAC, offline pages), USB (H24), Audio (H25) and Firmware & Drivers (H26). They read
+  the same single scan: `health-reader diagnostics` now also groups this boot's kernel log by component.
+- File Systems (H05, was F2FS only): every mounted disk file system the kernel supports — ext2/3/4, btrfs, XFS, F2FS,
+  FAT, exFAT, NTFS, bcachefs, ZFS… — with the error state each keeps (ext4 error count, btrfs device stats and
+  missing devices, F2FS flags, ZFS pool state), free space, read-only-after-errors, and each type's own repair tool.
+  The kernel-log classifier now recognises errors of FAT, exFAT, NTFS3, bcachefs, UDF, NILFS2, UBIFS and squashfs,
+  ext4 journal aborts and read-only remounts, btrfs critical errors and XFS shutdowns.
+- Model tables synced with LenovoLegionToolkit 2.34.0: machine types 83Q6 and 83VK (Legion 5) and 83V9
+  (Legion 7; the Gen 10+ Over Drive rule now reaches it), known-model prefixes 15ASH and 14IAP, the second system
+  fan (capability 0x04030005, Home → *Live* "System 2", read-only), and *Device info…* says when the keyboard RGB is
+  firmware-controlled (Legion 7 Gen 6, GKCN BIOS before 54). A Spectrum keyboard under a product-id family other
+  than C1xx / C6xx / C9xx is found too (still only on a 960-byte feature report that answers the compatibility
+  query; known families are tried first). `tests/test_llt_model_sync_static.py` pins the LLT state.
+- What's new window after an update, starting with *Important*: the PIN, approving scenes and presets once, the
+  lighting administrator rights and re-installing everything together. *Don't show again* hides it for good.
+- Optimize: *Apply preset* in the experimental layout sits in the preset row (it was lost from the layout and floated
+  over it); the greyed *Apply checked* explains why while locked.
+- Health → Backups: every backup (system image and configuration backup) now also writes `<archive>.RESTORE.txt`
+  beside it — a Turkish/English, step-by-step guide to restoring that exact archive by hand with Centurion not
+  running (live USB): plain, encrypted (age key or passphrase), incremental (every file of the chain in order, without
+  tar's own `--listed-incremental`), or both; the exact `tar`/`age`/decompressor commands and flags, mount points,
+  fstab/bootloader steps. Retention and the automatic-backup pruning remove the guide with its archive.
 - System tools → Kernel: *Info…* next to Load / Unload runs `modinfo` for the module names typed in the field
   (several allowed), or for every loaded module when it is empty, and adds each module's current parameter values from
   `/sys/module/<name>/parameters`. Read-only, runs as the user.

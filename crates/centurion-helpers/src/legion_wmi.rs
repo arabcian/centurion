@@ -267,11 +267,11 @@ pub fn ec_gpu_temp() -> Result<Option<i64>, String> {
 
 /// Fan speeds as the capability interface reports them (names as in
 /// LenovoLegionToolkit's CapabilityID): 0x0403000{1,2,4} = CPU / GPU / PCH-or-
-/// third fan, in RPM. Read only when the firmware's capability list marks the
+/// third fan, 0x04030005 = a second system fan (LLT 2.34: boards with four fans), in RPM. Read only when the firmware's capability list marks the
 /// id valid and readable — without a list nothing here is asked for — and only
 /// on systems where no hwmon driver already shows the fans (newer kernels read
 /// the very same ids in lenovo-wmi-other; asking twice would just load the EC).
-pub const EC_FANS: &[(&str, u32)] = &[("cpu", 0x0403_0001), ("gpu", 0x0403_0002), ("pch", 0x0403_0004)];
+pub const EC_FANS: &[(&str, u32)] = &[("cpu", 0x0403_0001), ("gpu", 0x0403_0002), ("pch", 0x0403_0004), ("sys2", 0x0403_0005)];
 
 fn hwmon_has_fans() -> bool {
     std::fs::read_dir("/sys/class/hwmon").into_iter().flatten().flatten().any(|e| {
@@ -290,10 +290,13 @@ pub fn ec_fans() -> Vec<(&'static str, u32)> {
 }
 
 /// {"cpu": rpm, …} — keys only for readings that came back plausible.
-pub fn ec_fans_read(fans: &[(&'static str, u32)]) -> serde_json::Map<String, Value> {
+pub fn ec_fans_read(fans: &[(&'static str, u32)]) -> serde_json::Map<String, Value> { fans_from(fans, wmae_get) }
+
+/// A failed read, a negative value or one past 20 000 RPM is left out.
+fn fans_from(fans: &[(&'static str, u32)], read: impl Fn(u32) -> Result<i64, String>) -> serde_json::Map<String, Value> {
     let mut m = serde_json::Map::new();
     for &(name, id) in fans {
-        if let Ok(rpm @ 0..=20_000) = wmae_get(id) { m.insert(name.into(), json!(rpm)); }
+        if let Ok(rpm @ 0..=20_000) = read(id) { m.insert(name.into(), json!(rpm)); }
     }
     m
 }
@@ -758,7 +761,31 @@ mod tests {
         assert_eq!(first_value("garbage"), None);
         assert_eq!(cap_name(0x0101_FF00), Some("CPU short-term power limit"));
         assert_eq!(cap_name(0x0403_0004), Some("PCH fan speed"));
+        assert_eq!(cap_name(0x0403_0005), Some("Extra system fan speed"));
         assert_eq!(power_modes(0b1_0000_0000_0001_0111), vec!["quiet", "balanced", "performance", "extreme", "custom"]);
+    }
+    #[test]
+    fn fan_read_faults() {
+        // Fault simulation for the EC fan stream: every reply the firmware or acpi_call can give.
+        let read = |id: u32| -> Result<i64, String> {
+            match id {
+                0x0403_0001 => Ok(3150),                    // plausible
+                0x0403_0002 => Err("acpi_call: AE_NOT_FOUND".into()),
+                0x0403_0004 => Ok(0xFFFF_FFFF),             // all-ones dword (unset EC field)
+                0x0403_0005 => Ok(20_001),                  // past any laptop fan
+                _ => Ok(-1),
+            }
+        };
+        let m = fans_from(EC_FANS, read);
+        assert_eq!(m.len(), 1, "{m:?}");
+        assert_eq!(m.get("cpu"), Some(&json!(3150)));
+        // The second system fan comes through when it reads sanely, and 0 RPM (fan stopped) is kept.
+        let m = fans_from(EC_FANS, |id| Ok(if id == 0x0403_0005 { 2800 } else { 0 }));
+        assert_eq!(m.get("sys2"), Some(&json!(2800)));
+        assert_eq!(m.get("pch"), Some(&json!(0)));
+        assert!(fans_from(EC_FANS, |_| Ok(-5)).is_empty());
+        // Read-only: every id in the stream is a fan-speed getter (0x0403xxxx), never a setter.
+        assert!(EC_FANS.iter().all(|&(_, id)| id >> 16 == 0x0403));
     }
     #[test]
     fn wmae_id_le() {
@@ -785,8 +812,7 @@ enum OdBackend { GameZone, Wmae }
 
 fn od_backend() -> Option<OdBackend> {
     if wmaa(0x31, 0) == Ok(1) { return Some(OdBackend::GameZone); }
-    let mi = crate::machine::info();
-    let excluded = matches!(mi.series, crate::machine::Series::Legion7 | crate::machine::Series::LegionPro7) && mi.generation >= 10;
+    let excluded = crate::machine::overdrive_capability_untrusted(crate::machine::info());
     (!excluded && cap_usable(FEAT_OVERDRIVE, CAP_GET | CAP_SET)).then_some(OdBackend::Wmae)
 }
 
@@ -1436,6 +1462,7 @@ fn cap_name(id: u32) -> Option<&'static str> {
         0x0209_0000 => "GPU device id", 0x020B_0000 => "GPU to CPU dynamic boost",
         0x0301_0001 => "Instant boot (AC)", 0x0301_0002 => "Instant boot (USB-PD)",
         0x0402_0000 => "Fan full speed", 0x0403_0001 => "CPU fan speed", 0x0403_0002 => "GPU fan speed", 0x0403_0004 => "PCH fan speed",
+        0x0403_0005 => "Extra system fan speed",
         0x0501_0000 => "PCH temperature", 0x0504_0000 => "CPU temperature", 0x0505_0000 => "GPU temperature",
         _ => return None,
     })
@@ -1473,6 +1500,9 @@ pub fn device_report() -> Value {
     out["vpc2004"] = json!(vpc_path());
     if let Some(min) = crate::machine::custom_mode_needs_bios(&mi.bios) {
         out["note"] = json!(format!("Custom mode needs BIOS {}{min} or newer on this board", mi.bios.prefix));
+    }
+    if let Some(why) = crate::machine::rgb_firmware_controlled(mi) {
+        out["lighting_note"] = json!(why);
     }
     if !acpi_available() { return out; }
     if wmi_blocks.contains(&"GameZone") {

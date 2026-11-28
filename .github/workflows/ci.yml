@@ -8,17 +8,19 @@ jobs:
   rust:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # stable
       - run: cargo test --workspace --locked
       - run: cargo clippy --workspace --all-targets --locked -- -D warnings
       - run: python3 tests/nvcurve_safety_static_test.py
+      - run: python3 tests/gentoo_manifest_static_test.py
+      - run: python3 tests/test_llt_model_sync_static.py
 
   deny:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
-      - uses: EmbarkStudios/cargo-deny-action@v2
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: EmbarkStudios/cargo-deny-action@81891abc19297b21343b15ef67dc61e4aea74fda # v2
 
   gui:
     runs-on: ubuntu-24.04
@@ -27,7 +29,7 @@ jobs:
       ASAN_OPTIONS: detect_leaks=0  # Qt keeps process-lifetime allocations
       UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends
              qt6-base-dev qt6-svg-dev qt6-tools-dev qt6-l10n-tools libgl-dev libxkbcommon-dev dbus
       - run: cmake -S gui -B build -DCMAKE_BUILD_TYPE=Debug -DCENTURION_BUILD_TESTS=ON
@@ -78,7 +80,7 @@ jobs:
       - run: python3 tests/test_firewall_preview_contract_static.py
       - name: Visual comparison artifacts
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: qt-visual-artifacts
           path: build/visual-artifacts

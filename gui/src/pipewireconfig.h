@@ -5,6 +5,7 @@
 #include <QDialog>
 
 class QLabel;
+class QPushButton;
 class QTableWidget;
 
 class PipewireConfigDialog : public QDialog {
@@ -17,7 +18,9 @@ private:
     void save();
     void removeAll();
     void restart(const QString &done);
+    void applyLock();  // read-only while Centurion is locked (unlock.h)
 
     QTableWidget *table_;
-    QLabel *hint_, *status_;
+    QLabel *hint_, *status_, *lockNote_;
+    QPushButton *apply_, *reset_, *unlockBtn_;
 };
