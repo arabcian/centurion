@@ -765,13 +765,13 @@ QTabWidget#expPageStack > QTabBar { max-height: 0px; }
 /* ── Cards: one flat surface a step above the page, one hairline. The title sits on the
    content edge; a 2 px marker hangs to its left, coloured only for caution and danger. ── */
 QGroupBox { background: @SURFACE; border: 1px solid @BORDER; border-radius: 8px;
-    margin-top: 0; padding: @HEAD_PADpx @GAP_Mpx @GAP_Mpx @GAP_Mpx; color: @FG; font-weight: 600; }
-QGroupBox[title=""] { padding-top: @GAP_Mpx; }
+    margin-top: 0; padding: @HEAD_PADpx @GAP_Spx @GAP_Spx @GAP_Spx; color: @FG; font-weight: 600; }
+QGroupBox[title=""] { padding-top: @GAP_Spx; }
 QGroupBox::title { subcontrol-origin: border; subcontrol-position: top left;
     top: @TITLE_TOPpx; left: 4px; color: @FG; font-size: 10pt; font-weight: 700;
     border: 0; border-left: 2px solid transparent; padding: 0 0 0 6px; background: transparent; }
-QGroupBox#box_red::title { color: @FG; border-left-color: @DANGER; }
-QGroupBox#box_yellow::title { color: @FG; border-left-color: @WARN; }
+QGroupBox#box_red::title { color: @DANGER; border-left-color: @DANGER; }
+QGroupBox#box_yellow::title { color: @WARN; border-left-color: @WARN; }
 QGroupBox#box_green::title, QGroupBox#box_blue::title, QGroupBox#box_purple::title,
 QGroupBox#box_grey::title { color: @FG; border-left-color: transparent; }
 /* A section inside a section is not another card: a divider and a small heading. */
@@ -783,7 +783,7 @@ QLabel[role="muted"] { color: @MUTED; font-size: 8pt; }
 
 /* ── Controls: one height on every row (buttons, line edits, combos, spin boxes). ── */
 QPushButton { background: @BG2; border: 1px solid @BORDER; color: @FG; border-radius: 6px;
-    padding: 3px 10px; min-height: @CTRL_MINpx; font-weight: 500; }
+    padding: 3px @GAP_Spx; min-height: @CTRL_MINpx; font-weight: 500; }
 /* One flat ring per state: Classic's lit/shaded edges must not leak through. */
 QPushButton:hover { background: @BG3; border-color: @EDGE; }
 QPushButton:pressed { background: @BG1; border-color: @BORDER; }
@@ -805,7 +805,7 @@ QPushButton#btnMini { font-size: 8pt; padding: 1px 8px; min-height: 16px; }
 QToolButton:hover { background: @HILITE; border-color: @BORDER_SOFT; }
 QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox, Int64SpinBox {
     background: @WELL; border: 1px solid @BORDER; color: @FG;
-    border-radius: 6px; padding: 3px 8px; min-height: @CTRL_MINpx; }
+    border-radius: 6px; padding: 3px @GAP_Spx; min-height: @CTRL_MINpx; }
 QComboBox { padding-right: 22px; }
 QSpinBox, QDoubleSpinBox, Int64SpinBox { padding-right: 18px; }
 QLineEdit:hover, QComboBox:hover, QSpinBox:hover, QDoubleSpinBox:hover, Int64SpinBox:hover {
@@ -880,9 +880,9 @@ QScrollBar::handle:vertical:hover, QScrollBar::handle:horizontal:hover { backgro
         f.setBold(bold);
         return QFontMetrics(f).height();
     };
-    const int titleTop = 6;
+    const int titleTop = GAP_XS;
     const std::pair<const char *, QString> toks[] = {
-        {"@HEAD_PAD", QString::number(titleTop + lineHeight(SECTION_PT, true) + GAP_S)},
+        {"@HEAD_PAD", QString::number(titleTop + lineHeight(SECTION_PT, true) + GAP_XS)},
         {"@SUB_HEAD", QString::number(titleTop + lineHeight(SMALL_PT, true) + GAP_S - 2)},
         {"@TITLE_TOP", QString::number(titleTop)},
         // Experimental surfaces: a card one step above the page (lighter than the page on light palettes).
