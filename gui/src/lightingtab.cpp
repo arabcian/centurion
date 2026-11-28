@@ -624,7 +624,8 @@ void LightingTab::buildUi() {
     redo_->setToolTip(tr("Redo a draft effect change; nothing is written to the keyboard."));
     connect(undo_, &QPushButton::clicked, this, [this] { stepEditHistory(-1); });
     connect(redo_, &QPushButton::clicked, this, [this] { stepEditHistory(1); });
-    bottom->addWidget(budget_);
+    if (theme::experimentalEnabled()) root->addWidget(budget_);
+    else bottom->addWidget(budget_);
     bottom->addStretch(1);
     bottom->addWidget(undo_);
     bottom->addWidget(redo_);
