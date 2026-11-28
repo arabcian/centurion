@@ -736,6 +736,7 @@ NvidiaTab::NvidiaTab(QWidget *parent) : QWidget(parent) {
     log_->setReadOnly(true);
     log_->setMinimumHeight(log_->fontMetrics().lineSpacing() * 3 + 8);
     log_->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
+    if (theme::experimentalEnabled()) log_->setMaximumHeight(log_->minimumHeight() + theme::GAP_S);
     log_->setMaximumBlockCount(1000);
     if (theme::experimentalEnabled()) {
         root->addWidget(experimentalui::disclosure(tr("ACTIVITY LOG  ·  Driver output"), log_));
