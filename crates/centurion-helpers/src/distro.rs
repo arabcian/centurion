@@ -270,7 +270,8 @@ fn command_lines(name: &str, args: &[&str]) -> Vec<String> {
 fn command_lines_within(name: &str, args: &[&str], timeout: std::time::Duration) -> Vec<String> {
     use std::io::Read as _;
     const MAX_OUTPUT: u64 = 16 << 20;
-    let Some(bin) = ["/usr/bin", "/bin", "/usr/sbin", "/sbin"].iter().map(|d| Path::new(d).join(name)).find(|p| p.is_file()) else {
+    // Run as root by backup-helper: only a binary no user can swap (same rule as modprobe and the tune tools).
+    let Some(bin) = ["/usr/bin", "/bin", "/usr/sbin", "/sbin"].iter().map(|d| Path::new(d).join(name)).find(|p| crate::trusted_path(p)) else {
         return Vec::new();
     };
     let Ok(mut child) = std::process::Command::new(bin).args(args).env_clear().env("PATH", "/usr/sbin:/usr/bin:/sbin:/bin")
