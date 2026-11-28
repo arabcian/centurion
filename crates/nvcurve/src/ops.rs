@@ -283,7 +283,8 @@ pub fn reset_everything(gpu_index: usize) -> (Vec<String>, Vec<String>) {
 pub fn persistent_load(path: &str) -> Map<String, Value> {
     let p = Path::new(path);
     if !p.exists() { return Map::new(); }
-    match std::fs::read_to_string(p).map_err(|e| e.to_string())
+    // Same bounds as Config::load: a regular file (no final symlink), at most 256 KiB.
+    match crate::atomicio::read_regular(p, crate::config::MAX_CONFIG_BYTES).map_err(|e| e.to_string())
         .and_then(|t| serde_json::from_str::<Value>(&t).map_err(|e| e.to_string())) {
         Ok(Value::Object(m)) => m,
         Ok(_) => { eprintln!("nvcurve: warning: {path} is not a JSON object — ignoring"); Map::new() }

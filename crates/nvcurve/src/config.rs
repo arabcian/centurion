@@ -5,7 +5,7 @@ use std::collections::BTreeMap;
 use std::path::Path;
 
 pub const PERSISTENT_CONFIG_FILE: &str = "/etc/nvcurve/config.json";
-const MAX_CONFIG_BYTES: u64 = 256 * 1024;
+pub(crate) const MAX_CONFIG_BYTES: u64 = 256 * 1024;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
