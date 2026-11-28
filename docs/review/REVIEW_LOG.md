@@ -13,7 +13,7 @@ Python static testleri kaynakta metin arıyor (≈441 assert); bunları kıran b
 - Onaylı düzeltmeler (2026-11-28, "onay bekleyenleri düzelt"): F1.2–F1.7, F2.2–F2.4 uygulandı.
 - Kullanıcı talimatı: aşamalar arasında onay beklemeden devam et; kırmızı çizgi bulguları yine raporlanır, uygulanmaz.
 - Aşama 3 (nvcurve): TAMAMLANDI — F3.1–F3.4 onayla uygulandı (2026-11-28), F3.5 yalnızca bilgi.
-- Aşama 4 (Intel undervolt): TAMAMLANDI — kod değişikliği yok; F4.1–F4.3 onay bekliyor (F4.1 öncelikli).
+- Aşama 4 (Intel undervolt): TAMAMLANDI — F4.1–F4.3 onayla uygulandı (2026-11-28), F4.4 yalnızca bilgi.
 - Sıradaki: Aşama 5 (Ryzen/SMU, Legion WMI/EC, fwattr, amdgpu, dgpu, nvreg, cooling/fan_table, lighting, spectrum).
 
 ## Başlangıç durumu (2026-11-28, commit 123c3c7, dal experimental)
@@ -112,27 +112,7 @@ Her aşama tek oturuma sığacak boyutta tutuldu (~4–8k satır).
 
 ## Bekleyen onaylar
 
-Aşama 4 (Intel undervolt; hepsi MSR yolunda veya root yetkisiyle çalıştırma → kırmızı çizgi, uygulanmadı):
-
-- **F4.1 (orta, öncelikli)** `bin/intel-uv-helper.rs:157`: `main` her istekten önce `watchdog(120)` kuruyor;
-  `monitor_stream` ise 4 saate kadar sürmek üzere tasarlanmış (kendi sınırı `stop_at`, modül yorumu "oturum başına bir
-  pkexec"). Sonuç: akış 120 sn'de SIGALRM ile ölüyor; GUI (`gui/src/inteltab.cpp:1131-1141`) bunu "4 saatlik sınır ya da
-  çökme" sanıp yeni bir pkexec başlatıyor → her 2 dakikada bir polkit denetimi + bir örnek boşluğu (ve polkit eylemi
-  yetki istiyorsa yeniden parola sorabilir). `bin/ryzen-co-helper.rs:223-236` aynı akışı doğru yapıyor: watchdog'u akış
-  dalından sonra kuruyor. Öneri: Intel yardımcısında da `watchdog(120)`'yi `monitor_stream` dalından sonraya almak
-  (yazma op'larının 120 sn sınırı aynen kalır). Risk: düşük.
-- **F4.2 (düşük)** `intel_uv.rs:1109` `stock_note`: /run/centurion/intel-stock.json kilitsiz oku-değiştir-yaz. Daemon'un
-  tam apply'ı ile helper'ın apply'ı aynı anda ilk kez farklı alanları kaydederse biri diğerininkini siler → güç kaynağı
-  geçişi / reset o alanı (ör. IccMax, PL1) firmware değerine döndüremez. Öneri: RMW'yi `helper_lock("intel-stock")` ile
-  sarmak. Geri alma verisi → kırmızı çizgi.
-- **F4.3 (düşük)** `intel_uv_search.rs:170` `stress_bin`: binary'nin yanında centurion-cpustress yoksa PATH'teki
-  `centurion-cpustress` root olarak, ortam temizlenmeden çalıştırılıyor (arama root CLI'dan yürür). Öneri: yalnızca
-  `trusted_path` geçen yolu kabul etmek (PATH yedeği yerine sabit sistem dizinleri). Risk: düşük.
-- **F4.4 (bilgi)** `intel_uv.rs:1748` `monitor_sample`: her örnekte her CPU için /dev/cpu/N/msr açılıp kapanıyor
-  (2 sn'de bir 2×N işlem). Ölçülebilir ama küçük; önbellek yeni yapı ister → önerilmiyor. `read_status` MSR_POWER_CTL'i iki
-  kez okuyor (mikro).
-
-Aşama 3'ten bekleyen yok.
+Şu an yok.
 
 ## Okunan dosyalar
 
@@ -207,7 +187,14 @@ Doğrulama (5255ff0): cargo test 734 / 0 / 9 ignored · clippy temiz · ctest 77
 
 ### Aşama 4 — Intel undervolt
 
-Uygulanan değişiklik yok; bulgular F4.1–F4.4 "Bekleyen onaylar"da.
+| # | Yer | Sorun / senaryo | Durum | Risk | Kırmızı çizgi |
+|---|---|---|---|---|---|
+| F4.1 | `bin/intel-uv-helper.rs` | `main`'in 120 sn watchdog'u 4 saatlik `monitor_stream`'i 2 dakikada öldürüyordu; GUI her seferinde yeni pkexec başlatıyordu. | **Düzeltildi** `34bbec0`: akış dalı `alarm(0)` ile watchdog'u kaldırıyor (ryzen-co-helper gibi); istek okuma ve diğer op'lar 120 sn sınırında. Otomatik test yok (helper Lenovo dışında başlamıyor). | düşük | evet (onaylı) |
+| F4.2 | `intel_uv.rs` `stock_note` | intel-stock.json kilitsiz RMW; eşzamanlı ilk kayıtlarda bir alan kaybolabiliyordu. | **Düzeltildi** `9a9b843`: `helper_lock("intel-stock")`. | düşük | evet (onaylı) |
+| F4.3 | `intel_uv_search.rs` `stress_bin` | PATH'teki cpustress root olarak çalışabiliyordu. | **Düzeltildi** `1e85319`: yanındaki / /usr/bin / /usr/local/bin, yalnızca `trusted_path`; yoksa "çalışamadı" (çıkış 3, son iyi değere dönüş). | düşük | evet (onaylı) |
+| F4.4 | `intel_uv.rs` `monitor_sample`, `read_status` | Örnek başına CPU başına msr açma; POWER_CTL iki kez okunuyor. | Bilgi — değişiklik yok | — | — |
+
+Doğrulama (1e85319): cargo test 734 / 0 / 9 ignored · clippy temiz · ctest 77/77 · python 45/45.
 
 Sorunsuz bulunanlar / gözlemler: her yazma "oku → yaz → geri oku" ve atomik modda ters sırada geri alma yapıyor;
 mailbox işlemleri msr fd'sinde flock ile serileştiriliyor; profil ayrıştırma tüm aralıkları yazmadan önce denetliyor
