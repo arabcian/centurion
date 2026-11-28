@@ -21,7 +21,8 @@ Python static testleri kaynakta metin arıyor (≈441 assert); bunları kıran b
 - Aşama 6b (calib, centurion-calibrate, calctx, calsim): OKUNDU — kod değişikliği yok, F6.5–F6.7 rapor.
 - Aşama 6c (bench, stability, cooltest, gamemode, boot*): OKUNDU — kod değişikliği yok; F6.9 onay bekliyor, F6.8/F6.10/F6.11 bilgi.
 - Aşama 7 (backup, tarscan, sysadmin, fstabcheck): OKUNDU — kod değişikliği yok; F7.1–F7.3 onay bekliyor (kırmızı çizgi), F7.4–F7.5 bilgi/soru.
-- Sıradaki: Aşama 8 (netguard, firewall, traffic, wifi).
+- Onaylı düzeltmeler (2026-11-28, "sadece onay bekleyenleri fixle"): F5.1, F5.4, F6.9, F7.1, F7.2, F7.3 uygulandı.
+- Devir: `docs/review/HANDOVER.md` (açık kalanlar + kalan aşamalar). Sıradaki: Aşama 8 (netguard, firewall, traffic, wifi).
 
 ## Başlangıç durumu (2026-11-28, commit 123c3c7, dal experimental)
 
@@ -119,63 +120,9 @@ Her aşama tek oturuma sığacak boyutta tutuldu (~4–8k satır).
 
 ## Bekleyen onaylar
 
-Aşama 5a (kırmızı çizgi, uygulanmadı):
-
-- **F5.1 (düşük-orta)** Kalibrasyon kilidi yanlış binary'de: `bin/legion-gpu-helper.rs:116` `refuse_during_calibration`
-  listesinde `set_gpu_mode` ve `set_fw_oc` var, ama bu binary onları hiç sunmuyor (`moved()` ile reddediyor). Bu op'ları
-  sunan `bin/legion-firmware-helper.rs` ise kalibrasyon kilidini hiç denetlemiyor. Çoğu bir sonraki açılışta etkili (GPU
-  modu, firmware OC, boot logosu, AOD), ama zorlanmış `set_igpu_mode` dGPU'yu hemen ayırıyor → çalışan bir kalibrasyonun
-  ölçtüğü güç bağlamını değiştirebilir. Öneri: legion-firmware-helper'da en azından `set_igpu_mode` için
-  `refuse_during_calibration()`; legion-gpu-helper listesindeki ölü iki girdi zararsız (kaldırma önerilmez, raporlandı).
-  Ayrıca legion-firmware-helper'da `watchdog` yok (diğer helper'larda 120 sn); bilinçli olabilir (ESP'ye logo yazımı) — soru.
-- **F5.2 (bilgi)** `smu.rs:172` `Guard(libc::c_int)`: F1.7'de `FdLock` için düzeltilen ham-fd kalıbının aynısı; bugünkü
-  kullanım (dosyalar `Bus`/`DriverMb` içinde, guard'dan uzun yaşıyor) doğru. `lock_bounded` sınırlı beklediği için
-  `FdLock`'a geçirilemiyor; önerim yok, yalnızca not.
-- **F5.3 (bilgi)** `legion_wmi.rs:530/1183` `record_verified` / `record_unsupported` kilitsiz RMW; iki eşzamanlı status
-  çağrısında bir "doğrulandı" kaydı düşebilir, bir sonraki status yeniden kaydeder (kendi kendini onarıyor).
-
-Aşama 6c (kırmızı çizgi değil, ama yarış için güvenilir test yazılamadığından onay bekliyor):
-
-- **F6.9 (düşük-orta)** `stability.rs:118` `record`, `:174` `on_shutdown`, `:192` `on_boot`: `/var/lib/centurion/exposure.json`
-  kilitsiz oku-değiştir-yaz. Yazanlar: tune-helper (her apply/restore'dan sonra `record_now`), centurion-calibrate
-  (`record_calibration`), centurion-boot-guard (açılış ve kapanış). Senaryo: kapanışta bir oyunun POST kancası
-  tune-helper restore çalıştırırken boot-guard `on_shutdown` yazıyor. Son yazan kazanır ve `clean: true` düşebilir. Bir
-  sonraki açılışta `on_boot` o açılışı "unclean" kapatır, `field_risk` o an değişmiş her ayarı çökme ağırlığıyla (3)
-  cezalandırır. Öneri: F1.6'da `defaults::record` için yapılanın aynısı, üç fonksiyonda
-  `let _l = crate::helper_lock("exposure").ok();`.
-
-Aşama 7 (kırmızı çizgi: helper girdi doğrulaması / izin listeleri, uygulanmadı):
-
-- **F7.1 (orta)** `sysadmin.rs:131` `SYSCTL_DENY`: listenin kendi amacı "dosya yazımını kök olarak komut çalıştırmaya
-  çeviren anahtarlar". `kernel.core_pattern` için yalnızca boru biçimi reddediliyor, ama iki anahtar eksik:
-  `kernel.poweroff_cmd` (orderly_poweroff'ta kök olarak çalışan program) ve `kernel.hotplug` (uevent helper: her uevent'te
-  kök olarak çalışan program; CONFIG_UEVENT_HELPER ile). Senaryo: sysctl drop-in'ine
-  `kernel.hotplug = /home/u/x` → `sysctl -p` hemen uygular. Hafifletici etken: config op'ları her seferinde yönetici
-  parolası istiyor (com.centurion.sysadmin.config). Öneri: ikisini `SYSCTL_DENY`'e eklemek, `sysadmin.rs` testlerine
-  birer red vakası.
-- **F7.2 (düşük)** `fstabcheck.rs:34` `udev_unescape` baytları tek tek `char`'a çeviriyor (`b[i] as char`). ASCII dışı bir
-  etiket bozuluyor: `/dev/disk/by-label/Müzik` → "MÃ¼zik". Bu yüzden `LABEL=Müzik` için yanlış "no disk has LABEL=…"
-  bulgusu çıkıyor ve yazım `confirm_fstab` ister. (`&s[i+2..i+4]` karakter sınırına denk gelmezse panik verebilir; udev
-  ters eğik çizgiyi `\x5c` olarak kaçırdığı için ulaşılamıyor.) Öneri: önce bayt dizisine çözmek, sonra
-  `String::from_utf8_lossy`; önce bunu yakalayan bir test.
-- **F7.3 (düşük-orta)** `backup.rs:1921` `config_restore_root`: `tune-boot.json`, `intel-uv-boot.json` ve
-  `/etc/centurion/presets/*` arşivden yalnızca JSON olarak denetlenip kuruluyor. Aynı dosyaları kaydeden yollar daha sıkı:
-  tune-helper `op_set_boot` `clean_values` uyguluyor, intel-uv-helper `set_boot` GUI voltaj tabanını
-  (`boot_within_gui_floor`) denetliyor. Açılışta intel-uv daemon yalnızca `parse_boot`'un donanım sınırlarını uyguluyor.
-  Senaryo: başka bir makineden ya da elle düzenlenmiş bir yapılandırma yedeği, GUI'nin kaydetmeye izin vermediği
-  derinlikte bir açılış undervolt'u kurar; o da her açılışta ve uyanışta kök olarak uygulanır. Hafifletici etkenler: her
-  geri yüklemede yönetici parolası ve boot guard. Öneri: geri yüklemede aynı kaydetme denetimlerini çalıştırmak (ya da bu
-  dosyaları ilgili helper'ın kaydetme op'u üzerinden yazmak).
-
-Aşama 5b (kırmızı çizgi, uygulanmadı):
-
-- **F5.4 (düşük)** `centurion-spectrum/src/lib.rs:135` `Rgb::parse_hex`, uzunluğu (6) denetleyip `u32::from_str_radix`'e
-  veriyor; o da baştaki `+` işaretini kabul ediyor: `"+12345"` → `Rgb(0x01,0x23,0x45)`. Ayrıca `trim_start_matches('#')`
-  birden çok `#`'i atıyor (`"##ff0000"` geçerli). lighting-helper'ın renk doğrulaması bunu kullanıyor (`lighting.rs:75`,
-  `:150`, stream karesi `:272`), bu yüzden helper girdi doğrulaması sayıldı. Zararı yok (her durumda geçerli bir renk
-  çıkıyor), ama doğrulama belgelenen `rrggbb`'den gevşek. Öneri (sıkılaştırma): uzunluk denetiminin yanına
-  `s.bytes().all(|b| b.is_ascii_hexdigit())`, önce bunu yakalayan bir test. GUI `#` önekli renk gönderiyorsa tek `#`
-  kabul edilmeye devam eder.
+F5.1, F5.4, F6.9, F7.1, F7.2, F7.3 onaylandı ve uygulandı (2026-11-28). Açık sorular (F5.7, F6.10, F7.5) ve test
+yazılamayan düşük bulgular (F6.3, F6.5) `HANDOVER.md` bölüm 4'te. Bulguların özgün metni "Bulgular" altındaki aşama
+tablolarında; onay bekleyenlerin uzun açıklamaları için bu dosyanın git geçmişine bakın (482aeb9…4e0a7bd).
 
 ## Okunan dosyalar
 
