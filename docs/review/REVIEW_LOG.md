@@ -22,7 +22,14 @@ Python static testleri kaynakta metin arıyor (≈441 assert); bunları kıran b
 - Aşama 6c (bench, stability, cooltest, gamemode, boot*): OKUNDU — kod değişikliği yok; F6.9 onay bekliyor, F6.8/F6.10/F6.11 bilgi.
 - Aşama 7 (backup, tarscan, sysadmin, fstabcheck): OKUNDU — kod değişikliği yok; F7.1–F7.3 onay bekliyor (kırmızı çizgi), F7.4–F7.5 bilgi/soru.
 - Onaylı düzeltmeler (2026-11-28, "sadece onay bekleyenleri fixle"): F5.1, F5.4, F6.9, F7.1, F7.2, F7.3 uygulandı.
-- Devir: `docs/review/HANDOVER.md` (açık kalanlar + kalan aşamalar). Sıradaki: Aşama 8 (netguard, firewall, traffic, wifi).
+- Devir: `docs/review/HANDOVER.md` (açık kalanlar + kalan aşamalar).
+- Oturum 2 (2026-11-28): başlangıç yeniden ölçüldü (dd0c608: 737 / 0 / 9, clippy temiz, ctest 77/77, python 45/45).
+  Sorulara cevaplar: F5.7 dokunma; F6.10 kapalı başarısız olsun; F7.5 MODE/OWNER/GROUP reddedilsin; F8.3 açılıştaki
+  gibi tolere et. F6.10 (`dfb8f08`), F7.5 (`b9c7027`), F8.3 (`14b08ad`) uygulandı.
+- Aşama 8 (netguard, firewall, traffic, wifi + bin'ler): TAMAMLANDI — F8.1 uygulandı (`63d5077`), F8.3 onayla uygulandı,
+  F8.2/F8.4–F8.6 bilgi.
+- Aşama 9 (teşhis / sağlık): KISMEN — kök yolları okundu, kod değişikliği yok; F6.6 kapandı (ulaşılamıyor), F9.1–F9.3 bilgi.
+  Kalan: aşağıda "Okunan dosyalar / Aşama 9"da yalnızca taranan diye geçen modüller satır satır okunmadı.
 
 ## Başlangıç durumu (2026-11-28, commit 123c3c7, dal experimental)
 
@@ -120,8 +127,8 @@ Her aşama tek oturuma sığacak boyutta tutuldu (~4–8k satır).
 
 ## Bekleyen onaylar
 
-F5.1, F5.4, F6.9, F7.1, F7.2, F7.3 onaylandı ve uygulandı (2026-11-28). Açık sorular (F5.7, F6.10, F7.5) ve test
-yazılamayan düşük bulgular (F6.3, F6.5) `HANDOVER.md` bölüm 4'te. Bulguların özgün metni "Bulgular" altındaki aşama
+F5.1, F5.4, F6.9, F7.1, F7.2, F7.3 onaylandı ve uygulandı (2026-11-28). Oturum 2: F5.7 "dokunma" cevabıyla kapandı;
+F6.10, F7.5, F8.3 onayla uygulandı. Test yazılamayan düşük bulgular (F6.3, F6.5, F8.4) `HANDOVER.md` bölüm 4'te. Bulguların özgün metni "Bulgular" altındaki aşama
 tablolarında; onay bekleyenlerin uzun açıklamaları için bu dosyanın git geçmişine bakın (482aeb9…4e0a7bd).
 
 ## Okunan dosyalar
@@ -160,6 +167,16 @@ Aşama 6c: `bootguard.rs`, `bin/centurion-boot-guard.rs`, `boothist.rs`, `stabil
 ölçüm): dosya oluşturma (yalnızca O_TMPFILE), eşleme ve indeksleme yolları okundu, ölçüm yöntemleri değerlendirilmedi.
 `bin/centurion-gamemode.rs` (1673): pkexec çağrısı, ön ayar yükleme, sahne durumu / kilit yolları okundu; sahne uygulama
 akışı (`apply_scene`, 691–1020) helper çağrılarının sırası olduğu için yalnızca tarandı.
+
+Aşama 9 (kısmi): satır satır — `ksnap.rs`, `health.rs` (kod), `bin/health-reader.rs`, `wakeup.rs`, `pstore.rs` (kod),
+`diagreport.rs` 715–870 (arşiv / anlık görüntü yazma), `flight.rs` 180–257, `iorate.rs` `probe`, `model.rs` 505–580 ve
+735–775 (`unsafe` paylaşımlı matris yazımı: Cholesky ve çekirdek doldurma), `overview::state_dir` ve tüm çağıranları.
+Yalnızca risk kalıplarıyla taranan (Command / dosya yazma / unsafe / unwrap): `model.rs`'in geri kalanı, `diagreport.rs`'in
+geri kalanı, `health_nvme.rs`, `health_diagnostics.rs`, `overview.rs`, `memory_spd.rs`, `sleepdiag.rs`, `hibernate.rs`,
+`trends.rs`, `tools.rs`, `display.rs`.
+
+Aşama 8: `netguard.rs` (kod kısmı 1–2222 satır satır), `firewall.rs`, `traffic.rs`, `wifi.rs` (kod kısımları satır satır),
+`bin/netguard-helper.rs`, `bin/centurion-netguard.rs`; GUI tarafı yalnızca `netpage.cpp` `runUser` zaman aşımı için.
 
 Aşama 7: `sysadmin.rs`, `fstabcheck.rs`, `tarscan.rs` (kod kısımları satır satır), `bin/backup-helper.rs`,
 `bin/sysadmin-helper.rs`, `bin/sysadmin-config-helper.rs`. `backup.rs`: yapılandırma geri yükleme yolu (1740–1960) ve yol
@@ -309,6 +326,13 @@ koyuyor. bench G/Ç testleri bağlantısız O_TMPFILE kullanıyor (dünya-yazıl
 açık ad yok). gamemode kök gerektiren her şeyi pkexec ile yapıyor; ön ayar değerleri yalnızca köke ait depodan
 (`/etc/centurion/presets`) alınıyor, kullanıcının dosyası değil; yetkilendirme takılırsa 60 sn, helper 180 sn sınırı var.
 
+### Oturum 2'de onayla uygulanan eski bulgular
+
+| # | Değişiklik | Test |
+|---|---|---|
+| F6.10 | `bootguard.rs`: dosya var ama okunamıyor/bozuksa `should_skip` atlıyor, `arm` korumayı "damaged" gerekçesiyle tetikliyor; dosya yoksa (ilk açılış) eskisi gibi boş durum. Uygulamada "Resume" (`reset`) yeni durum yazıyor. | `damaged_state_is_not_an_empty_one` (önce derlenmiyordu) |
+| F7.5 | `sysadmin.rs` udev denetimi: eklenen satırlarda `MODE` / `OWNER` / `GROUP` reddediliyor. Not: `TAG+="uaccess"` (oturumdaki kullanıcıya erişim) hâlâ kabul ediliyor ve mevcut testte izinli örnek olarak duruyor. | mevcut red testine üç vaka (önce kırmızıydı) |
+
 ### Aşama 7 — yedekleme ve sistem araçları
 
 | # | Yer | Gözlem | Risk | Kırmızı çizgi |
@@ -322,6 +346,43 @@ denedim: tar "Cannot open: Not a directory" diyerek reddediyor, hedef boş kalı
 ve özel dosyayı reddediyor. Kullanıcı geri yüklemesi sahnelerin `command` alanını atıyor; kök geri yüklemesi modprobe.d
 dosyasını kopyalamıyor, `nvreg::restore_from` ile yeniden doğruluyor. tarscan tanımadığı her başlıkta akışı "broken"
 işaretleyip silme/yeniden adlandırmayı kapatıyor.
+
+### Aşama 8 — ağ koruması, güvenlik duvarı, trafik, Wi-Fi
+
+| # | Yer | Gözlem | Durum | Risk | Kırmızı çizgi |
+|---|-----|--------|-------|------|---------------|
+| F8.1 | `traffic.rs` `Ledger::from_json` | Bir günde 256 program + "(other)" varken (bunu `add` üretiyor) dosya geri okunduğunda alfabetik olarak sonuncu program düşüyordu (daemon yeniden başlatma, sayımın yeniden açılması). Ayrıca kısıt kesilmemiş adla denetleniyordu. | **Düzeltildi** `63d5077`: yükleme `add` ile aynı sınırı uyguluyor. `full_day_round_trips` (önce kırmızıydı). | düşük | hayır (sayım verisi) |
+| F8.2 | `netguard.rs:1013`, `:1019-1020` `decide` | Ayrıştırılamayan paket ya da bulunamayan soket → kabul (paket başına açık kalarak başarısız). Kopya aralığı 256 bayt; IPv6 uzantı başlıklarını bu sınırın ötesine itmek CAP_NET_RAW istiyor (yetkisiz RTHDR tip 2 yalnızca 24 bayt), bu yüzden Wine programı için ulaşılamıyor. | Bilgi — değişiklik yok | düşük | evet (koruma kararı) |
+| F8.3 | `netguard.rs:1447` yeniden yükleme | Trafik sayımı açık ve conntrack soketi açılamıyorsa her yeniden yükleme başarısız oluyordu: güvenlik duvarı / kara liste değişiklikleri sayım kapatılana dek uygulanmıyordu (açılışta aynı hata tolere ediliyordu). | **Düzeltildi** (onaylı) `14b08ad`: kurallar yükleniyor, hata durum dosyasına yazılıyor. Test yok (kök + netlink daemon döngüsü). Not: helper `state["error"]` doluyken yeni engelleme kurallarının açık bağlantılarını kesmiyor (`:1962`); bu durumda da öyle. | düşük | evet (onaylı) |
+| F8.4 | `netguard.rs:1432` açılış | `sync_acct` başarısız olursa `write_state` önceki `start_error`'ı (ör. "firewall not applied") eziyor; GUI yalnızca sayım hatasını gösterir. | Bilgi — test yazılamıyor (daemon) | çok düşük | hayır |
+| F8.5 | `bin/netguard-helper.rs` | Diğer kök helper'ların çoğunda olan `watchdog` yok. Bloklayabilecek yerler: `forget_blocked_flows` zaman aşımsız netlink dump okuması, nft alt süreci, whois DNS çözümü. Kullanıcı yolu GUI'de `timeoutMs` ile öldürülüyor; kök yolu `privileged::run`. Pratikte dump her zaman DONE ile bitiyor. | Bilgi | çok düşük | hayır |
+| F8.6 | `firewall.rs:281` `move` | `i as i64 + by` taşması: release'de sarıyor → `to < 0` → işlem yok; debug'da panik. Yalnızca elle yazılmış istek. | Bilgi — "imkânsız durum" | yok | evet (doğrulama) |
+
+Sorunsuz bulunanlar: güvenlik duvarı kuralının her alanı nft'ye gitmeden önce tipli değere ayrıştırılıyor (arayüz adı
+izin listesi, port aralıkları birleştiriliyor, not nft'ye hiç gitmiyor); `firewall` isteği kaydetmeden önce `nft -c` ile
+deneniyor ve `expected_firewall` kilit altında karşılaştırılıyor. Tablo tek nft işlemiyle değiştiriliyor; kuyruk kuralları
+açılmadan önce bağlanıyor; Wine koruması `bypass`'sız kuyrukla kapalı başarısız. Netlink ayrıştırıcıları (`nl_each`,
+öznitelik döngüleri) uzunluk denetimli; sock_diag yanıtları sıra numarasıyla eşleniyor. Günlükler 0640 root:wheel,
+O_NOFOLLOW. whois yalnızca `whois.` ile başlayan geçerli adlara, genel adreslere, süre ve boyut sınırıyla bağlanıyor.
+Wi-Fi: yetkisiz, salt okuma; araçlar `trusted_path` + temiz ortamla; arayüz adı yalnızca /sys/class/net listesinden.
+Kanal hesaplarında işaretsiz çıkarmaların hepsi önceden korunmuş.
+
+### Aşama 9 — teşhis / sağlık (kısmi)
+
+| # | Yer | Gözlem | Risk | Kırmızı çizgi |
+|---|-----|--------|------|---------------|
+| F6.6 | `overview.rs:114` `state_dir` | Kapandı: kök olarak çağıranlar (`autotune_req`, `trends`, `diagreport` önizlemesi) yalnızca pkexec ile tune-helper'dan geliyor, pkexec `HOME=/root` koyuyor; servis yolları (`centurion-tune.service` → `boot`, paket kancası → `restore`) `state_dir`'a ulaşmıyor. `diagreport` yazımı kökte zaten reddediliyor. `cooling.rs`'in kopyası yalnızca kullanıcı süreci (cooltest). | yok | hayır |
+| F9.1 | `ksnap.rs:40` `DENY_PREFIXES` | Eski `firmware/efi/vars` arayüzü (CONFIG_EFI_VARS, yeni çekirdeklerde kaldırıldı) listede yok; `efivars` var. İçerik çoğunlukla ikili (atlanıyor), metin olanlar GUI'ye dönebilir. | çok düşük | evet (izin listesi) |
+| F9.2 | `bin/health-reader.rs` | `watchdog(30)` yalnızca `ksnap`'te; `nvme_deep`, `diagnostics`, `boots`, `sleep_diag`, `battery_info` (acpi_call) kökte süre sınırsız. | çok düşük | hayır |
+| F9.3 | `bin/health-reader.rs:8` doc | "The scan never returns raw log lines" — olaylar `text` alanında sınıflanan satırın ilk 300 karakterini (adresler temizlenmiş) taşıyor. Sessiz polkit eyleminin gerekçesi bu cümleye dayandığı için yorum değiştirilmedi, raporlandı. | bilgi | evet (polkit gerekçesi) |
+
+Sorunsuz bulunanlar: ksnap sembolik bağlantıları izlemiyor, kökleri `canonical_in_sysfs` ile /sys içine sabitliyor, debugfs'i
+alt ağaç izin listesiyle açıyor, O_NONBLOCK okuyor, değerleri `scrub`'dan geçiriyor ve kilit açık pencere istiyor.
+`scrub` ve kmsg ayrıştırıcıları dilimlemelerde karakter sınırında. pstore arşivi önce yazıp sonra siliyor, adları
+temizliyor. diagreport arşivi ve anlık görüntüsü yalnızca kullanıcı olarak, O_EXCL geçici dosya + `RENAME_NOREPLACE`
+ile yazılıyor; anlık görüntü okuması sahip / mod / nlink / sürüm denetimli. iorate yazma sınaması bağlantısız O_TMPFILE.
+model.rs `unsafe` paralel yazımları satır sahipliğiyle ayrık; Cholesky'de hata bayrağı engelden önce yazılıp sonra
+okunuyor, tüm işçiler aynı noktada dönüyor.
 
 ## Ölü kod adayları
 
@@ -351,3 +412,7 @@ Aşama 6c: yok (F6.11 bir kopya, ölü değil).
 
 Aşama 7: yok.
 
+Aşama 8: yok. (`netguard`/`wifi`/`traffic`'te dışarıdan kullanılmayan birkaç `pub` öğe var — `parse_*`, `find_socket`,
+`KCONFIG`, `DAYS_KEPT` … — hepsinin modül içinde çağıranı var; yalnızca görünürlük gereğinden geniş.)
+
+Aşama 9 (kısmi): yok.

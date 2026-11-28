@@ -1,7 +1,7 @@
 # Kod incelemesi — devir tablosu (2026-11-28)
 
 Yeni oturum buradan devam eder. Ayrıntılı bulgular, okunan dosyalar ve ölü kod listesi `docs/review/REVIEW_LOG.md`'de.
-Dal: `experimental`. Bu belgenin yazıldığı andaki son kod commit'i: `tune: keep clean_values' type-complexity allowance`.
+Dal: `experimental`. Bu belgenin yazıldığı andaki son kod commit'i: `netguard: traffic accounting that cannot start no longer blocks a reload` (oturum 2).
 
 ## 1. Kurallar (kullanıcının talimatı, özet)
 
@@ -22,13 +22,13 @@ Dal: `experimental`. Bu belgenin yazıldığı andaki son kod commit'i: `tune: k
 
 | Adım | Komut | Son sonuç |
 |---|---|---|
-| Rust test | `cargo test --workspace --locked` | 737 geçti / 0 kaldı / 9 atlandı |
+| Rust test | `cargo test --workspace --locked` | 739 geçti / 0 kaldı / 9 atlandı |
 | Clippy | `cargo clippy --workspace --all-targets --locked -- -D warnings` | temiz |
 | GUI | `cmake -S gui -B build -DCMAKE_BUILD_TYPE=Debug -DCENTURION_BUILD_TESTS=ON -DCENTURION_SANITIZE=ON -DCENTURION_LTO=OFF && cmake --build build --parallel && QT_QPA_PLATFORM=offscreen ASAN_OPTIONS=detect_leaks=0 ctest --test-dir build --output-on-failure` | 77/77 |
 | Python | `grep -oE "run: python3 .*" .github/workflows/ci.yml \| sed 's/^run: //'` ile çıkan 45 komutun hepsi | 45/45 |
 | cargo-deny | kurulu değil, çalıştırılmadı | — |
 
-Ortam notları: Qt6 paketleri CI'daki apt listesiyle kurulur (yeni konteynerde yeniden gerekir). Helper binary'leri
+Ortam notları: Qt6 paketleri CI'daki apt listesiyle kurulur (yeni konteynerde yeniden gerekir). GUI derlemesini `-j3` ile çalıştır: sınırsız `--parallel` ASAN'lı derlemede 16 GB'ı aşıp OOM'a düşüyor. Helper binary'leri
 `init()` içinde Lenovo dışı makineyi reddettiği için uçtan uca çalıştırılamaz; testler birim düzeyinde. ctest ~220 sn.
 
 ## 3. Tamamlanan aşamalar
@@ -45,7 +45,8 @@ Ortam notları: Qt6 paketleri CI'daki apt listesiyle kurulur (yeni konteynerde y
 | 6a autotune | tamam | F6.1 (doc yorumları) |
 | 6b calib | tamam | — |
 | 6c bench/stability/cooltest/gamemode/boot | tamam | F6.9 (onaylı, bu oturum) |
-| 7 backup/sysadmin/fstab/tarscan | tamam | F7.1, F7.2, F7.3 (onaylı, bu oturum; F7.3 için önce davranışı değiştirmeyen taşıma commit'i) |
+| 7 backup/sysadmin/fstab/tarscan | tamam | F7.1, F7.2, F7.3 (onaylı; F7.3 için önce davranışı değiştirmeyen taşıma commit'i); F7.5 (onaylı, oturum 2) |
+| 8 netguard/firewall/traffic/wifi | tamam | F8.1 (`63d5077`), F8.3 (onaylı, `14b08ad`); oturum 2'de ayrıca F6.10 (`dfb8f08`), F7.5 (`b9c7027`) |
 
 Bu oturumda onayla uygulananlar:
 
@@ -62,23 +63,21 @@ Bu oturumda onayla uygulananlar:
 
 | # | Yer | Konu | Ne gerekiyor |
 |---|---|---|---|
-| F5.7 | `nvreg.rs:83` | `RegistryDwords` anahtarında `,` izni gerekli mi? | Kullanıcıdan cevap (kırmızı çizgi) |
-| F6.10 | `bootguard.rs:29` | Bozuk durum dosyasında ön ayarlar uygulanıyor (açık kalarak başarısız). Bilinçli mi? | Kullanıcıdan cevap |
-| F7.5 | `sysadmin.rs:174` | udev'de `MODE` / `OWNER` / `GROUP` engellenmiyor. Bilinçli mi? | Kullanıcıdan cevap (kırmızı çizgi) |
+| F5.7 | `nvreg.rs:83` | `RegistryDwords` anahtarında `,` izni | Kapandı: kullanıcı "dokunma" dedi |
+| F7.5 not | `sysadmin.rs` udev | `TAG+="uaccess"` hâlâ kabul ediliyor (testte izinli örnek) | Kullanıcı yalnızca MODE/OWNER/GROUP istedi; gerekirse sor |
+| F8.4 | `netguard.rs:1432` | Açılışta sayım hatası `start_error`'ı eziyor | Test yazılamıyor; bilgi |
 | F6.2 | `autotune.rs:1455` | `joint_pass` sonrası `seen` için model yok; ulaşılabilir girdi bulunamadı | Kanıt yoksa dokunma |
 | F6.3 | `bin/centurion-autotune.rs:161` | `--save` geçici dosyası süreç başına değil | Test yazılamadı; istenirse `write_replace` gibi pid ekle |
 | F6.5 | `bin/centurion-calibrate.rs:2476,2484` | `--oat` imzayı `Calibration::save()` atlayarak yazıyor | Test yazılamadı; istenirse `cal.save()` |
-| F6.6 | `overview.rs:114`, `cooling.rs:332` | `HOME` yoksa `/tmp/centurion` düşüşü; kök bağlamda tehlikeli olabilir | **Aşama 9'da** `state_dir` çağıranlarını kök açısından denetle |
 | F7.4 | `sysadmin.rs:417` | `config_restore` yasak listesini yeniden çalıştırmıyor | bilgi |
-| diğer bilgi notları | REVIEW_LOG "Bulgular" | F2.5, F3.5, F4.4, F5.2, F5.3, F5.5, F5.6, F5.8, F6.4, F6.7, F6.8, F6.11 | değişiklik önerilmedi |
+| diğer bilgi notları | REVIEW_LOG "Bulgular" | F2.5, F3.5, F4.4, F5.2, F5.3, F5.5, F5.6, F5.8, F6.4, F6.7, F6.8, F6.11, F8.2, F8.5, F8.6, F6.6, F9.1–F9.3 | değişiklik önerilmedi |
 | ölü kod | REVIEW_LOG "Ölü kod adayları" | `tune.rs` `sched_feature_state_for_test`, legion-gpu-helper kalibrasyon listesindeki iki girdi, spectrum'un tüketicisiz `pub` API'si | Silinmedi; son raporda listelenecek |
 
 ## 5. Kalan aşamalar
 
 | Aşama | Kapsam | ≈Satır | Not |
 |---|---|---:|---|
-| 8 | netguard, firewall, traffic, wifi + bin'leri | 4.8k | Kök ağ kuralları: büyük kısmı kırmızı çizgi (doğrulama) |
-| 9 | model, diagreport, health*, overview ve kalan teşhis modülleri | 8k | F6.6'yı burada kapat |
+| 9 (kalan) | REVIEW_LOG "Okunan dosyalar / Aşama 9"da yalnızca taranan modüller | ~6k | Kök yolları ve F6.6 bitti (oturum 2) |
 | 10 | cpustress, gpustress | 2.6k | |
 | 11 | GUI çekirdek: privileged, mainwindow, main, dbusapi, telemetri, paylaşılan başlıklar | ~5k | |
 | 12a | optimizetab | 4.6k | |
@@ -93,5 +92,5 @@ Bu oturumda onayla uygulananlar:
 
 > Centurion kod incelemesine `experimental` dalında devam et. Önce `docs/review/HANDOVER.md` ve
 > `docs/review/REVIEW_LOG.md`'yi oku; kurallar ve kırmızı çizgiler orada (bölüm 1). Doğrulama ortamını kur
-> (bölüm 2) ve başlangıç durumunu yeniden ölç. Aşama 8'den başla, aşamalar arasında onay beklemeden ilerle;
+> (bölüm 2) ve başlangıç durumunu yeniden ölç. Aşama 9'un kalanından başla, aşamalar arasında onay beklemeden ilerle;
 > kırmızı çizgi bulgularını ve bölüm 4'teki soruları bana sor.
