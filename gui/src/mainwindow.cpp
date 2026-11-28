@@ -693,7 +693,7 @@ void MainWindow::rebuildExperimentalNavigation() {
         button->setEnabled(tabs_->isTabEnabled(i));
         button->setCursor(Qt::PointingHandCursor);
         button->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
-        button->setMinimumHeight(std::max(28, button->fontMetrics().height() + theme::GAP_S));
+        button->setMinimumHeight(std::max(32, button->fontMetrics().height() + theme::GAP_S));
         button->setAccessibleName(label);
         QWidget *page = tabs_->widget(i);
         connect(button, &QPushButton::clicked, this, [this, page] {
@@ -748,7 +748,7 @@ void MainWindow::setExperimentalCollapsed(bool collapsed) {
         box->style()->polish(box);
     }
     for (auto *button : std::as_const(expNavButtons_)) {
-        button->setMinimumHeight(std::max(collapsed ? 36 : 28, button->fontMetrics().height() + theme::GAP_S));
+        button->setMinimumHeight(std::max(collapsed ? 36 : 32, button->fontMetrics().height() + theme::GAP_S));
         button->setIconSize(iconSize);
         button->setText(collapsed ? QString() : button->property("navLabel").toString());
         button->setProperty("collapsed", collapsed);
