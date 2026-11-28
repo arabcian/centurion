@@ -161,7 +161,7 @@ ScenesTab::ScenesTab(MainWindow *win) : win_(win), eng_(win->scenes()) {
     // A little wider in Experimental so long scene names do not truncate.
     // The right editor keeps its original content and operational callbacks.
     if (theme::experimentalEnabled()) {
-        leftHost->setMinimumWidth(190);
+        leftHost->setMinimumWidth(176);
         leftHost->setMaximumWidth(340);
     } else {
         leftHost->setFixedWidth(190);
