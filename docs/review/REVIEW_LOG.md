@@ -12,7 +12,8 @@ Python static testleri kaynakta metin arıyor (≈441 assert); bunları kıran b
 - Aşama 2 (tune.rs, tune-helper, power, pmtable): TAMAMLANDI — tüm bulgular uygulandı (F2.5 yalnızca bilgi).
 - Onaylı düzeltmeler (2026-11-28, "onay bekleyenleri düzelt"): F1.2–F1.7, F2.2–F2.4 uygulandı.
 - Kullanıcı talimatı: aşamalar arasında onay beklemeden devam et; kırmızı çizgi bulguları yine raporlanır, uygulanmaz.
-- Sıradaki: Aşama 3 (nvcurve crate'i).
+- Aşama 3 (nvcurve): TAMAMLANDI — kod değişikliği yok (kırmızı çizgi dışında uygulanacak bulgu çıkmadı); F3.1–F3.5 onay bekliyor.
+- Sıradaki: Aşama 4 (Intel undervolt: intel_uv, intel_uv_daemon, intel_uv_search, intel-uv-helper, centurion-intel-uv).
 
 ## Başlangıç durumu (2026-11-28, commit 123c3c7, dal experimental)
 
@@ -110,7 +111,29 @@ Her aşama tek oturuma sığacak boyutta tutuldu (~4–8k satır).
 
 ## Bekleyen onaylar
 
-Şu an yok.
+Aşama 3 (nvcurve; hepsi NVIDIA eğri/limit yolunda veya onun kapısında → kırmızı çizgi, uygulanmadı):
+
+- **F3.1** `nvcurve/src/proc.rs:56-62` `run`: başarı yolunda stdout/stderr okuyucu thread'leri join ediliyor; çocuk çıkıp
+  borusunu bir alt sürecine bırakmışsa join sonsuza kadar bekler (F1.1 ile aynı desen). Tek kullanıcı:
+  `limits::set_power_limit`'in nvidia-smi yedeği (güç limiti yazma yolu). Zaman aşımı dalı ayrıca
+  `centurion_helpers::kill_reap`'in kopyası (crate artık centurion-helpers'a bağlı). Öneri: başarısızlıkta join etmemek,
+  kopyayı `kill_reap` ile değiştirmek. Risk: düşük.
+- **F3.2** `nvcurve/src/bin/nvcurve-root-helper.rs:359-372` `calibration_hold`: `centurion_helpers::calibration_hold`'un
+  kopyası; yorumdaki gerekçe ("this crate does not link that one") artık doğru değil (Cargo.toml centurion-helpers'a
+  bağlı). Fark: burada `pid > 1` filtresi var ve `CENTURION_CALIBRATE_OWNER` istisnası yok → değiştirmek davranışı
+  değiştirir. Öneri: ortak fonksiyona `pid > 1` eklenip burada kullanılması; sahip istisnası bilinçli olarak dışarıda
+  kalabilir. Risk: düşük. Karar sizde.
+- **F3.3** `nvcurve/src/ops.rs:283` `persistent_load`: /etc/nvcurve/config.json'u root olarak sınırsız boyutta ve sembolik
+  bağı izleyerek okuyor; aynı dosyanın okuyucusu `Config::load` ise root sahipliği, yazılamazlık ve 256 KiB sınırı
+  arıyor. Yazma tarafı (`set_default_profile`) boot autoload seçimini değiştiriyor. /etc root'un olduğu için istismar yolu
+  yok; tutarlılık. Öneri: `atomicio::read_regular(p, 256 KiB)`. Risk: düşük.
+- **F3.4 (tekrar, öneri)** `nvcurve/src/ocjournal.rs` `centurion_helpers::ocjournal`'ın kopyası (aynı dosya, biçim ve
+  parmak izi; `kind` sabit "gpu_curve"). Farklar: dizin için `atomicio::ensure_dir` (oluşturup chmod) / `secure_dir`
+  (yalnızca denetim), döndürmede `read_regular` / `read_root_file` (uid 0 şartı). İki kopya (kuralınız 3+ için birleştirme
+  diyor) → yalnızca öneri: `centurion_helpers::ocjournal::record_values("gpu_curve", …)` ince sarmalayıcısı.
+- **F3.5 (bilgi)** `nvcurve/src/hal/limits.rs:141` bellek ofseti API sırası ortam değişkeni
+  `CENTURION_NVML_MEM_NEW_API` ile değişiyor. pkexec ortamı temizlediği için kullanıcı etkileyemez; yalnızca root'un
+  doğrudan çalıştırdığı yollarda etkili. Değişiklik önerisi yok.
 
 ## Okunan dosyalar
 
@@ -120,6 +143,8 @@ machine.rs, unlock.rs, distro.rs.
 Aşama 2: `tune.rs` (kod kısmı 1–260, 1133–4266 satır satır; TUNABLES tablosu 261–1133 285 satırlık veri: anahtar
 tekrarı, Int aralığı min≤max ve her satırda Target alanı mekanik olarak denetlendi, yardım metinleri okunmadı),
 `bin/tune-helper.rs` (tamamı), `bin/tune-admin-helper.rs`, `bin/tune-profile-helper.rs`, `power.rs`, `pmtable.rs`.
+
+Aşama 3: `crates/nvcurve` tamamı (27 dosya, 5 863 satır) satır satır.
 
 ## Bulgular
 
@@ -160,9 +185,24 @@ okuma doğrulaması "dosyayı son yazan satır" kuralıyla doğru.
 Doğrulama (fc31e8b): cargo test 727 / 0 / 9 ignored · clippy temiz · GUI build + ctest 77/77 · python 45/45.
 Onaylı düzeltmelerden sonra (553837d): cargo test 733 / 0 / 9 ignored · clippy temiz · ctest 77/77 · python 45/45.
 
+### Aşama 3 — nvcurve
+
+Uygulanan değişiklik yok. Bulgular F3.1–F3.5 "Bekleyen onaylar" bölümünde.
+
+Sorunsuz bulunanlar / gözlemler: dilimlemeler ve indekslemeler ya sabit boyutlu sürücü tamponlarında ya da önceden
+uzunluğu denetlenmiş verilerde (`Buf::u32_at` çağıranlarının hepsi sınır içinde). Yazma yolları (vfcurve, apply, ops,
+snapshot) yazmadan önce iki bağımsız okuma, kimlik denetimi, maske denetimi ve yazma sonrası birebir geri okuma yapıyor;
+başarısızlıkta tek geri alma denemesi. Static testler (tests/nvcurve_safety_static_test.py) bu crate'i yoğun biçimde
+metin kalıbıyla sabitliyor.
+
+Doğrulama: kod değişmediği için Aşama 2 sonundaki sonuçlar geçerli (cargo test 733 / 0 / 9 · clippy temiz · ctest 77/77 · python 45/45).
+
 ## Ölü kod adayları
 
 Aşama 1: yok (tüm `pub` öğelerin çağıranı var).
 Aşama 2: `tune.rs:2875` `sched_feature_state_for_test` — `#[cfg(test)] pub fn`, hiçbir yerde çağrılmıyor (testler doğrudan
 `sched_feature_state`'i kullanabiliyor). Silinmedi.
+
+Aşama 3: yok. (Kopyalar F3.2 ve F3.4'te; bunlar ölü değil, tekrar.) Not: `nvcurve/src/hal/sensors.rs:13-17`
+modül yorumunda kopuk boş `//!` satırları var (yalnızca biçim, dokunulmadı).
 
