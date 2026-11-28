@@ -3577,9 +3577,15 @@ fn forked_firmware_write(
         unsafe {
             // Keep only the firmware lock so the child cannot hold the
             // helper's reply pipe or its other locks open if the device stalls.
-            for fd in 0..4096 {
-                if fd != lock_fd {
-                    libc::close(fd);
+            // close_range (5.9+) reaches every descriptor whatever RLIMIT_NOFILE allows; the loop is the fallback.
+            let closed = lock_fd > 0
+                && libc::syscall(libc::SYS_close_range, 0u32, (lock_fd - 1) as u32, 0u32) == 0
+                && libc::syscall(libc::SYS_close_range, (lock_fd + 1) as u32, u32::MAX, 0u32) == 0;
+            if !closed {
+                for fd in 0..4096 {
+                    if fd != lock_fd {
+                        libc::close(fd);
+                    }
                 }
             }
             let fd = libc::open(path.as_ptr(), libc::O_WRONLY | libc::O_NOFOLLOW | libc::O_CLOEXEC);
@@ -4247,6 +4253,38 @@ mod tests {
         assert!(is_irq_file(Path::new("/proc/irq/42/smp_affinity_list")));
         assert!(!is_irq_file(Path::new("/proc/irq/default_smp_affinity")));
         assert!(!is_irq_file(Path::new("/proc/irq/1/../2/smp_affinity_list")));
+    }
+
+    #[test]
+    fn stalled_writer_keeps_no_high_descriptor() {
+        // A pipe's write end at fd 5000: while the child blocks (FIFO without a reader) it must not hold it.
+        const HIGH: i32 = 5000;
+        let mut lim = libc::rlimit { rlim_cur: 0, rlim_max: 0 };
+        unsafe { libc::getrlimit(libc::RLIMIT_NOFILE, &mut lim) };
+        if lim.rlim_max <= HIGH as u64 { return; }
+        if lim.rlim_cur <= HIGH as u64 {
+            let raised = libc::rlimit { rlim_cur: HIGH as u64 + 1, rlim_max: lim.rlim_max };
+            if unsafe { libc::setrlimit(libc::RLIMIT_NOFILE, &raised) } != 0 { return; }
+        }
+        let dir = std::env::temp_dir().join(format!("centurion-fd-{}", std::process::id()));
+        std::fs::create_dir(&dir).unwrap();
+        let fifo = dir.join("config");
+        let c = std::ffi::CString::new(fifo.to_str().unwrap()).unwrap();
+        assert_eq!(unsafe { libc::mkfifo(c.as_ptr(), 0o600) }, 0);
+        let mut p = [0i32; 2];
+        assert_eq!(unsafe { libc::pipe2(p.as_mut_ptr(), libc::O_CLOEXEC | libc::O_NONBLOCK) }, 0);
+        assert_eq!(unsafe { libc::dup2(p[1], HIGH) }, HIGH);
+        unsafe { libc::close(p[1]); }
+        let guard = lock_firmware_writer(&dir.join("lock")).unwrap();
+        let writer = std::thread::spawn(move || forked_firmware_write(&fifo, b"x", None, &guard).err().map(|e| e.kind()));
+        std::thread::sleep(std::time::Duration::from_millis(500));
+        unsafe { libc::close(HIGH); }  // the parent's copy; only the child's could keep the pipe open now
+        let mut b = [0u8; 1];
+        let n = unsafe { libc::read(p[0], b.as_mut_ptr().cast(), 1) };
+        assert_eq!(n, 0, "the stalled child still holds fd {HIGH}");
+        assert_eq!(writer.join().unwrap(), Some(std::io::ErrorKind::TimedOut));
+        unsafe { libc::close(p[0]); }
+        std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]
