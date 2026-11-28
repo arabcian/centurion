@@ -78,7 +78,7 @@ yapılandırma yazma; **R3** = root olmayan veya salt okuma/saf mantık; **G1** 
 `QProcess::waitFor*` UI dosyalarında: cosearchdialog (4), systemdiagnostics (3), coolingpage, firstrunwizard, netlookup (1'er).
 Rust'ta `unwrap/expect` yoğun dosyalar: backup (112), tune (83), calib (70), autotune (65), diagreport (65) — çoğu test modülünde olabilir, okumada ayrılacak.
 
-## İnceleme planı (onay bekliyor)
+## İnceleme planı (onaylandı 2026-11-28)
 
 Sıra: önce ortak altyapı (diğer her şey ona yaslanıyor), sonra R1, R2, R3, sonra GUI G1, G2.
 Her aşama tek oturuma sığacak boyutta tutuldu (~4–8k satır).
