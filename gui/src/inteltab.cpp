@@ -20,6 +20,7 @@
 #include <QDoubleSpinBox>
 #include <QFile>
 #include <QFileDialog>
+#include <QFontDatabase>
 #include <QScrollArea>
 #include <QTabWidget>
 #include <QTimer>
@@ -1238,7 +1239,16 @@ void IntelTab::updateCpuTable(const QJsonObject &s) {
     cpuTable_->setRowCount(cur.size());
     auto cell = [this](int row, int col, const QString &text) {
         auto *it = cpuTable_->item(row, col);
-        if (!it) { it = new QTableWidgetItem; it->setTextAlignment(Qt::AlignRight | Qt::AlignVCenter); cpuTable_->setItem(row, col, it); }
+        if (!it) {
+            it = new QTableWidgetItem;
+            it->setTextAlignment(Qt::AlignRight | Qt::AlignVCenter);
+            if (theme::experimentalEnabled()) {
+                QFont font;
+                font.setFamily(QFontDatabase::systemFont(QFontDatabase::FixedFont).family());
+                it->setFont(font);
+            }
+            cpuTable_->setItem(row, col, it);
+        }
         it->setText(text);
     };
     for (int row = 0; row < cur.size(); ++row) {
