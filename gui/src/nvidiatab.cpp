@@ -729,11 +729,17 @@ NvidiaTab::NvidiaTab(QWidget *parent) : QWidget(parent) {
                       readCurve();  // memory offset comes back from NVML
                   });
     });
-    ch2->addWidget(readBtn_);
-    ch2->addWidget(bValidate);
-    ch2->addWidget(bApply);
-    ch2->addWidget(resetBtn_);
-    ch2->addWidget(bResetAll);
+    auto *curveActions = ch2;
+    if (experimental) {
+        curveActions = new QHBoxLayout;
+        curveActions->setSpacing(theme::GAP_XS);
+        curveActions->addStretch();
+        cvl->addLayout(curveActions);
+    }
+    for (auto *button : {readBtn_, bValidate, bApply}) curveActions->addWidget(button);
+    if (experimental) curveActions->addSpacing(theme::GAP_S);
+    curveActions->addWidget(resetBtn_);
+    curveActions->addWidget(bResetAll);
 
     if (theme::experimentalEnabled()) {
         // Give the actual V/F graph the full page width. The former right
