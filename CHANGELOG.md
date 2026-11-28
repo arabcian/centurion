@@ -78,6 +78,17 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions follo
   after steps 1–2 had already been written to the target (which can be the running system).
 
 ### Added
+- Diagnostics → *This Boot*: one sub-tab per component instead of five. New: Kernel (H19: lockups, oops / BUG /
+  warnings, hung tasks, taint flags), Storage (H20: NVMe, SATA, block I/O, medium errors, software RAID, device
+  mapper, SD / eMMC, per-disk failed-I/O counters), AMD / Intel GPU (H21), Thermal & Power (H22: temperature alarms,
+  throttle counters, thermal zones near their critical limit, ACPI errors, D3cold, failed suspend steps), Memory (H23:
+  OOM kills, allocation failures, EDAC, offline pages), USB (H24), Audio (H25) and Firmware & Drivers (H26). They read
+  the same single scan: `health-reader diagnostics` now also groups this boot's kernel log by component.
+- File Systems (H05, was F2FS only): every mounted disk file system the kernel supports — ext2/3/4, btrfs, XFS, F2FS,
+  FAT, exFAT, NTFS, bcachefs, ZFS… — with the error state each keeps (ext4 error count, btrfs device stats and
+  missing devices, F2FS flags, ZFS pool state), free space, read-only-after-errors, and each type's own repair tool.
+  The kernel-log classifier now recognises errors of FAT, exFAT, NTFS3, bcachefs, UDF, NILFS2, UBIFS and squashfs,
+  ext4 journal aborts and read-only remounts, btrfs critical errors and XFS shutdowns.
 - Model tables synced with LenovoLegionToolkit 2.34.0: machine types 83Q6 and 83VK (Legion 5) and 83V9
   (Legion 7; the Gen 10+ Over Drive rule now reaches it), known-model prefixes 15ASH and 14IAP, the second system
   fan (capability 0x04030005, Home → *Live* "System 2", read-only), and *Device info…* says when the keyboard RGB is

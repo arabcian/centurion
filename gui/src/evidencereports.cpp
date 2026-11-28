@@ -9,6 +9,7 @@
 #include <QMap>
 #include <QRegularExpression>
 #include <QSet>
+#include <QStorageInfo>
 
 #include <algorithm>
 
@@ -268,21 +269,74 @@ Report xidCases(const QJsonObject &scan) {
     return r;
 }
 
-// ── H05 F2FS Integrity Guard ──────────────────────────────────────────────────
+// ── H05 File System Integrity Guard ─────────────────────────────────────────
 
-QList<F2fsVolume> f2fsVolumes(const QJsonObject &scan) {
-    QList<F2fsVolume> out;
-    for (const QJsonValue &v : scan.value(QStringLiteral("f2fs_mounts")).toArray()) {
-        const QJsonObject m = v.toObject();
-        F2fsVolume f{m.value(QStringLiteral("source")).toString(), m.value(QStringLiteral("mount")).toString(), m.value(QStringLiteral("options")).toString(), {}, {}};
-        f.dev = QFileInfo(QFileInfo(f.source).canonicalFilePath()).fileName();
-        if (f.dev.isEmpty()) f.dev = QFileInfo(f.source).fileName();
-        const QString base = QStringLiteral("/sys/fs/f2fs/") + f.dev + QLatin1Char('/');
-        for (const char *k : {"stat/sb_status", "stat/cp_status", "sb_status", "cp_status", "errors", "stop_reason", "free_segments",
-                              "dirty_segments", "lifetime_write_kbytes", "unusable", "gc_urgent"}) {
+// The error state each file system keeps where the kernel shows it (sysfs / procfs). File systems that keep
+// none (xfs, vfat, exfat, ntfs3, …) are judged by the kernel log alone.
+static void readFsState(FsVolume &f) {
+    auto put = [&f](const QString &base, std::initializer_list<const char *> keys) {
+        for (const char *k : keys) {
             const QString x = diagsrc::read(base + QLatin1String(k), 4096);
             if (!x.isEmpty()) f.sys.insert(QString::fromLatin1(k).section(QLatin1Char('/'), -1), x);
         }
+    };
+    if (f.fstype == QStringLiteral("f2fs")) {
+        put(QStringLiteral("/sys/fs/f2fs/") + f.dev + QLatin1Char('/'), {"stat/sb_status", "stat/cp_status", "sb_status", "cp_status", "errors", "stop_reason",
+                                                                        "free_segments", "dirty_segments", "lifetime_write_kbytes", "unusable", "gc_urgent"});
+    } else if (f.fstype.startsWith(QStringLiteral("ext"))) {
+        // ext2 and ext3 are mounted by the ext4 driver on current kernels: the same directory.
+        put(QStringLiteral("/sys/fs/ext4/") + f.dev + QLatin1Char('/'), {"errors_count", "first_error_time", "last_error_time", "first_error_func",
+                                                                        "last_error_func", "lifetime_write_kbytes"});
+    } else if (f.fstype == QStringLiteral("btrfs")) {
+        // /sys/fs/btrfs/<fsid>/devices/<dev> names the file system a device belongs to; devinfo/<id>/error_stats
+        // (kernel 5.14+) holds the counters "btrfs device stats" prints.
+        for (const QString &fsid : diagsrc::dir(QStringLiteral("/sys/fs/btrfs"))) {
+            const QString base = QStringLiteral("/sys/fs/btrfs/") + fsid;
+            if (!QFileInfo::exists(base + QStringLiteral("/devices/") + f.dev)) continue;
+            qint64 devices = 0, missing = 0;
+            QHash<QString, qint64> sum;
+            bool stats = false;
+            for (const QString &id : diagsrc::dir(base + QStringLiteral("/devinfo"))) {
+                ++devices;
+                if (diagsrc::read(base + QStringLiteral("/devinfo/%1/missing").arg(id)) == QStringLiteral("1")) ++missing;
+                const QString text = diagsrc::read(base + QStringLiteral("/devinfo/%1/error_stats").arg(id));
+                for (const QString &line : text.split(QLatin1Char('\n'), Qt::SkipEmptyParts)) {
+                    bool ok = false;
+                    const qint64 n = line.section(QLatin1Char(' '), -1).toLongLong(&ok);
+                    if (ok) { sum[line.section(QLatin1Char(' '), 0, 0)] += n; stats = true; }
+                }
+            }
+            f.sys.insert(QStringLiteral("devices"), QString::number(devices));
+            f.sys.insert(QStringLiteral("missing"), QString::number(missing));
+            if (stats) for (auto it = sum.cbegin(); it != sum.cend(); ++it) f.sys.insert(it.key(), QString::number(it.value()));
+            break;
+        }
+    } else if (f.fstype == QStringLiteral("zfs")) {
+        const QString state = diagsrc::read(QStringLiteral("/proc/spl/kstat/zfs/%1/state").arg(f.source.section(QLatin1Char('/'), 0, 0)));
+        if (!state.isEmpty()) f.sys.insert(QStringLiteral("pool_state"), state);
+    }
+}
+
+QList<FsVolume> fsVolumes(const QJsonObject &scan) {
+    // One volume per device: btrfs subvolumes and bind mounts mount the same device several times.
+    QList<FsVolume> out;
+    QHash<QString, int> index;
+    for (const QJsonValue &v : scan.value(QStringLiteral("fs_mounts")).toArray()) {
+        const QJsonObject m = v.toObject();
+        const QString source = m.value(QStringLiteral("source")).toString(), type = m.value(QStringLiteral("fstype")).toString();
+        const QString key = type + QLatin1Char('|') + source;
+        if (index.contains(key)) { out[index.value(key)].mounts << m.value(QStringLiteral("mount")).toString(); continue; }
+        FsVolume f;
+        f.source = source;
+        f.fstype = type;
+        f.options = m.value(QStringLiteral("options")).toString();
+        f.mounts << m.value(QStringLiteral("mount")).toString();
+        f.dev = QFileInfo(QFileInfo(f.source).canonicalFilePath()).fileName();
+        if (f.dev.isEmpty()) f.dev = QFileInfo(f.source).fileName();
+        readFsState(f);
+        const QStorageInfo st(f.mounts.first());
+        if (st.isValid() && st.isReady()) { f.total = st.bytesTotal(); f.avail = st.bytesAvailable(); }
+        index.insert(key, int(out.size()));
         out << f;
     }
     return out;
@@ -304,79 +358,213 @@ static bool hexFlags(const QString &s, quint64 *out) {
     return ok && !t.isEmpty();
 }
 
-Report f2fsGuard(const QJsonObject &scan, const QList<F2fsVolume> &volumes, const QList<diagsrc::LogLine> &history) {
+static QString size(qint64 bytes) {
+    if (bytes < 0) return QStringLiteral("—");
+    const double gb = bytes / 1e9;
+    return gb >= 1000 ? tr("%1 TB").arg(gb / 1000, 0, 'f', 1) : tr("%1 GB").arg(gb, 0, 'f', gb < 10 ? 1 : 0);
+}
+
+// What one volume's own error state says: a short cell text, its level and (when there is one) a finding.
+struct FsState { QString text; Level level = Level::Info; QString finding, detail, action; };
+
+static FsState f2fsState(const FsVolume &v) {
+    FsState s;
+    quint64 sb = 0, cp = 0, err = 0;
+    const bool hasSb = hexFlags(v.sys.value(QStringLiteral("sb_status")), &sb), hasCp = hexFlags(v.sys.value(QStringLiteral("cp_status")), &cp);
+    const bool hasErr = hexValue(v.sys.value(QStringLiteral("errors")), &err);
+    // f2fs.h: SBI_NEED_FSCK is bit 2 of the superblock flags; f2fs_fs.h: CP_ERROR_FLAG 0x8, CP_FSCK_FLAG 0x10.
+    const bool needFsck = hasSb && (sb & 0x4), cpError = hasCp && (cp & 0x8), cpFsck = hasCp && (cp & 0x10);
+    if (!hasSb && !hasCp) { s.text = tr("status flags not exposed"); s.level = Level::Unknown; return s; }
+    if (needFsck || cpError) {
+        s.level = Level::Attention;
+        s.text = cpError ? tr("checkpoint error") : tr("needs fsck");
+        s.finding = tr("F2FS has marked the volume as needing fsck");
+        s.detail = cpError ? tr("The checkpoint carries the error flag: F2FS stopped trusting its metadata. It may go read-only.")
+                           : tr("F2FS found an inconsistency and set its need-fsck flag.");
+    } else if (hasErr && err) {
+        s.level = Level::Attention;
+        s.text = tr("on-disk errors 0x%1").arg(err, 0, 16);
+        s.finding = tr("F2FS recorded on-disk errors (flags 0x%1)").arg(err, 0, 16);
+        s.detail = tr("Errors F2FS met while reading metadata are kept in the superblock until fsck clears them.");
+    } else if (cpFsck) {
+        s.level = Level::Review;
+        s.text = tr("fsck requested");
+        s.finding = tr("an fsck is requested at the next check");
+    } else {
+        s.level = Level::Ok;
+        s.text = tr("clean");
+    }
+    return s;
+}
+
+static FsState extState(const FsVolume &v) {
+    FsState s;
+    bool ok = false;
+    const qint64 n = v.sys.value(QStringLiteral("errors_count")).toLongLong(&ok);
+    if (!ok) { s.text = tr("error count not exposed"); s.level = Level::Unknown; return s; }
+    if (!n) { s.text = tr("no errors recorded"); s.level = Level::Ok; return s; }
+    s.level = Level::Attention;
+    s.text = tr("%1 error(s) recorded").arg(n);
+    s.finding = tr("%1 has recorded %2 error(s) since its last check").arg(v.fstype).arg(n);
+    auto at = [&v](const char *func, const char *time) {
+        const QString f = v.sys.value(QLatin1String(func));
+        return f.isEmpty() ? QStringLiteral("—") : tr("%1 (%2)").arg(f, diagsrc::when(v.sys.value(QLatin1String(time)).toLongLong()));
+    };
+    s.detail = tr("The superblock keeps a count of the errors the file system met until e2fsck clears it. First: %1; last: %2.")
+                   .arg(at("first_error_func", "first_error_time"), at("last_error_func", "last_error_time"));
+    return s;
+}
+
+static FsState btrfsState(const FsVolume &v) {
+    FsState s;
+    if (!v.sys.contains(QStringLiteral("devices"))) { s.text = tr("device statistics not exposed"); s.level = Level::Unknown; return s; }
+    const qint64 missing = v.sys.value(QStringLiteral("missing")).toLongLong();
+    QStringList errs;
+    for (const char *k : {"write_errs", "read_errs", "flush_errs", "corruption_errs", "generation_errs"})
+        if (v.sys.value(QLatin1String(k)).toLongLong() > 0) errs << QStringLiteral("%1 %2").arg(QString::fromLatin1(k).section(QLatin1Char('_'), 0, 0), v.sys.value(QLatin1String(k)));
+    if (missing > 0) {
+        s.level = Level::Attention;
+        s.text = tr("%1 device(s) missing").arg(missing);
+        s.finding = tr("btrfs is running without %1 of its %2 device(s)").arg(missing).arg(v.sys.value(QStringLiteral("devices")));
+        s.detail = tr("A missing device means no redundancy is left for the data it held; another failure loses data.");
+    } else if (!errs.isEmpty()) {
+        s.level = Level::Attention;
+        s.text = errs.join(QStringLiteral(", "));
+        s.finding = tr("btrfs device statistics show errors (%1)").arg(errs.join(QStringLiteral(", ")));
+        s.detail = tr("btrfs counts every failed write, read and flush and every checksum (corruption) or generation mismatch it met, "
+                      "until the counters are reset (btrfs device stats -z). Corruption on a healthy drive points at RAM.");
+    } else if (!v.sys.contains(QStringLiteral("write_errs"))) {
+        s.level = Level::Unknown;
+        s.text = tr("no error counters (kernel older than 5.14)");
+    } else {
+        s.level = Level::Ok;
+        s.text = tr("no device errors");
+    }
+    return s;
+}
+
+static FsState zfsState(const FsVolume &v) {
+    FsState s;
+    const QString st = v.sys.value(QStringLiteral("pool_state"));
+    if (st.isEmpty()) { s.text = tr("pool state not exposed"); s.level = Level::Unknown; return s; }
+    s.text = st;
+    if (st == QStringLiteral("ONLINE")) { s.level = Level::Ok; return s; }
+    s.level = Level::Attention;
+    s.finding = tr("ZFS pool %1 is %2").arg(v.source.section(QLatin1Char('/'), 0, 0), st);
+    s.detail = tr("A pool that is not ONLINE has lost a device or found errors it could not repair.");
+    return s;
+}
+
+static FsState fsState(const FsVolume &v) {
+    if (v.fstype == QStringLiteral("f2fs")) return f2fsState(v);
+    if (v.fstype.startsWith(QStringLiteral("ext"))) return extState(v);
+    if (v.fstype == QStringLiteral("btrfs")) return btrfsState(v);
+    if (v.fstype == QStringLiteral("zfs")) return zfsState(v);
+    return {tr("not kept (kernel log only)"), Level::Info, {}, {}, {}};
+}
+
+static bool readOnlyImage(const QString &t) {
+    return t == QStringLiteral("squashfs") || t == QStringLiteral("erofs") || t == QStringLiteral("iso9660") || t == QStringLiteral("cramfs");
+}
+
+Report fsGuard(const QJsonObject &scan, const QList<FsVolume> &volumes, const QList<diagsrc::LogLine> &history) {
     Report r;
     r.code = QStringLiteral("H05");
-    r.title = tr("F2FS Integrity Guard");
-    r.about = tr("The flags F2FS itself keeps about each mounted volume (needs fsck, checkpoint error, recorded on-disk errors), and its integrity "
-                 "errors in the kernel log of this and earlier boots. Nothing is repaired or remounted.");
-    r.limits << tr("The kernel's status flags need a recent kernel (6.x); older ones show only the kernel log.")
-             << tr("fsck.f2fs must run on an unmounted volume: for the root file system, from a live USB or at boot.");
-    if (volumes.isEmpty()) r.add(Level::Info, tr("No F2FS volume is mounted"));
+    r.title = tr("File System Integrity Guard");
+    r.about = tr("Every mounted disk file system (ext4, btrfs, XFS, F2FS, FAT, exFAT, NTFS, bcachefs, ZFS and the rest the kernel supports): "
+                 "the error state the file system itself keeps, free space, and its integrity errors in the kernel log of this and earlier boots. "
+                 "Nothing is repaired or remounted.");
+    r.limits << tr("ext4, btrfs, F2FS and ZFS keep an error state the kernel shows; XFS, FAT, exFAT, NTFS and the others are judged by their kernel log messages alone.")
+             << tr("Repair tools (fsck, xfs_repair) must run on an unmounted volume: for the root file system, from a live USB or at boot.")
+             << tr("Network and in-memory file systems (NFS, tmpfs, overlay) are not disk volumes and are not checked.");
+    QStringList supported;
+    for (const QJsonValue &v : scan.value(QStringLiteral("fs_supported")).toArray()) supported << v.toString();
+    if (volumes.isEmpty()) r.add(Level::Info, tr("No disk file system is mounted"));
+    // This boot's logged errors, by kernel device, to tell a volume that went read-only after errors.
+    const QString boot = scan.value(QStringLiteral("boot_id")).toString().left(8);
+    QHash<QString, int> nowByDev;
+    for (const QJsonValue &v : scan.value(QStringLiteral("fs_events")).toArray())
+        ++nowByDev[eventinfo::fsOfMessage(v.toObject().value(QStringLiteral("text")).toString()).dev];
     Table t;
-    t.title = tr("Mounted F2FS Volumes");
-    t.headers = {tr("Volume"), tr("Mounted at"), tr("Needs fsck"), tr("Checkpoint"), tr("On-disk errors"), tr("Written (lifetime)")};
-    t.privateColumns = {1};
-    for (const F2fsVolume &v : volumes) {
-        r.privatePaths << v.mount;
+    t.title = tr("Mounted Disk File Systems");
+    t.headers = {tr("Volume"), tr("Type"), tr("Mounted at"), tr("Mode"), tr("Free"), tr("File system's own state"), tr("Written (lifetime)")};
+    t.privateColumns = {2};
+    QSet<QString> types;
+    for (const FsVolume &v : volumes) {
+        types.insert(v.fstype);
+        r.privatePaths << v.mounts;
         if (v.source.startsWith(QStringLiteral("/dev/disk/by-"))) r.privatePaths << v.source;
-        quint64 sb = 0, cp = 0, err = 0;
-        const bool hasSb = hexFlags(v.sys.value(QStringLiteral("sb_status")), &sb), hasCp = hexFlags(v.sys.value(QStringLiteral("cp_status")), &cp);
-        const bool hasErr = hexValue(v.sys.value(QStringLiteral("errors")), &err);
-        // f2fs.h: SBI_NEED_FSCK is bit 2 of the superblock flags; f2fs_fs.h: CP_ERROR_FLAG 0x8, CP_FSCK_FLAG 0x10.
-        const bool needFsck = hasSb && (sb & 0x4), cpError = hasCp && (cp & 0x8), cpFsck = hasCp && (cp & 0x10);
-        Level l = Level::Ok;
-        if (needFsck || cpError || (hasErr && err)) l = Level::Attention;
-        else if (cpFsck) l = Level::Review;
-        else if (!hasSb && !hasCp) l = Level::Unknown;
+        const QString name = QStringLiteral("%1 (%2)").arg(v.source, v.mounts.first());
+        const bool ro = v.options.section(QLatin1Char(','), 0, 0) == QStringLiteral("ro");
+        FsState s = fsState(v);
+        if (!s.finding.isEmpty())
+            r.add(s.level, tr("%1: %2").arg(name, s.finding), s.detail, s.level == Level::Attention ? eventinfo::fsRepairAction(v.fstype) : QString());
+        if (ro && !readOnlyImage(v.fstype) && nowByDev.value(v.dev)) {
+            s.level = Level::Attention;
+            r.add(Level::Attention, tr("%1 is read-only after %2 error(s) in this boot").arg(name).arg(nowByDev.value(v.dev)),
+                  tr("File systems switch to read-only when they stop trusting their metadata, so that damage does not spread. Writes fail until it is repaired."),
+                  eventinfo::fsRepairAction(v.fstype));
+        }
+        QString free = QStringLiteral("—");
+        if (v.total > 0 && v.avail >= 0) {
+            const double pct = 100.0 * double(v.avail) / double(v.total);
+            free = tr("%1 (%2%)").arg(size(v.avail)).arg(pct, 0, 'f', 0);
+            if (pct < 5 && !ro && !readOnlyImage(v.fstype)) {
+                if (s.level < Level::Review) s.level = Level::Review;
+                r.add(Level::Review, tr("%1 is %2% full").arg(name).arg(100 - pct, 0, 'f', 0),
+                      tr("Nearly full file systems fail writes, and copy-on-write and log-structured ones (btrfs, F2FS, ZFS, bcachefs) slow down or stop well before 100%."),
+                      tr("Free some space; on btrfs also check snapshots (they keep deleted data)."));
+            }
+        }
         bool kb = false;
-        const double gb = v.sys.value(QStringLiteral("lifetime_write_kbytes")).toDouble(&kb) / 1024 / 1024;
-        t.add({v.source, v.mount, hasSb ? (needFsck ? tr("YES") : tr("no")) : QStringLiteral("—"),
-               hasCp ? (cpError ? tr("error") : cpFsck ? tr("fsck requested") : tr("ok")) : QStringLiteral("—"),
-               hasErr ? (err ? QStringLiteral("0x%1").arg(err, 0, 16) : tr("none")) : QStringLiteral("—"),
-               kb ? tr("%1 GB").arg(gb, 0, 'f', 0) : QStringLiteral("—")}, l);
-        if (needFsck || cpError)
-            r.add(Level::Attention, tr("%1 (%2): F2FS has marked the volume as needing fsck").arg(v.source, v.mount),
-                  cpError ? tr("The checkpoint carries the error flag: F2FS stopped trusting its metadata. It may go read-only.")
-                          : tr("F2FS found an inconsistency and set its need-fsck flag."),
-                  tr("Back up now. Then run fsck.f2fs -f on the unmounted volume (live USB for the root volume)."));
-        else if (hasErr && err)
-            r.add(Level::Attention, tr("%1: F2FS recorded on-disk errors (flags 0x%2)").arg(v.source).arg(err, 0, 16),
-                  tr("Errors F2FS met while reading metadata are kept in the superblock until fsck clears them."),
-                  tr("Back up, then fsck.f2fs -f on the unmounted volume."));
-        else if (cpFsck)
-            r.add(Level::Review, tr("%1: an fsck is requested at the next check").arg(v.source));
+        const double written = v.sys.value(QStringLiteral("lifetime_write_kbytes")).toDouble(&kb) * 1024;
+        t.add({v.source, v.fstype, v.mounts.join(QStringLiteral(", ")), ro ? tr("read-only") : tr("read-write"), free, s.text,
+               kb ? size(qint64(written)) : QStringLiteral("—")}, s.level);
         if (v.sys.contains(QStringLiteral("stop_reason")) && v.sys.value(QStringLiteral("stop_reason")).remove(QRegularExpression(QStringLiteral("[0x ,\\n]"))).size())
             r.raw += tr("%1 stop_reason: %2\n").arg(v.source, v.sys.value(QStringLiteral("stop_reason")));
     }
+    if (!supported.isEmpty()) t.note = tr("Disk file systems this kernel supports: %1.").arg(supported.join(QStringLiteral(", ")));
     if (!volumes.isEmpty()) r.tables << t;
     // Kernel log: this boot's classified errors, then the saved ones of earlier boots.
     Table e;
-    e.title = tr("F2FS Errors in the Kernel Log");
-    e.headers = {tr("Boot"), tr("When"), tr("Message")};
+    e.title = tr("File System Errors in the Kernel Log");
+    e.headers = {tr("Boot"), tr("When"), tr("Type"), tr("Device"), tr("Message")};
     e.privateColumns = {0};
-    const QString boot = scan.value(QStringLiteral("boot_id")).toString().left(8);
+    struct Group { QString fstype, dev; int n = 0; };
+    QMap<QString, Group> now;
     QSet<QString> seen;
-    for (const QJsonValue &v : scan.value(QStringLiteral("f2fs_events")).toArray()) {
-        e.add({boot, uptime(v.toObject().value(QStringLiteral("ts_us"))), v.toObject().value(QStringLiteral("text")).toString()}, Level::Attention);
-        seen.insert(v.toObject().value(QStringLiteral("text")).toString());
+    for (const QJsonValue &v : scan.value(QStringLiteral("fs_events")).toArray()) {
+        const QString text = v.toObject().value(QStringLiteral("text")).toString();
+        const eventinfo::FsRef fs = eventinfo::fsOfMessage(text);
+        e.add({boot, uptime(v.toObject().value(QStringLiteral("ts_us"))), fs.fstype.isEmpty() ? QStringLiteral("—") : fs.fstype,
+               fs.dev.isEmpty() ? QStringLiteral("—") : fs.dev, text}, Level::Attention);
+        Group &g = now[fs.fstype + QLatin1Char('|') + fs.dev];
+        g.fstype = fs.fstype; g.dev = fs.dev; ++g.n;
+        seen.insert(text);
     }
     QSet<QString> earlier;
     for (const diagsrc::LogLine &l : history) {
-        if (l.kind != QStringLiteral("f2fs") || seen.contains(l.text)) continue;
-        e.add({l.boot, l.time, l.text}, l.boot == boot ? Level::Attention : Level::Review);
+        if ((l.kind != QStringLiteral("f2fs") && l.kind != QStringLiteral("fs")) || seen.contains(l.text)) continue;
+        const eventinfo::FsRef fs = eventinfo::fsOfMessage(l.text);
+        e.add({l.boot, l.time, fs.fstype.isEmpty() ? QStringLiteral("—") : fs.fstype, fs.dev.isEmpty() ? QStringLiteral("—") : fs.dev, l.text},
+              l.boot == boot ? Level::Attention : Level::Review);
         if (l.boot != boot) earlier.insert(l.boot);
     }
     if (!e.rows.isEmpty()) {
         r.tables << e;
-        const int now = int(scan.value(QStringLiteral("f2fs_events")).toArray().size());
-        if (now) r.add(Level::Attention, tr("%1 F2FS integrity error(s) in this boot").arg(now),
-                       tr("I/O failures, corrupt metadata or a failed checkpoint."), tr("Back up, check the drive (H06, Drive health), then fsck the volume."));
-        if (!earlier.isEmpty()) r.add(Level::Review, tr("F2FS errors in %1 earlier boot(s)").arg(earlier.size()),
-                                      tr("If fsck has run since, these are history; if not, the volume may still be inconsistent."));
+        for (const Group &g : now)
+            r.add(Level::Attention, tr("%1 on %2: %3 integrity error(s) in this boot").arg(g.fstype.isEmpty() ? tr("A file system") : g.fstype,
+                                                                                          g.dev.isEmpty() ? tr("an unnamed device") : g.dev).arg(g.n),
+                  tr("I/O failures, corrupt metadata, a failed checkpoint or journal, or a forced shutdown of the file system."),
+                  eventinfo::fsRepairAction(g.fstype) + QLatin1Char(' ') + tr("Check the drive too (Storage tab, Drive health)."));
+        if (!earlier.isEmpty()) r.add(Level::Review, tr("File system errors in %1 earlier boot(s)").arg(earlier.size()),
+                                      tr("If the volume has been checked since, these are history; if not, it may still be inconsistent."));
     }
-    if (!r.count(Level::Attention) && !r.count(Level::Review) && !volumes.isEmpty())
-        r.add(Level::Ok, tr("No F2FS flag or logged error"), tr("%1 volume(s) checked.").arg(volumes.size()));
+    if (!r.count(Level::Attention) && !r.count(Level::Review) && !volumes.isEmpty()) {
+        QStringList list = types.values();
+        std::sort(list.begin(), list.end());
+        r.add(Level::Ok, tr("No file system flag or logged error"), tr("%1 volume(s) checked (%2).").arg(volumes.size()).arg(list.join(QStringLiteral(", "))));
+    }
     return r;
 }
 

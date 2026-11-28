@@ -145,8 +145,7 @@ pub fn classify(msg: &str) -> Option<Value> {
         return ev("f2fs", "critical", "F2FS integrity / checkpoint / I/O failure");
     }
     // File systems: only the kernel's own error reports, not warnings or mount chatter.
-    if has("EXT4-fs error") || msg.starts_with("BTRFS error") || (msg.starts_with("BTRFS warning") && has("csum failed"))
-        || (msg.starts_with("XFS") && (has("Corruption") || has("corruption detected"))) {
+    if is_fs_error(msg, &lower) {
         return ev("fs", "critical", "File system error (possible disk or data corruption)");
     }
     // Intel iGPU: i915 hang, xe job timeout / engine reset.
@@ -189,6 +188,31 @@ pub fn classify(msg: &str) -> Option<Value> {
         return ev("oops", "error", &title);
     }
     None
+}
+
+/// A file system's own error report (F2FS is classified on its own, before this). Each driver prints
+/// its errors with its own prefix; mount, info and routine warning lines never match.
+fn is_fs_error(msg: &str, lower: &str) -> bool {
+    let has = |s: &str| msg.contains(s);
+    let starts = |s: &str| msg.starts_with(s);
+    // ext2/3/4 (and jbd2, ext3/4's journal)
+    has("EXT4-fs error") || starts("EXT2-fs error") || starts("EXT3-fs error")
+        || (starts("EXT4-fs") && has("Remounting filesystem read-only"))
+        || starts("Aborting journal on device") || (starts("JBD2:") && has("IO error"))
+        // btrfs
+        || starts("BTRFS error") || starts("BTRFS critical") || starts("BTRFS: error")
+        || (starts("BTRFS warning") && has("csum failed"))
+        // xfs
+        || (starts("XFS") && (has("Corruption") || has("corruption detected") || has("has been shut down")
+            || has("metadata I/O error") || has("log I/O error")))
+        // FAT, exFAT, UDF, NILFS2, UBIFS, squashfs: "<NAME>-fs (dev): error, …" / "<NAME> error …"
+        || (starts("FAT-fs") && has("error")) || (starts("exFAT-fs") && has("error"))
+        || (starts("UDF-fs") && has("error")) || starts("NILFS error") || starts("UBIFS error")
+        || starts("SQUASHFS error")
+        // ntfs3 and bcachefs print errors without a fixed prefix word
+        || (lower.starts_with("ntfs3") && (lower.contains("corrupt") || lower.contains("i/o error") || lower.contains("failed to read")))
+        || (lower.starts_with("bcachefs") && (lower.contains(" error") || lower.contains("inconsistenc")
+            || lower.contains("emergency read only") || lower.contains("emergency read-only")))
 }
 
 /// Read a decimal token after an exact delimiter, without inferring missing IDs.
@@ -445,6 +469,27 @@ mod tests {
         assert!(classify("BTRFS info (device nvme0n1p2): using crc32c checksum algorithm").is_none());
         assert!(classify("BTRFS warning (device nvme0n1p2): space cache v1 is being deprecated").is_none());
         assert!(classify("XFS (sda1): Mounting V5 Filesystem").is_none());
+        // Every disk file system the kernel prints errors for, not just ext4 / btrfs / xfs.
+        is("EXT4-fs (sda1): Remounting filesystem read-only", "fs", "critical");
+        is("Aborting journal on device sda1-8.", "fs", "critical");
+        is("JBD2: Detected IO errors while flushing file data on sda1-8", "fs", "critical");
+        is("EXT2-fs error (device sdb1): ext2_check_page: bad entry in directory #2", "fs", "critical");
+        is("BTRFS critical (device dm-0): corrupt leaf: root=5 block=29425664 slot=4", "fs", "critical");
+        is("BTRFS: error (device sda1: state EA) in __btrfs_free_extent:3072: errno=-5 IO failure", "fs", "critical");
+        is("XFS (sda1): Filesystem has been shut down due to log error (0x2).", "fs", "critical");
+        is("XFS (dm-0): metadata I/O error in \"xfs_trans_read_buf_map\" at daddr 0x2 len 1 error 5", "fs", "critical");
+        is("FAT-fs (sdb1): error, fat_get_cluster: invalid cluster chain (i_pos 0)", "fs", "critical");
+        is("exFAT-fs (sdc1): error, invalid access to FAT (entry 0x0000a3c9)", "fs", "critical");
+        is("UDF-fs: error (device sr0): udf_read_tagged: tag checksum failed", "fs", "critical");
+        is("ntfs3(sdb2): ino=5, Looks like your dir is corrupt", "fs", "critical");
+        is("bcachefs (nvme0n1p3): btree node read error at btree extents level 0/1", "fs", "critical");
+        is("SQUASHFS error: Unable to read fragment cache entry [1a2b3c]", "fs", "critical");
+        is("NILFS error (device sda3): nilfs_check_page: bad entry in directory", "fs", "critical");
+        assert!(classify("FAT-fs (sdb1): Volume was not properly unmounted. Some data may be corrupt. Please run fsck.").is_none());
+        assert!(classify("exFAT-fs (sdc1): Volume was not properly unmounted. Some data may be corrupt. Please run fsck.").is_none());
+        assert!(classify("ntfs3(sdb2): Mark volume as dirty due to NTFS errors").is_none());
+        assert!(classify("bcachefs (nvme0n1p3): starting version 1.7: mi_btree_bitmap").is_none());
+        assert!(classify("EXT4-fs (sda1): re-mounted 1234-5678 ro. Quota mode: none.").is_none());
         is("F2FS-fs (nvme0n1p3): checkpoint failed, I/O error", "f2fs", "critical");
         is("F2FS-fs (dm-0): invalid blkaddr: 1234, type: 0", "f2fs", "critical");
         is("F2FS-fs (nvme0n1p3): corruption detected in node", "f2fs", "critical");
@@ -526,6 +571,14 @@ mod tests {
             "BTRFS error (device nvme0n1p2): bdev /dev/nvme0n1p2 errs: wr 0, rd 0, flush 0, corrupt 3, gen 0",
             "BTRFS warning (device dm-0): csum failed root 5 ino 257 off 0 csum 0x8941f998 expected csum 0x1d4c2f0b mirror 1",
             "XFS (sda1): Corruption detected. Unmount and run xfs_repair",
+            "EXT4-fs (sda1): Remounting filesystem read-only",
+            "Aborting journal on device sda1-8.",
+            "BTRFS critical (device dm-0): corrupt leaf: root=5 block=29425664 slot=4",
+            "FAT-fs (sdb1): error, fat_get_cluster: invalid cluster chain (i_pos 0)",
+            "exFAT-fs (sdc1): error, invalid access to FAT (entry 0x0000a3c9)",
+            "ntfs3(sdb2): ino=5, Looks like your dir is corrupt",
+            "bcachefs (nvme0n1p3): btree node read error at btree extents level 0/1",
+            "SQUASHFS error: Unable to read fragment cache entry [1a2b3c]",
             "i915 0000:00:02.0: [drm] GPU HANG: ecode 9:1:85dffffb, in firefox [2345]",
             "xe 0000:00:02.0: [drm] GT0: trying reset from guc_exec_queue_timedout_job",
             "iwlwifi 0000:02:00.0: Microcode SW error detected. Restarting 0x0.",

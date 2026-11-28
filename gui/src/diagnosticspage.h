@@ -1,7 +1,7 @@
 #pragma once
 // Health → Problems → Diagnostics: what went wrong, in one place with three tabs instead of three pages.
 //   Boot History — every boot, how it ended, its kernel events and faults (BootPage)
-//   This Boot    — the running boot's own evidence: machine checks, PCIe, Xid, F2FS, radios (HealthEvidencePage)
+//   This Boot    — the running boot's own evidence, one sub-tab per component (HealthEvidencePage)
 //   Findings     — checks that compare boots and versions, plus the occasional ones (AdvancedHealthPage)
 // A finding about boots (Findings → "Review") opens Boot History with exactly those boots highlighted.
 #include <QString>

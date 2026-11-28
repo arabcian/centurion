@@ -11,7 +11,10 @@ namespace kmsgwake {
 inline bool wakes(const char *record) {
     static const char *const KEYS[] = {"NVRM", "Hardware Error", "achine check", "achine Check", "AER",
                                        "PCIe Bus Error", "lockup", "LOCKUP", "stall", "D3cold", "amdgpu",
-                                       ";nvme nvme", "EXT4-fs error", "BTRFS error", "csum failed", ";XFS", "GPU HANG", ";xe ",
+                                       ";nvme nvme", "EXT4-fs error", "BTRFS error", "csum failed", ";XFS",
+                                       "Remounting filesystem read-only", "Aborting journal", "JBD2:", "EXT2-fs error", "EXT3-fs error",
+                                       "BTRFS critical", "BTRFS: error", "FAT-fs", "UDF-fs", "NILFS error", "UBIFS error", "SQUASHFS error",
+                                       "ntfs3", "bcachefs", "GPU HANG", ";xe ",
                                        "Microcode SW error", "mt79", "mt792", "firmware crashed", "firmware timeout", "Bluetooth:", "btusb", "btmtk", "F2FS-fs", "f2fs:", "critical temperature",
                                        "Package temperature above", "Out of memory", ";Oops:", ";BUG:", ";WARNING: CPU:"};
     for (const char *k : KEYS) if (std::strstr(record, k)) return true;

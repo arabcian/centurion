@@ -24,4 +24,11 @@ QString html(const QJsonObject &event, const QString &headline);
 /// not one of the known event types. Lets the kernel-log page explain any line.
 QJsonObject classifyLine(const QString &message);
 
+/// The file system and kernel device name a file system's kernel message names ("EXT4-fs error (device
+/// sda1)" → ext4, sda1). Empty fields when the message does not say.
+struct FsRef { QString fstype, dev; };
+FsRef fsOfMessage(const QString &message);
+/// What to do about errors on a file system of this type: back up, then its own repair tool.
+QString fsRepairAction(const QString &fstype);
+
 }  // namespace eventinfo

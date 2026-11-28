@@ -166,7 +166,7 @@ static QString pageAbout(const QString &key) {
     static const QHash<QString, const char *> ABOUT = {
         {QStringLiteral("overview"), QT_TRANSLATE_NOOP("HealthTab", "One card per area with its level, and suggested next steps.")},
         {QStringLiteral("diagnostics"), QT_TRANSLATE_NOOP("HealthTab", "What went wrong: every boot and its faults, this boot's evidence, and checks that compare boots and versions.")},
-        {QStringLiteral("evidence"), QT_TRANSLATE_NOOP("HealthTab", "MCE topology, AER changes, NVIDIA Xid cases, F2FS failures and radio firmware faults.")},
+        {QStringLiteral("evidence"), QT_TRANSLATE_NOOP("HealthTab", "This boot's faults per component: CPU, kernel, memory, PCIe, disks, file systems, GPUs, thermal, USB, audio, radios and firmware.")},
         {QStringLiteral("investigations"), QT_TRANSLATE_NOOP("HealthTab", "Read-only boot regression, NVMe, USB, sleep, CO, GPU and incident investigations.")},
         {QStringLiteral("monitor"), QT_TRANSLATE_NOOP("HealthTab", "Hardware and driver errors from the kernel, explained, with saved history per day.")},
         {QStringLiteral("boot"), QT_TRANSLATE_NOOP("HealthTab", "Every boot: how it ended, its kernel events, the curves in effect, crash records and patterns.")},

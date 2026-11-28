@@ -96,6 +96,7 @@ add_executable(centurion
     src/toolcatalog.cpp  src/toolcatalog.h
     src/diagsources.cpp  src/diagsources.h
     src/evidencereports.cpp src/evidencereports.h
+    src/componentreports.cpp src/componentreports.h
     src/systemdiagnostics.cpp src/systemdiagnostics.h
     src/distroprofile.cpp src/distroprofile.h
     src/eventinfo.cpp    src/eventinfo.h
@@ -404,7 +405,7 @@ if(CENTURION_BUILD_TESTS)
     target_link_libraries(centurion-draftidentity-test PRIVATE Qt6::Core)
     add_test(NAME draftidentity COMMAND centurion-draftidentity-test)
     # Health diagnostics (Evidence Lab, Investigations, System tools): pure report functions over fixtures.
-    set(DIAG_TEST_SOURCES src/diagreport.cpp src/diagsources.cpp src/advanceddiagnostics.cpp src/evidencereports.cpp
+    set(DIAG_TEST_SOURCES src/diagreport.cpp src/diagsources.cpp src/advanceddiagnostics.cpp src/evidencereports.cpp src/componentreports.cpp
         src/systemdiagnostics.cpp src/diagnostictools.cpp src/eventinfo.cpp src/distroprofile.cpp src/sleepadvice.cpp
         src/coevidence.cpp src/costrategy.cpp)
     target_sources(centurion-simulation-visual-test PRIVATE ${DIAG_TEST_SOURCES})

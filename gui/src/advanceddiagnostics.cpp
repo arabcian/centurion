@@ -1017,13 +1017,13 @@ QString saveIncident(const QString &key, const QString &status, const QString &n
 // ── H18 Guided triage ─────────────────────────────────────────────────────────
 
 QList<TriageCategory> triageCategories() {
-    return {{QStringLiteral("gpu"), QT_TRANSLATE_NOOP("advanceddiagnostics", "NVIDIA GPU: Xid, GSP, black screens"), {"H04", "H16", "S04", "S06"}, QT_TRANSLATE_NOOP("advanceddiagnostics", "GPU / black screen")},
-            {QStringLiteral("cpu"), QT_TRANSLATE_NOOP("advanceddiagnostics", "CPU: machine checks, Curve Optimizer"), {"H02", "H13", "H15"}, QT_TRANSLATE_NOOP("advanceddiagnostics", "CPU / instability")},
-            {QStringLiteral("crash"), QT_TRANSLATE_NOOP("advanceddiagnostics", "Freezes and crashes after an update"), {"H01", "H15", "H13"}, QT_TRANSLATE_NOOP("advanceddiagnostics", "Crash / freeze")},
-            {QStringLiteral("storage"), QT_TRANSLATE_NOOP("advanceddiagnostics", "Storage: NVMe, F2FS"), {"H06", "H05", "H03"}, QT_TRANSLATE_NOOP("advanceddiagnostics", "Disk / storage")},
+    return {{QStringLiteral("gpu"), QT_TRANSLATE_NOOP("advanceddiagnostics", "NVIDIA GPU: Xid, GSP, black screens"), {"H04", "H16", "H21", "S04", "S06"}, QT_TRANSLATE_NOOP("advanceddiagnostics", "GPU / black screen")},
+            {QStringLiteral("cpu"), QT_TRANSLATE_NOOP("advanceddiagnostics", "CPU: machine checks, Curve Optimizer"), {"H02", "H19", "H22", "H13", "H15"}, QT_TRANSLATE_NOOP("advanceddiagnostics", "CPU / instability")},
+            {QStringLiteral("crash"), QT_TRANSLATE_NOOP("advanceddiagnostics", "Freezes and crashes after an update"), {"H01", "H19", "H23", "H15", "H13"}, QT_TRANSLATE_NOOP("advanceddiagnostics", "Crash / freeze")},
+            {QStringLiteral("storage"), QT_TRANSLATE_NOOP("advanceddiagnostics", "Storage: NVMe, disks, file systems"), {"H06", "H20", "H05", "H03"}, QT_TRANSLATE_NOOP("advanceddiagnostics", "Disk / storage")},
             {QStringLiteral("radio"), QT_TRANSLATE_NOOP("advanceddiagnostics", "Wi-Fi and Bluetooth"), {"H09", "S07", "S18"}, QT_TRANSLATE_NOOP("advanceddiagnostics", "Wi-Fi / Bluetooth")},
             {QStringLiteral("sleep"), QT_TRANSLATE_NOOP("advanceddiagnostics", "Sleep and resume"), {"H12", "H15"}, QT_TRANSLATE_NOOP("advanceddiagnostics", "Sleep / wake")},
-            {QStringLiteral("usb"), QT_TRANSLATE_NOOP("advanceddiagnostics", "USB devices and ports"), {"H10", "S13", "H03"}, QT_TRANSLATE_NOOP("advanceddiagnostics", "USB / charging")}};
+            {QStringLiteral("usb"), QT_TRANSLATE_NOOP("advanceddiagnostics", "USB devices and ports"), {"H10", "H24", "S13", "H03"}, QT_TRANSLATE_NOOP("advanceddiagnostics", "USB / charging")}};
 }
 
 Report triage(const QString &label, const QList<Report> &checks) {

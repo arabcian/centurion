@@ -1,6 +1,7 @@
 #include "advancedhealth.h"
 
 #include "advanceddiagnostics.h"
+#include "componentreports.h"
 #include "diagnostictools.h"
 #include "diagreportview.h"
 #include "diagsources.h"
@@ -78,7 +79,8 @@ namespace investigations {
 QStringList opsFor(const QString &code) {
     QStringList ops;
     if (QStringList{"H01", "H12", "H13", "H15"}.contains(code)) ops << QStringLiteral("boots");
-    if (QStringList{"H02", "H03", "H04", "H05", "H09", "H13", "H16"}.contains(code)) ops << QStringLiteral("diagnostics");
+    if (QStringList{"H02", "H03", "H04", "H05", "H09", "H13", "H16", "H19", "H20", "H21", "H22", "H23", "H24", "H25", "H26"}.contains(code))
+        ops << QStringLiteral("diagnostics");
     if (code == QStringLiteral("H06")) ops << QStringLiteral("nvme_deep");
     return ops;
 }
@@ -92,7 +94,7 @@ diag::Report reportFor(const QString &code, const QHash<QString, QJsonObject> &d
     if (code == QStringLiteral("H02")) return er::mceAtlas(ev, coreMap());
     if (code == QStringLiteral("H03")) return er::aerDelta(ev, diagsrc::loadJson(diagsrc::dataDir() + QStringLiteral("/aer-last-sample.json")));
     if (code == QStringLiteral("H04")) return er::xidCases(ev);
-    if (code == QStringLiteral("H05")) return er::f2fsGuard(ev, er::f2fsVolumes(ev), diagsrc::savedEvents());
+    if (code == QStringLiteral("H05")) return er::fsGuard(ev, er::fsVolumes(ev), diagsrc::savedEvents());
     if (code == QStringLiteral("H06")) return ad::nvmeHealth(d.value(QStringLiteral("nvme_deep")));
     if (code == QStringLiteral("H09")) return er::radioLedger(ev, diagsrc::savedEvents());
     if (code == QStringLiteral("H10")) return ad::usbStability(diagsrc::savedKernel(), ad::usbPresent());
@@ -100,6 +102,16 @@ diag::Report reportFor(const QString &code, const QHash<QString, QJsonObject> &d
     if (code == QStringLiteral("H13")) return ad::coCrossLink(ad::coRecordsFromSystem(), boots, ev);
     if (code == QStringLiteral("H15")) return ad::flightCoverage(boots);
     if (code == QStringLiteral("H16")) return ad::gpuMemory(ev, ad::nvidiaGpus(), {});
+    // This Boot's component tabs: the scan's kernel-log records of the component, and its sysfs state now.
+    namespace cr = componentreports;
+    if (code == QStringLiteral("H19")) return cr::kernel(ev, cr::kernelState());
+    if (code == QStringLiteral("H20")) return cr::storage(ev, cr::storageState());
+    if (code == QStringLiteral("H21")) return cr::gpu(ev, cr::drmCards());
+    if (code == QStringLiteral("H22")) return cr::power(ev, cr::powerState());
+    if (code == QStringLiteral("H23")) return cr::memory(ev, cr::memoryState());
+    if (code == QStringLiteral("H24")) return cr::usb(ev);
+    if (code == QStringLiteral("H25")) return cr::audio(ev, diagsrc::read(QStringLiteral("/proc/asound/cards")));
+    if (code == QStringLiteral("H26")) return cr::firmware(ev);
     if (code == QStringLiteral("S06")) return diagnostictools::nvidiaParams();
     return systemdiagnostics::byCode(code);
 }
