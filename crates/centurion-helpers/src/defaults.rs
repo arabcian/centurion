@@ -92,6 +92,9 @@ pub fn parse_outcomes(v: &Value) -> BTreeMap<String, Outcome> {
 /// Root: count applies (values that differ from the boot default) or rollbacks.
 pub fn record(keys: &[String], rollback: bool) {
     if keys.is_empty() { return; }
+    // An apply and the detached guard's rollback both record outside the tune lock: without this lock the
+    // second read-modify-write could drop the first one's count. Best effort, as the record itself.
+    let _l = crate::helper_lock("outcomes").ok();
     let mut all = load_outcomes();
     for k in keys {
         let o = all.entry(k.clone()).or_default();
