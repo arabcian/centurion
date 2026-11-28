@@ -49,6 +49,7 @@
 #include <QSplitter>
 #include <QSpinBox>
 #include <QScrollArea>
+#include <QTabWidget>
 #include <QSet>
 #include <QStandardPaths>
 #include <QGridLayout>
@@ -481,9 +482,14 @@ RyzenTab::RyzenTab(QWidget *parent) : QWidget(parent), layout_(ryzen::detect()) 
     const char *const accents[] = {theme::OK, theme::ACCENT, theme::PURPLE, theme::INFO};
     auto *cards = new QHBoxLayout;
     cards->setSpacing(8);
+    auto *ccdTabs = theme::experimentalEnabled() && ccdCount_ > 1 ? new QTabWidget : nullptr;
+    if (ccdTabs) {
+        ccdTabs->setDocumentMode(true);
+        cards->addWidget(ccdTabs);
+    }
     slots_.reserve(ccdCount_ * SLOTS_PER_CCD);
     for (int ccd = 0; ccd < ccdCount_; ++ccd) {
-        const char *accent = accents[ccd % 4];
+        const char *accent = theme::experimentalEnabled() ? theme::FG_DIM : accents[ccd % 4];
         const auto detected = layout_.cores.value(ccd);
 
         auto *card = new QFrame;
@@ -498,7 +504,7 @@ RyzenTab::RyzenTab(QWidget *parent) : QWidget(parent), layout_(ryzen::detect()) 
                                     .arg(theme::BG2, theme::BORDER_SOFT, accent); });
         auto *g = new QGridLayout(card);
         g->setContentsMargins(8, 6, 8, 6);
-        g->setHorizontalSpacing(14);
+        g->setHorizontalSpacing(theme::experimentalEnabled() ? theme::GAP_XS : 14);
         g->setVerticalSpacing(1);
 
         // Row 0: title + quick fill
@@ -599,7 +605,8 @@ RyzenTab::RyzenTab(QWidget *parent) : QWidget(parent), layout_(ryzen::detect()) 
         for (int c = 0; c < COLS; ++c) g->setColumnStretch(c, 1);
         g->setRowStretch(3 + SLOTS_PER_CCD, 1);
         ccdColumns_[ccd] = card;
-        cards->addWidget(card, 1);
+        if (ccdTabs) ccdTabs->addTab(card, QStringLiteral("CCD%1").arg(ccd));
+        else cards->addWidget(card, 1);
     }
 
     auto *gridHost = new QWidget;
@@ -689,9 +696,11 @@ QList<RyzenTab::Slot *> RyzenTab::activeSlots() {
 void RyzenTab::setCoreMode(bool all) {
     activeCcds_.clear();
     for (int c = 0; c < (all ? ccdCount_ : 1); ++c) activeCcds_.insert(c);
+    auto *ccdTabs = coreGrid_ ? coreGrid_->findChild<QTabWidget *>() : nullptr;
     for (auto it = ccdColumns_.cbegin(); it != ccdColumns_.cend(); ++it) {
         const bool vis = activeCcds_.contains(it.key());
-        it.value()->setVisible(vis);
+        if (ccdTabs) ccdTabs->setTabVisible(ccdTabs->indexOf(it.value()), vis);
+        else it.value()->setVisible(vis);
     }
     for (Slot &s : slots_) if (!activeCcds_.contains(s.ccd)) { s.disable->setChecked(false); s.entry->clear(); }
     log(all ? QStringLiteral("Core mode: All CCDs (%1 slots)").arg(ccdCount_ * SLOTS_PER_CCD)
