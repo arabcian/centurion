@@ -3,7 +3,6 @@
 #include "scenes.h"
 #include "navigationtargets.h"
 #include <algorithm>
-#include <QFontDatabase>
 #include <QFontMetrics>
 #include "cosearchdialog.h"
 #include "ryzentab.h"
@@ -441,10 +440,7 @@ RyzenTab::RyzenTab(QWidget *parent) : QWidget(parent), layout_(ryzen::detect()) 
     ml->addWidget(rAll);
     modeBox->setVisible(ccdCount_ >= 2);
     hdr->addWidget(modeBox);
-    const bool experimental = theme::experimentalEnabled();
-    const QFont numeric = experimental ? QFontDatabase::systemFont(QFontDatabase::FixedFont) : QFont();
     monLbl_ = new QLabel;
-    if (experimental) monLbl_->setFont(numeric);
     monLbl_->setTextFormat(Qt::RichText);
     monLbl_->setToolTip("Tctl / boost from sysfs (k10temp or zenpower, cpufreq). Package power needs 'VID + power'.");
     hdr->addSpacing(12);
@@ -531,7 +527,6 @@ RyzenTab::RyzenTab(QWidget *parent) : QWidget(parent), layout_(ryzen::detect()) 
         fillBar->addWidget(fill);
         fillBar->addWidget(fb);
         auto *temp = new QLabel;
-        if (experimental) temp->setFont(numeric);
         temp->setProperty("role", "muted");
         temp->setToolTip(QStringLiteral("k10temp / zenpower Tccd%1 (CCD die temperature)").arg(ccd + 1));
         ccdTemps_[ccd] = temp;
@@ -596,7 +591,6 @@ RyzenTab::RyzenTab(QWidget *parent) : QWidget(parent), layout_(ryzen::detect()) 
 
             auto liveCell = [&](int col) {
                 auto *l = new QLabel(QStringLiteral("–"));
-                if (experimental) l->setFont(numeric);
                 l->setMinimumWidth(44);
                 l->setAlignment(Qt::AlignCenter);
                 theme::setLiveSheet(l, [] { return QStringLiteral("color:%1; background:transparent;").arg(theme::FG_DIM); });
