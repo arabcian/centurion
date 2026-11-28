@@ -3796,6 +3796,8 @@ pub fn describe() -> Value { describe_with(false) }
 /// builds its rows, which it does from a full describe).
 pub fn describe_with(light: bool) -> Value {
     let debugfs = debugfs_snapshot();
+    // One /proc walk per describe, not one per IRQ row (the light poll runs every 4 s).
+    let irqbalance = irqbalance_running();
     let rows: Vec<Value> = TUNABLES.iter().filter(|t| vendor_ok(t)).map(|t| {
         if light && slow_to_read(t) { return json!({"key": t.key, "cached": true}); }
         let fs = files(t);
@@ -3818,7 +3820,7 @@ pub fn describe_with(light: bool) -> Value {
             row["available"] = json!(false);
         }
         if !light { row["help"] = json!(t.help); }
-        if matches!(t.target, Target::Irq | Target::DeviceIrq(_)) && irqbalance_running() {
+        if matches!(t.target, Target::Irq | Target::DeviceIrq(_)) && irqbalance {
             row["conflict"] = json!("irqbalance is running: it would undo this setting within seconds. Applying a CCD stops it; restoring starts it again.");
         }
         row
