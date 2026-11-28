@@ -1171,27 +1171,56 @@ fn guard_after(mut out: Value, base: autotune::Pressure) -> Value {
     out
 }
 
-/// Detached child: samples PSI at 1 Hz for GUARD_SECS; if the verdict trips,
-/// restores exactly `keys` (unless someone changed them meanwhile). Returns
-/// true in the parent when the child started.
+/// Internal op of the detached guard (see spawn_guard). Never served through pkexec.
+const GUARD_OP: &str = "guard_run";
+
+/// The guard's job as a request: the keys, the pressure sampled before the apply, and each key's value right after it.
+fn guard_request(keys: &[String], base: &autotune::Pressure, applied: &[(String, Option<String>)]) -> Value {
+    json!({"op": GUARD_OP, "keys": keys, "base": [base.io_full10, base.mem_full10, base.allocstall],
+           "applied": applied.iter().map(|(k, v)| json!([k, v])).collect::<Vec<_>>()})
+}
+
+fn guard_payload(req: &Value) -> Option<(Vec<String>, autotune::Pressure, Vec<(String, Option<String>)>)> {
+    let keys: Vec<String> = req["keys"].as_array()?.iter().map(|k| k.as_str().map(str::to_owned)).collect::<Option<_>>()?;
+    if keys.is_empty() || keys.len() > TUNABLES.len() || !keys.iter().all(|k| tune::find(k).is_some() && autotune::guarded(k)) { return None; }
+    let b = req["base"].as_array().filter(|b| b.len() == 3)?;
+    let base = autotune::Pressure { io_full10: b[0].as_f64()?, mem_full10: b[1].as_f64()?, allocstall: b[2].as_u64()? };
+    let applied = req["applied"].as_array()?.iter().map(|e| {
+        let k = e[0].as_str().filter(|k| keys.iter().any(|x| x == k))?.to_owned();
+        let v = match &e[1] { Value::Null => None, Value::String(v) => Some(v.clone()), _ => return None };
+        Some((k, v))
+    }).collect::<Option<Vec<_>>>()?;
+    (applied.len() == keys.len()).then_some((keys, base, applied))
+}
+
+/// Starts the detached guard: this binary again, with the job on stdin. A bare fork() of this process (as before)
+/// may copy it while another thread (a run_tool reader) holds the allocator lock; the child's first allocation then
+/// deadlocks and no rollback ever happens. Returns true when the guard started.
 fn spawn_guard(keys: &[String], base: autotune::Pressure) -> bool {
+    use std::io::Write;
+    use std::os::unix::process::CommandExt;
     if let Some(pid) = fs::read_to_string(GUARD_PID).ok().and_then(|s| s.trim().parse::<i32>().ok()).filter(|p| *p > 1) {
         // Only a guard of ours: /proc/<pid>/comm is the helper's own name.
         let comm = fs::read_to_string(format!("/proc/{pid}/comm")).unwrap_or_default();
         if comm.trim().starts_with("tune-") { unsafe { libc::kill(pid, libc::SIGTERM); } }
     }
     let applied: Vec<(String, Option<String>)> = keys.iter().map(|k| (k.clone(), tune::find(k).and_then(tune::current))).collect();
-    let pid = unsafe { libc::fork() };
-    if pid != 0 { return pid > 0; }
-    // Child: own session, no inherited descriptors (stdout pipe of pkexec, the tune lock).
-    unsafe {
-        libc::setsid();
-        let null = libc::open(b"/dev/null\0".as_ptr() as *const libc::c_char, libc::O_RDWR);
-        if null >= 0 { for fd in 0..3 { libc::dup2(null, fd); } }
-        let fds: Vec<i32> = fs::read_dir("/proc/self/fd").into_iter().flatten().flatten()
-            .filter_map(|e| e.file_name().to_str()?.parse().ok()).filter(|&fd| fd > 2).collect();
-        for fd in fds { libc::close(fd); }
-    }
+    let req = guard_request(keys, &base, &applied).to_string();
+    let Ok(exe) = std::env::current_exe() else { return false };
+    let mut cmd = std::process::Command::new(exe);
+    // Own session; no inherited descriptors but the request pipe (everything else is close-on-exec).
+    cmd.env_clear().env("PATH", "/usr/sbin:/usr/bin:/sbin:/bin").current_dir("/")
+        .stdin(std::process::Stdio::piped()).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null());
+    unsafe { cmd.pre_exec(|| { libc::setsid(); Ok(()) }); }
+    let Ok(mut child) = cmd.spawn() else { return false };
+    let sent = child.stdin.take().is_some_and(|mut w| w.write_all(req.as_bytes()).is_ok());
+    if !sent { kill_reap(&mut child); }
+    sent
+}
+
+/// The guard itself (GUARD_OP): samples PSI at 1 Hz for GUARD_SECS; if the verdict trips, restores exactly `keys`
+/// (unless someone changed them meanwhile).
+fn guard_run(keys: &[String], base: autotune::Pressure, applied: &[(String, Option<String>)]) {
     let _ = write_root_file(GUARD_PID, std::process::id().to_string().as_bytes());
     let mut window = Vec::with_capacity(autotune::GUARD_SECS);
     let mut verdict = None;
@@ -1231,7 +1260,6 @@ fn spawn_guard(keys: &[String], base: autotune::Pressure) -> bool {
         tune::write_debugfs_snapshot();
     }
     let _ = fs::remove_file(GUARD_PID);
-    unsafe { libc::_exit(0) }
 }
 
 fn restore_confirmed(r: &Value) -> bool {
@@ -1796,6 +1824,13 @@ fn run() -> Value {
         }
         _ => {}
     }
+    if op == GUARD_OP {
+        // Started by spawn_guard only: root, never through pkexec (pkexec always sets PKEXEC_UID).
+        if std::env::var_os("PKEXEC_UID").is_some() || !is_root() { return json!({"ok": false, "error": "internal op"}); }
+        let Some((keys, base, applied)) = guard_payload(&req) else { return json!({"ok": false, "error": "invalid guard request"}) };
+        guard_run(&keys, base, &applied);
+        return json!({"ok": true});
+    }
     if profile_role() && !PROFILE_OPS.contains(&op) {
         return json!({"ok": false, "error": format!("'{op}' is not available in tune-profile-helper (it needs tune-helper)")});
     }
@@ -2016,6 +2051,18 @@ mod tests {
         // Outside the row's range: still left out, now reported instead of vanishing.
         assert!(!clean.contains_key("cpu.max_freq_ccd1"));
         assert!(dropped.iter().any(|d| d["key"] == "cpu.max_freq_ccd1"));
+    }
+    #[test]
+    fn guard_request_round_trips_and_is_bounded() {
+        let base = autotune::Pressure { io_full10: 1.5, mem_full10: 0.25, allocstall: 42 };
+        let keys = vec!["vm.swappiness".to_owned(), "vm.dirty_ratio".to_owned()];
+        let applied = vec![(keys[0].clone(), Some("10".to_owned())), (keys[1].clone(), None)];
+        let (k, b, a) = guard_payload(&guard_request(&keys, &base, &applied)).unwrap();
+        assert_eq!((k, b, a), (keys.clone(), base, applied.clone()));
+        // Only guarded, known keys; every key with its applied value.
+        assert!(guard_payload(&guard_request(&["cpu.epp".to_owned()], &base, &[("cpu.epp".to_owned(), None)])).is_none());
+        assert!(guard_payload(&guard_request(&keys, &base, &applied[..1])).is_none());
+        assert!(guard_payload(&json!({"op": GUARD_OP, "keys": keys, "base": [1.0], "applied": []})).is_none());
     }
     #[test]
     fn preset_names() {
