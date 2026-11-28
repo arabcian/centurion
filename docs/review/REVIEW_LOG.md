@@ -13,7 +13,8 @@ Python static testleri kaynakta metin arıyor (≈441 assert); bunları kıran b
 - Onaylı düzeltmeler (2026-11-28, "onay bekleyenleri düzelt"): F1.2–F1.7, F2.2–F2.4 uygulandı.
 - Kullanıcı talimatı: aşamalar arasında onay beklemeden devam et; kırmızı çizgi bulguları yine raporlanır, uygulanmaz.
 - Aşama 3 (nvcurve): TAMAMLANDI — F3.1–F3.4 onayla uygulandı (2026-11-28), F3.5 yalnızca bilgi.
-- Sıradaki: Aşama 4 (Intel undervolt: intel_uv, intel_uv_daemon, intel_uv_search, intel-uv-helper, centurion-intel-uv).
+- Aşama 4 (Intel undervolt): TAMAMLANDI — kod değişikliği yok; F4.1–F4.3 onay bekliyor (F4.1 öncelikli).
+- Sıradaki: Aşama 5 (Ryzen/SMU, Legion WMI/EC, fwattr, amdgpu, dgpu, nvreg, cooling/fan_table, lighting, spectrum).
 
 ## Başlangıç durumu (2026-11-28, commit 123c3c7, dal experimental)
 
@@ -111,7 +112,27 @@ Her aşama tek oturuma sığacak boyutta tutuldu (~4–8k satır).
 
 ## Bekleyen onaylar
 
-Şu an yok.
+Aşama 4 (Intel undervolt; hepsi MSR yolunda veya root yetkisiyle çalıştırma → kırmızı çizgi, uygulanmadı):
+
+- **F4.1 (orta, öncelikli)** `bin/intel-uv-helper.rs:157`: `main` her istekten önce `watchdog(120)` kuruyor;
+  `monitor_stream` ise 4 saate kadar sürmek üzere tasarlanmış (kendi sınırı `stop_at`, modül yorumu "oturum başına bir
+  pkexec"). Sonuç: akış 120 sn'de SIGALRM ile ölüyor; GUI (`gui/src/inteltab.cpp:1131-1141`) bunu "4 saatlik sınır ya da
+  çökme" sanıp yeni bir pkexec başlatıyor → her 2 dakikada bir polkit denetimi + bir örnek boşluğu (ve polkit eylemi
+  yetki istiyorsa yeniden parola sorabilir). `bin/ryzen-co-helper.rs:223-236` aynı akışı doğru yapıyor: watchdog'u akış
+  dalından sonra kuruyor. Öneri: Intel yardımcısında da `watchdog(120)`'yi `monitor_stream` dalından sonraya almak
+  (yazma op'larının 120 sn sınırı aynen kalır). Risk: düşük.
+- **F4.2 (düşük)** `intel_uv.rs:1109` `stock_note`: /run/centurion/intel-stock.json kilitsiz oku-değiştir-yaz. Daemon'un
+  tam apply'ı ile helper'ın apply'ı aynı anda ilk kez farklı alanları kaydederse biri diğerininkini siler → güç kaynağı
+  geçişi / reset o alanı (ör. IccMax, PL1) firmware değerine döndüremez. Öneri: RMW'yi `helper_lock("intel-stock")` ile
+  sarmak. Geri alma verisi → kırmızı çizgi.
+- **F4.3 (düşük)** `intel_uv_search.rs:170` `stress_bin`: binary'nin yanında centurion-cpustress yoksa PATH'teki
+  `centurion-cpustress` root olarak, ortam temizlenmeden çalıştırılıyor (arama root CLI'dan yürür). Öneri: yalnızca
+  `trusted_path` geçen yolu kabul etmek (PATH yedeği yerine sabit sistem dizinleri). Risk: düşük.
+- **F4.4 (bilgi)** `intel_uv.rs:1748` `monitor_sample`: her örnekte her CPU için /dev/cpu/N/msr açılıp kapanıyor
+  (2 sn'de bir 2×N işlem). Ölçülebilir ama küçük; önbellek yeni yapı ister → önerilmiyor. `read_status` MSR_POWER_CTL'i iki
+  kez okuyor (mikro).
+
+Aşama 3'ten bekleyen yok.
 
 ## Okunan dosyalar
 
@@ -123,6 +144,9 @@ tekrarı, Int aralığı min≤max ve her satırda Target alanı mekanik olarak 
 `bin/tune-helper.rs` (tamamı), `bin/tune-admin-helper.rs`, `bin/tune-profile-helper.rs`, `power.rs`, `pmtable.rs`.
 
 Aşama 3: `crates/nvcurve` tamamı (27 dosya, 5 863 satır) satır satır.
+
+Aşama 4: `intel_uv.rs`, `intel_uv_daemon.rs`, `intel_uv_search.rs`, `bin/intel-uv-helper.rs`,
+`bin/centurion-intel-uv.rs` (tamamı); karşılaştırma için `stream.rs` ve `bin/ryzen-co-helper.rs:198-245`.
 
 ## Bulgular
 
@@ -181,6 +205,15 @@ metin kalıbıyla sabitliyor.
 
 Doğrulama (5255ff0): cargo test 734 / 0 / 9 ignored · clippy temiz · ctest 77/77 · python 45/45.
 
+### Aşama 4 — Intel undervolt
+
+Uygulanan değişiklik yok; bulgular F4.1–F4.4 "Bekleyen onaylar"da.
+
+Sorunsuz bulunanlar / gözlemler: her yazma "oku → yaz → geri oku" ve atomik modda ters sırada geri alma yapıyor;
+mailbox işlemleri msr fd'sinde flock ile serileştiriliyor; profil ayrıştırma tüm aralıkları yazmadan önce denetliyor
+(cTDP 0..2 olduğu için `["nominal","down","up"][level]` indekslemesi güvenli). MMIO açılışı hizalama, sayfa sınırı ve
+/proc/iomem "System RAM" denetimi yapıyor.
+
 ## Ölü kod adayları
 
 Aşama 1: yok (tüm `pub` öğelerin çağıranı var).
@@ -189,4 +222,6 @@ Aşama 2: `tune.rs:2875` `sched_feature_state_for_test` — `#[cfg(test)] pub fn
 
 Aşama 3: yok. (Kopyalar F3.2 ve F3.4'te; bunlar ölü değil, tekrar.) Not: `nvcurve/src/hal/sensors.rs:13-17`
 modül yorumunda kopuk boş `//!` satırları var (yalnızca biçim, dokunulmadı).
+
+Aşama 4: yok.
 
