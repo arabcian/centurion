@@ -3852,6 +3852,7 @@ pub fn describe_with(light: bool) -> Value {
 }
 
 /// Known keys with values that validate against *this* machine; knobs this machine lacks are not stored.
+#[allow(clippy::type_complexity)] // as in tune-helper, where it came from
 pub fn clean_values(values: &Map<String, Value>) -> Result<(Map<String, Value>, Vec<Value>), Vec<Value>> {
     let mut clean = Map::new();
     let mut rejected = Vec::new();
