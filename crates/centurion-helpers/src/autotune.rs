@@ -231,7 +231,6 @@ pub fn game_heat_share(sessions: &[Value]) -> Option<GameHeat> {
     Some(GameHeat { share: hot as f64 / total as f64, sessions: d.len(), hours: total as f64 / 3600.0 })
 }
 
-/// The game-session log of the user autotune runs for (pkexec caller, sudo user, else the caller).
 /// Project C (BMQ/PDS) kernel: its only live knob, kernel.yield_type, exists under `root`.
 fn project_c_under(root: &Path) -> bool { root.join("proc/sys/kernel/yield_type").is_file() }
 
@@ -245,6 +244,7 @@ pub fn effective_weights(goal: Goal, e: &Evidence) -> (Weights, Vec<(&'static st
     (w, notes)
 }
 
+/// The game-session log of the user autotune runs for (pkexec caller, sudo user, else the caller).
 fn game_sessions() -> Vec<Value> {
     let home = std::env::var("PKEXEC_UID").ok().or_else(|| std::env::var("SUDO_USER").ok()).filter(|u| !u.is_empty())
         .and_then(|u| crate::calctx::home_of(&u))
@@ -1397,9 +1397,9 @@ fn measurement_frame(goal: Goal, p: &Profile, mut w: Weights, notes: &mut Vec<St
 // ── joint decision (interactions between knobs) ──────────────────────────────
 
 impl<'a> Rules<'a> {
+    fn poll_names(&self) -> Vec<&str> { self.p.cstates.iter().map(|c| c.name.as_str()).collect() }
     /// Candidate values of a calibrated knob with their cost, index 0 = reference. Same
     /// constraints as `anchor`: boot-default trust region, unsafe values, retired keys, learned risk.
-    fn poll_names(&self) -> Vec<&str> { self.p.cstates.iter().map(|c| c.name.as_str()).collect() }
     fn level_costs(&self, key: &str, reference: &str, values: &[String]) -> Vec<(String, f64)> {
         let mut out = vec![(reference.to_owned(), 0.0)];
         let Some(learned) = self.p.learned_risk(key) else { return out };
@@ -2530,11 +2530,6 @@ pub fn repair_tree(v: &mut Value, ctx: &AuditCtx, p: &Profile) -> Vec<String> {
 /// Full autotune: profile, rules, availability filter. Unprivileged.
 pub fn autotune(goal: Goal) -> Value { autotune_with(goal, &Profile::gather()) }
 
-/// With user weight overrides ({"latency": 1.2, ...}; null = goal defaults).
-/// Without overrides the goal's weights lean towards the machine's recorded history
-/// (`Weights::adapted`); a weight the caller sets is used as given.
-/// `opts`: {"profile": power profile the preset is for (a scene's), "explore": false to skip the
-/// alternatives and sensitivity}.
 // Progress remains opt-in and on stderr. The run identifier is a bounded,
 // printable token supplied by the caller, not inferred from a running process.
 fn progress_event(run: &Value, sequence: u32, phase: &str) -> Option<Value> {
@@ -2545,6 +2540,11 @@ fn progress_event(run: &Value, sequence: u32, phase: &str) -> Option<Value> {
     Some(json!({"version": 1, "run_id": id, "sequence": sequence, "phase": phase}))
 }
 
+/// With user weight overrides ({"latency": 1.2, ...}; null = goal defaults).
+/// Without overrides the goal's weights lean towards the machine's recorded history
+/// (`Weights::adapted`); a weight the caller sets is used as given.
+/// `opts`: {"profile": power profile the preset is for (a scene's), "explore": false to skip the
+/// alternatives and sensitivity}.
 pub fn autotune_req(goal: Goal, weights: &Value, opts: &Value) -> Value {
     let total_started = std::time::Instant::now();
     let mode = match explore_mode(opts) { Ok(m) => m, Err(e) => return json!({"ok": false, "error": e}) };
