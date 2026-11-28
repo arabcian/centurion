@@ -20,7 +20,8 @@ Python static testleri kaynakta metin arıyor (≈441 assert); bunları kıran b
 - Aşama 6a (autotune): TAMAMLANDI — F6.1 uygulandı (yalnızca doc yorumu), F6.2–F6.4 yalnızca bilgi.
 - Aşama 6b (calib, centurion-calibrate, calctx, calsim): OKUNDU — kod değişikliği yok, F6.5–F6.7 rapor.
 - Aşama 6c (bench, stability, cooltest, gamemode, boot*): OKUNDU — kod değişikliği yok; F6.9 onay bekliyor, F6.8/F6.10/F6.11 bilgi.
-- Sıradaki: Aşama 7 (backup, tarscan, sysadmin, fstabcheck).
+- Aşama 7 (backup, tarscan, sysadmin, fstabcheck): OKUNDU — kod değişikliği yok; F7.1–F7.3 onay bekliyor (kırmızı çizgi), F7.4–F7.5 bilgi/soru.
+- Sıradaki: Aşama 8 (netguard, firewall, traffic, wifi).
 
 ## Başlangıç durumu (2026-11-28, commit 123c3c7, dal experimental)
 
@@ -143,6 +144,29 @@ Aşama 6c (kırmızı çizgi değil, ama yarış için güvenilir test yazılama
   cezalandırır. Öneri: F1.6'da `defaults::record` için yapılanın aynısı, üç fonksiyonda
   `let _l = crate::helper_lock("exposure").ok();`.
 
+Aşama 7 (kırmızı çizgi: helper girdi doğrulaması / izin listeleri, uygulanmadı):
+
+- **F7.1 (orta)** `sysadmin.rs:131` `SYSCTL_DENY`: listenin kendi amacı "dosya yazımını kök olarak komut çalıştırmaya
+  çeviren anahtarlar". `kernel.core_pattern` için yalnızca boru biçimi reddediliyor, ama iki anahtar eksik:
+  `kernel.poweroff_cmd` (orderly_poweroff'ta kök olarak çalışan program) ve `kernel.hotplug` (uevent helper: her uevent'te
+  kök olarak çalışan program; CONFIG_UEVENT_HELPER ile). Senaryo: sysctl drop-in'ine
+  `kernel.hotplug = /home/u/x` → `sysctl -p` hemen uygular. Hafifletici etken: config op'ları her seferinde yönetici
+  parolası istiyor (com.centurion.sysadmin.config). Öneri: ikisini `SYSCTL_DENY`'e eklemek, `sysadmin.rs` testlerine
+  birer red vakası.
+- **F7.2 (düşük)** `fstabcheck.rs:34` `udev_unescape` baytları tek tek `char`'a çeviriyor (`b[i] as char`). ASCII dışı bir
+  etiket bozuluyor: `/dev/disk/by-label/Müzik` → "MÃ¼zik". Bu yüzden `LABEL=Müzik` için yanlış "no disk has LABEL=…"
+  bulgusu çıkıyor ve yazım `confirm_fstab` ister. (`&s[i+2..i+4]` karakter sınırına denk gelmezse panik verebilir; udev
+  ters eğik çizgiyi `\x5c` olarak kaçırdığı için ulaşılamıyor.) Öneri: önce bayt dizisine çözmek, sonra
+  `String::from_utf8_lossy`; önce bunu yakalayan bir test.
+- **F7.3 (düşük-orta)** `backup.rs:1921` `config_restore_root`: `tune-boot.json`, `intel-uv-boot.json` ve
+  `/etc/centurion/presets/*` arşivden yalnızca JSON olarak denetlenip kuruluyor. Aynı dosyaları kaydeden yollar daha sıkı:
+  tune-helper `op_set_boot` `clean_values` uyguluyor, intel-uv-helper `set_boot` GUI voltaj tabanını
+  (`boot_within_gui_floor`) denetliyor. Açılışta intel-uv daemon yalnızca `parse_boot`'un donanım sınırlarını uyguluyor.
+  Senaryo: başka bir makineden ya da elle düzenlenmiş bir yapılandırma yedeği, GUI'nin kaydetmeye izin vermediği
+  derinlikte bir açılış undervolt'u kurar; o da her açılışta ve uyanışta kök olarak uygulanır. Hafifletici etkenler: her
+  geri yüklemede yönetici parolası ve boot guard. Öneri: geri yüklemede aynı kaydetme denetimlerini çalıştırmak (ya da bu
+  dosyaları ilgili helper'ın kaydetme op'u üzerinden yazmak).
+
 Aşama 5b (kırmızı çizgi, uygulanmadı):
 
 - **F5.4 (düşük)** `centurion-spectrum/src/lib.rs:135` `Rgb::parse_hex`, uzunluğu (6) denetleyip `u32::from_str_radix`'e
@@ -189,6 +213,11 @@ Aşama 6c: `bootguard.rs`, `bin/centurion-boot-guard.rs`, `boothist.rs`, `stabil
 ölçüm): dosya oluşturma (yalnızca O_TMPFILE), eşleme ve indeksleme yolları okundu, ölçüm yöntemleri değerlendirilmedi.
 `bin/centurion-gamemode.rs` (1673): pkexec çağrısı, ön ayar yükleme, sahne durumu / kilit yolları okundu; sahne uygulama
 akışı (`apply_scene`, 691–1020) helper çağrılarının sırası olduğu için yalnızca tarandı.
+
+Aşama 7: `sysadmin.rs`, `fstabcheck.rs`, `tarscan.rs` (kod kısımları satır satır), `bin/backup-helper.rs`,
+`bin/sysadmin-helper.rs`, `bin/sysadmin-config-helper.rs`. `backup.rs`: yapılandırma geri yükleme yolu (1740–1960) ve yol
+yardımcıları (233–270) satır satır; sistem imajı yedekleme/geri yükleme ve zincir geri yükleme (578–1420) ile
+config_diff risk kalıplarıyla tarandı (fd'ye göre `unlinkat` / `renameat` kullanıyor).
 
 ## Bulgular
 
@@ -333,6 +362,20 @@ koyuyor. bench G/Ç testleri bağlantısız O_TMPFILE kullanıyor (dünya-yazıl
 açık ad yok). gamemode kök gerektiren her şeyi pkexec ile yapıyor; ön ayar değerleri yalnızca köke ait depodan
 (`/etc/centurion/presets`) alınıyor, kullanıcının dosyası değil; yetkilendirme takılırsa 60 sn, helper 180 sn sınırı var.
 
+### Aşama 7 — yedekleme ve sistem araçları
+
+| # | Yer | Gözlem | Risk | Kırmızı çizgi |
+|---|-----|--------|------|---------------|
+| F7.4 | `sysadmin.rs:417` `config_restore` | Geri yüklenen yedek `new_lines_allowed`'dan ve fstab'da `fstabcheck`'ten geçmiyor (`config_write` içindeki `validate` ve `findmnt --verify` çalışıyor). Yedekler kökün kendi kopyaları; yalnızca yasak listesinden önce yazılmış bir satır geri gelebilir. | çok düşük | evet |
+| F7.5 | `sysadmin.rs:174` udev denetimi | Yalnızca RUN / PROGRAM / IMPORT{program} reddediliyor. `MODE` / `OWNER` / `GROUP` (ör. `KERNEL=="mem", MODE="0666"`) bir çekirdek korumasını aynı ölçüde düşürür. Her seferinde yönetici parolası. Soru: bilinçli olarak mı dışarıda bırakıldı? | düşük | evet |
+
+Doğrulanan (değişiklik gerektirmeyen): `extract_limited` arşivi kök olarak açarken, arşivdeki bir dizin bağlantısının
+(`system/etc -> /hedef`) ardından gelen bir üye o bağlantının üzerinden yazabilir mi? GNU tar 1.35 ile scratchpad'de
+denedim: tar "Cannot open: Not a directory" diyerek reddediyor, hedef boş kalıyor. Ardından `plain_tree` her bağlantıyı
+ve özel dosyayı reddediyor. Kullanıcı geri yüklemesi sahnelerin `command` alanını atıyor; kök geri yüklemesi modprobe.d
+dosyasını kopyalamıyor, `nvreg::restore_from` ile yeniden doğruluyor. tarscan tanımadığı her başlıkta akışı "broken"
+işaretleyip silme/yeniden adlandırmayı kapatıyor.
+
 ## Ölü kod adayları
 
 Aşama 1: yok (tüm `pub` öğelerin çağıranı var).
@@ -358,4 +401,6 @@ Aşama 6a: yok (`explore` yalnızca `#[cfg(test)]`, bilinçli).
 Aşama 6b: yok (`calsim.rs` `#![allow(dead_code)]` ile test simülatörü, bilinçli).
 
 Aşama 6c: yok (F6.11 bir kopya, ölü değil).
+
+Aşama 7: yok.
 
