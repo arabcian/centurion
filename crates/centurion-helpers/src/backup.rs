@@ -1882,7 +1882,7 @@ fn safe_name(n: &std::ffi::OsStr) -> Option<&str> {
 
 /// Installs the regular files of `src` (no symlinks, safe names) into the
 /// root-owned directory `dst`, each root:root 0644 through an atomic write.
-fn install_dir(src: &Path, dst: &str, only: Option<&[&str]>, done: &mut Vec<String>) -> Result<(), String> {
+fn install_dir(src: &Path, dst: &str, only: Option<&[&str]>, done: &mut Vec<String>, refused: &mut Vec<String>) -> Result<(), String> {
     // `src` itself must be a real directory (never a link to one); files are opened without following links.
     if !fs::symlink_metadata(src).is_ok_and(|m| m.is_dir()) { return Ok(()); }
     let Ok(rd) = fs::read_dir(src) else { return Ok(()) };
@@ -1899,10 +1899,35 @@ fn install_dir(src: &Path, dst: &str, only: Option<&[&str]>, done: &mut Vec<Stri
         if (dst.ends_with("/presets") && !name.ends_with(".json"))
             || (name.ends_with(".json") && serde_json::from_slice::<Value>(&body).is_err()) { continue; }
         let to = format!("{dst}/{name}");
+        let body = if dst == "/etc/centurion" {
+            match restored_boot_file(&name, &body) { Ok(b) => b, Err(e) => { refused.push(format!("{to}: {e}")); continue; } }
+        } else { body };
         crate::write_root_file(&to, &body)?;
         done.push(to);
     }
     Ok(())
+}
+
+/// The boot files root applies at every boot pass the checks their own save op runs (tune-helper set_boot:
+/// `tune::clean_values`; intel-uv-helper set_boot: the GUI's undervolt floor), not only a JSON parse: an
+/// archive from another machine or edited by hand must not install what the GUI refuses to save.
+/// The tune preset is written back with the cleaned values, as set_boot stores it. Other files pass as they are.
+fn restored_boot_file(name: &str, body: &[u8]) -> Result<Vec<u8>, String> {
+    match name {
+        "intel-uv-boot.json" => {
+            let v: Value = serde_json::from_slice(body).map_err(|e| e.to_string())?;
+            crate::intel_uv_daemon::boot_within_gui_floor(&v)?;
+            Ok(body.to_vec())
+        }
+        "tune-boot.json" => {
+            let mut v: Value = serde_json::from_slice(body).map_err(|e| e.to_string())?;
+            let values = v["values"].as_object().ok_or("no values")?;
+            let (clean, _) = crate::tune::clean_values(values).map_err(|r| format!("invalid values: {}", Value::Array(r)))?;
+            v["values"] = Value::Object(clean);
+            serde_json::to_vec_pretty(&v).map_err(|e| e.to_string())
+        }
+        _ => Ok(body.to_vec()),
+    }
 }
 
 fn read_nofollow(p: &Path) -> Result<Vec<u8>, String> {
@@ -1926,16 +1951,16 @@ pub fn config_restore_root(req: &Value) -> Value {
             return Ok(json!({"ok": true, "files": 0, "restored": []}));
         };
         let s = stage.0.join("system");
-        let mut done = Vec::new();
+        let (mut done, mut refused) = (Vec::new(), Vec::new());
         crate::secure_dir("/etc/centurion")?;
-        install_dir(&s.join("etc/centurion"), "/etc/centurion", Some(ETC_RESTORE), &mut done)?;
-        install_dir(&s.join("etc/centurion/presets"), "/etc/centurion/presets", None, &mut done)?;
+        install_dir(&s.join("etc/centurion"), "/etc/centurion", Some(ETC_RESTORE), &mut done, &mut refused)?;
+        install_dir(&s.join("etc/centurion/presets"), "/etc/centurion/presets", None, &mut done, &mut refused)?;
         if s.join("etc/nvcurve").is_dir() {
             crate::secure_dir("/etc/nvcurve")?;
-            install_dir(&s.join("etc/nvcurve"), "/etc/nvcurve", Some(&["config.json"]), &mut done)?;
-            install_dir(&s.join("etc/nvcurve/profiles"), "/etc/nvcurve/profiles", None, &mut done)?;
+            install_dir(&s.join("etc/nvcurve"), "/etc/nvcurve", Some(&["config.json"]), &mut done, &mut refused)?;
+            install_dir(&s.join("etc/nvcurve/profiles"), "/etc/nvcurve/profiles", None, &mut done, &mut refused)?;
         }
-        install_dir(&s.join("var/lib/centurion"), "/var/lib/centurion", Some(VARLIB_RESTORE), &mut done)?;
+        install_dir(&s.join("var/lib/centurion"), "/var/lib/centurion", Some(VARLIB_RESTORE), &mut done, &mut refused)?;
         // modprobe.d is executable configuration (an `install` line runs a command as root at module load):
         // the saved file is never copied. Its managed options are validated and the file is written anew.
         let conf = s.join("etc/modprobe.d/zz-centurion-nvidia.conf");
@@ -1947,7 +1972,7 @@ pub fn config_restore_root(req: &Value) -> Value {
         if done.iter().any(|p| p.ends_with("/netguard.json")) {
             if let Some(p) = crate::netguard::daemon_pid() { unsafe { libc::kill(p, libc::SIGHUP); } }
         }
-        Ok(json!({"ok": true, "files": done.len(), "restored": done}))
+        Ok(json!({"ok": true, "files": done.len(), "restored": done, "refused": refused}))
     })();
     r.unwrap_or_else(fail)
 }
@@ -2269,6 +2294,24 @@ mod tests {
 
     fn files(list: &[(&str, &str)]) -> BTreeMap<String, Vec<u8>> {
         list.iter().map(|(k, v)| (k.to_string(), v.as_bytes().to_vec())).collect()
+    }
+
+    #[test]
+    fn restored_boot_files_pass_the_save_checks() {
+        let b = |v: Value| serde_json::to_vec(&v).unwrap();
+        // Undervolt: the same floor as intel-uv-helper's set_boot.
+        assert!(restored_boot_file("intel-uv-boot.json", &b(json!({"ac": {"voltage": {"core": -40}}, "battery": null}))).is_ok());
+        assert!(restored_boot_file("intel-uv-boot.json", &b(json!({"ac": {"voltage": {"core": -400}}}))).is_err());
+        assert!(restored_boot_file("intel-uv-boot.json", b"[]").is_err());
+        // Boot preset: tune-helper's clean_values (unknown keys refused, values validated).
+        let ok = restored_boot_file("tune-boot.json", &b(json!({"preset": "Gaming", "values": {"vm.swappiness": 60}}))).unwrap();
+        let ok: Value = serde_json::from_slice(&ok).unwrap();
+        assert_eq!((ok["preset"].as_str(), ok["values"]["vm.swappiness"].as_str()), (Some("Gaming"), Some("60")));
+        assert!(restored_boot_file("tune-boot.json", &b(json!({"values": {"no.such_key": 1}}))).is_err());
+        assert!(restored_boot_file("tune-boot.json", &b(json!({"values": {"vm.swappiness": 999}}))).is_err());
+        assert!(restored_boot_file("tune-boot.json", &b(json!({"values": 5}))).is_err());
+        // Every other file passes through as it is.
+        assert_eq!(restored_boot_file("netguard.json", b"{}").unwrap(), b"{}");
     }
 
     #[test]

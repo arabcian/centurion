@@ -934,6 +934,8 @@ void BackupPage::configRestore() {
                 run({{"op", "config_restore_root"}, {"archive", archive}}, true, QStringLiteral("Restoring system files (waiting for the password)…"),
                     [this, userPart](const QJsonObject &s) {
                         if (!s.value("ok").toBool()) { finished(QStringLiteral("Nothing was restored: ") + str(s, "error"), false); return; }
+                        for (const QJsonValue &r : s.value("refused").toArray())
+                            log(QStringLiteral("not restored (fails the check its save would run): ") + r.toString());
                         userPart(num(s, "files"));
                     });
             });

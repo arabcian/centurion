@@ -1107,6 +1107,9 @@ pub fn stock_load() -> Value {
 /// Records `val` at `key` (or `key.sub`) unless this boot already has a value there: the first one
 /// seen is the firmware's.
 fn stock_note(key: &str, sub: Option<&str>, val: Value) {
+    // The daemon and intel-uv-helper both note fields: without the lock, two first records at once kept only
+    // the later file, and the field the other one noted could no longer be put back. Best effort, as before.
+    let _l = crate::helper_lock("intel-stock").ok();
     let mut s = stock_load();
     let slot = match sub {
         None => &mut s[key],

@@ -44,6 +44,11 @@ pub fn load() -> Value {
         .filter(|v| v["boots"].is_array()).unwrap_or_else(|| json!({"boots": []}))
 }
 
+/// tune-helper (after every apply/restore), centurion-calibrate and centurion-boot-guard all rewrite
+/// exposure.json: without one lock a record at shutdown could drop the boot's `clean` mark, and the next
+/// boot would then close it as a crash. Best effort, like the record itself.
+fn exposure_lock() -> Option<std::fs::File> { crate::helper_lock("exposure").ok() }
+
 fn save(v: &Value) -> Result<(), String> {
     crate::secure_dir(crate::defaults::DIR)?;
     crate::write_root_file(EXPOSURE, &serde_json::to_vec(v).map_err(|e| e.to_string())?)
@@ -102,6 +107,7 @@ pub fn changed_now() -> BTreeMap<String, String> {
 
 /// Adds a segment to this boot when the configuration changed (root; best effort).
 pub fn record(cfg: &BTreeMap<String, String>) {
+    let _l = exposure_lock();
     let mut v = load();
     let Some(b) = this_boot(&mut v) else { return };
     let cfg_v: Map<String, Value> = cfg.iter().map(|(k, x)| (k.clone(), json!(x))).collect();
@@ -164,6 +170,7 @@ pub fn on_shutdown() {
         let k = format!("{}:{}", e["kind"].as_str().unwrap_or("?"), e["level"].as_str().unwrap_or(""));
         *ev.entry(k).or_default() += 1;
     }
+    let _l = exposure_lock();
     let mut v = load();
     let Some(b) = this_boot(&mut v) else { return };
     b["end"] = json!(now());
@@ -184,6 +191,7 @@ fn inflight_clear_if_this_boot() {
 pub fn on_boot() -> Vec<String> {
     let mut msgs = Vec::new();
     let cur = boot_id();
+    let l = exposure_lock();
     let mut v = load();
     let mut unclean_prev: Option<String> = None;
     // Runs before bootguard::arm(): the guard file still names the last boot centurion-boot-guard
@@ -204,6 +212,7 @@ pub fn on_boot() -> Vec<String> {
         }
     }
     if unclean_prev.is_some() { let _ = save(&v); }
+    drop(l);
     // A run that was being measured when the machine died.
     let inflight: Option<Value> = crate::read_root_file(INFLIGHT, 64 * 1024).and_then(|s| serde_json::from_str(&s).ok());
     if let Some(f) = inflight {
