@@ -285,7 +285,18 @@ static QSpinBox *spin(int lo, int hi, const QString &suffix, int w) {
 }
 
 NvidiaTab::NvidiaTab(QWidget *parent) : QWidget(parent) {
-    auto *root = new QVBoxLayout(this);
+    QWidget *workspace = this;
+    if (theme::experimentalEnabled()) {
+        auto *outer = new QVBoxLayout(this);
+        outer->setContentsMargins(0, 0, 0, 0);
+        auto *scroll = new QScrollArea;
+        scroll->setFrameShape(QFrame::NoFrame);
+        scroll->setWidgetResizable(true);
+        workspace = new QWidget;
+        scroll->setWidget(workspace);
+        outer->addWidget(scroll);
+    }
+    auto *root = new QVBoxLayout(workspace);
     trial_ = new TrialBar(QStringLiteral("nvidia/trial"));
     root->addWidget(trial_);
     root->setContentsMargins(8, 6, 8, 6);
