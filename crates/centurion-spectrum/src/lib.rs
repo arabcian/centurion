@@ -27,14 +27,21 @@ pub mod lamparray;
 
 pub const VENDOR_ID: u16 = 0x048D;
 pub const PRODUCT_MASK: u16 = 0xFF00;
-/// Product-id families the Spectrum controller ships under (the same three
-/// LenovoLegionToolkit looks for). The id alone never selects a device: the
-/// interface must also declare a REPORT_LEN-byte feature report and answer
-/// the compatibility query — the 4-zone keyboards share C9xx.
+/// Product-id families the Spectrum controller is known to ship under. They are
+/// tried first; since LenovoLegionToolkit 2.34 dropped its product-id filter (new
+/// models use other families), any other VENDOR_ID interface is tried after them.
+/// The id never selects a device on its own: the interface must declare a
+/// REPORT_LEN-byte feature report and answer the compatibility query — the 4-zone
+/// keyboards share C9xx but declare 33 bytes.
 pub const PRODUCT_MATCHES: [u16; 3] = [0xC100, 0xC900, 0xC600];
 
 pub fn is_spectrum_product(vid: u16, pid: u16) -> bool {
     vid == VENDOR_ID && PRODUCT_MATCHES.contains(&(pid & PRODUCT_MASK))
+}
+
+/// Vendor and descriptor alone, as LenovoLegionToolkit 2.34 selects Spectrum candidates.
+fn is_spectrum_candidate(vid: u16, feature_len: Option<usize>) -> bool {
+    vid == VENDOR_ID && feature_len == Some(REPORT_LEN)
 }
 
 /// (vendor, product) of a /sys/class/hidraw/<node> entry.
@@ -53,8 +60,10 @@ pub fn feature_len(dir: &Path) -> Option<usize> {
     max_feature_report_len(&fs::read(dir.join("device/report_descriptor")).ok()?)
 }
 
-fn hidraw_dirs() -> Vec<PathBuf> {
-    let mut v: Vec<PathBuf> = fs::read_dir("/sys/class/hidraw").into_iter().flatten().flatten().map(|e| e.path()).collect();
+fn hidraw_dirs() -> Vec<PathBuf> { hidraw_dirs_at(Path::new("/sys/class/hidraw")) }
+
+fn hidraw_dirs_at(root: &Path) -> Vec<PathBuf> {
+    let mut v: Vec<PathBuf> = fs::read_dir(root).into_iter().flatten().flatten().map(|e| e.path()).collect();
     v.sort();
     v
 }
@@ -478,15 +487,27 @@ pub struct Device {
 /// Candidate order for [`Device::find`]: interfaces on the USB device that also carries the LampArray
 /// go last. On the 16AFR10H that device (C193) has a second 960-byte vendor interface whose answer to
 /// D1 is unknown; the Spectrum controller is C197. Without this the pick hinged on hidraw numbering
-/// (string order "hidraw10" < "hidraw6"). Stable sort: nothing is dropped, other orders are kept.
+/// (string order "hidraw10" < "hidraw6"). Product ids outside PRODUCT_MATCHES come after the known
+/// families, the LampArray device last. Stable sort: nothing is dropped, other orders are kept.
 fn lamparray_last(dirs: &mut [(PathBuf, u16)], lamparray_pid: Option<u16>) {
-    dirs.sort_by_key(|&(_, p)| Some(p) == lamparray_pid);
+    dirs.sort_by_key(|&(_, p)| (Some(p) == lamparray_pid, !is_spectrum_product(VENDOR_ID, p)));
 }
 
-/// A Spectrum HID interface exists: matching ids and a REPORT_LEN-byte feature
+/// The hidraw interfaces under `root` that may be spoken to, in the order they are tried:
+/// vendor id and a REPORT_LEN-byte feature report (sysfs only). Nothing outside this list
+/// ever gets an ioctl.
+fn candidates_at(root: &Path, lamparray_pid: Option<u16>) -> Vec<PathBuf> {
+    let mut dirs: Vec<(PathBuf, u16)> = hidraw_dirs_at(root).into_iter()
+        .filter_map(|d| hid_ids(&d).filter(|&(v, _)| is_spectrum_candidate(v, feature_len(&d))).map(|(_, p)| (d, p)))
+        .collect();
+    lamparray_last(&mut dirs, lamparray_pid);
+    dirs.into_iter().map(|(d, _)| d).collect()
+}
+
+/// A Spectrum HID interface exists: the vendor id and a REPORT_LEN-byte feature
 /// report in its descriptor (sysfs only: nothing is opened, no ioctl is sent).
 pub fn present() -> bool {
-    hidraw_dirs().iter().any(|d| hid_ids(d).is_some_and(|(v, p)| is_spectrum_product(v, p)) && feature_len(d) == Some(REPORT_LEN))
+    hidraw_dirs().iter().any(|d| hid_ids(d).is_some_and(|(v, _)| is_spectrum_candidate(v, feature_len(d))))
 }
 
 impl Device {
@@ -507,15 +528,10 @@ impl Device {
     pub fn find() -> Result<Self> {
         let mut last_err = None;
         if !Path::new("/sys/class/hidraw").is_dir() { return Err(Error::NotFound); }
-        let mut dirs: Vec<(PathBuf, u16)> = hidraw_dirs().into_iter()
-            .filter_map(|d| hid_ids(&d).filter(|&(v, p)| is_spectrum_product(v, p)).map(|(_, p)| (d, p)))
-            .collect();
-        lamparray_last(&mut dirs, lamparray::product());
-        for (dir, _) in dirs {
-            // Same guard as LenovoLegionToolkit: only an interface whose HID
-            // descriptor declares a REPORT_LEN-byte feature report is spoken
-            // to. Other interfaces of the controller never get a single ioctl.
-            if feature_len(&dir) != Some(REPORT_LEN) { continue; }
+        // Same guard as LenovoLegionToolkit: only an interface whose HID
+        // descriptor declares a REPORT_LEN-byte feature report is spoken
+        // to. Other interfaces of the controller never get a single ioctl.
+        for dir in candidates_at(Path::new("/sys/class/hidraw"), lamparray::product()) {
             let node = Path::new("/dev").join(dir.file_name().unwrap());
             match Device::open(&node).and_then(|d| d.is_compatible().map(|ok| (d, ok))) {
                 Ok((d, true)) => return Ok(d),
@@ -736,6 +752,54 @@ mod tests {
         let mut d: Vec<(PathBuf, u16)> = vec![("hidraw6".into(), 0xC193), ("hidraw7".into(), 0xC197)];
         super::lamparray_last(&mut d, None);
         assert_eq!(names(&d), ["hidraw6", "hidraw7"]);
+    }
+
+    #[test]
+    fn candidate_selection_faults() {
+        // Fault simulation on a fake /sys/class/hidraw: only the interfaces in the result may ever get
+        // an ioctl, so every malformed, foreign or 4-zone entry must stay out of it.
+        const SPECTRUM: &[u8] = &[0x06, 0x89, 0xFF, 0x09, 0x07, 0xA1, 0x01, 0x85, 0x07, 0x75, 0x08, 0x96, 0xBF, 0x03,
+                                  0x09, 0x01, 0xB1, 0x02, 0xC0];
+        const ZONE4: &[u8] = &[0x06, 0x89, 0xFF, 0x09, 0xCC, 0xA1, 0x01, 0x85, 0xCC, 0x75, 0x08, 0x95, 0x20, 0x09, 0x01,
+                               0xB1, 0x02, 0xC0];
+        let root = std::env::temp_dir().join(format!("centurion-hidraw-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        let node = |name: &str, uevent: Option<&str>, desc: Option<&[u8]>| {
+            let dev = root.join(name).join("device");
+            fs::create_dir_all(&dev).unwrap();
+            if let Some(u) = uevent { fs::write(dev.join("uevent"), format!("DRIVER=hid-generic\n{u}\n")).unwrap(); }
+            if let Some(d) = desc { fs::write(dev.join("report_descriptor"), d).unwrap(); }
+        };
+        node("hidraw0", Some("HID_ID=0003:0000048D:0000C2A1"), Some(SPECTRUM));  // unknown family (newer model)
+        node("hidraw1", Some("HID_ID=0003:0000048D:0000C193"), Some(SPECTRUM));  // LampArray device
+        node("hidraw2", Some("HID_ID=0003:0000048D:0000C965"), Some(ZONE4));     // 4-zone keyboard
+        node("hidraw3", Some("HID_ID=0003:00001234:0000C197"), Some(SPECTRUM));  // foreign vendor
+        node("hidraw4", Some("HID_ID=garbage"), Some(SPECTRUM));                 // malformed uevent
+        node("hidraw5", Some("HID_ID=0003:0000048D:0000C197"), None);            // no descriptor
+        node("hidraw6", Some("HID_ID=0003:0000048D:0000C197"), Some(&[0x96, 0xBF]));  // truncated descriptor
+        node("hidraw7", Some("HID_ID=0003:1000048D:0000C197"), Some(SPECTRUM));  // id past 16 bits
+        node("hidraw8", None, Some(SPECTRUM));                                   // no uevent
+        node("hidraw9", Some("HID_ID=0003:0000048D:0000C197"), Some(SPECTRUM));  // the known Gen10 controller
+        let got: Vec<String> = candidates_at(&root, Some(0xC193)).iter()
+            .map(|d| d.file_name().unwrap().to_string_lossy().into_owned()).collect();
+        let _ = fs::remove_dir_all(&root);
+        assert_eq!(got, ["hidraw9", "hidraw0", "hidraw1"]);
+        assert!(candidates_at(Path::new("/nonexistent/hidraw"), None).is_empty());
+    }
+
+    #[test]
+    fn unknown_product_family() {
+        // LLT 2.34 rule: any product id of the vendor, but only with the 960-byte feature report;
+        // the 4-zone keyboard's 33-byte report never qualifies.
+        assert!(crate::is_spectrum_candidate(0x048D, Some(crate::REPORT_LEN)));
+        assert!(crate::is_spectrum_candidate(0x048D, Some(crate::REPORT_LEN)) && !crate::is_spectrum_product(0x048D, 0xC2A1));
+        assert!(!crate::is_spectrum_candidate(0x048D, Some(crate::zone4::REPORT_LEN)));
+        assert!(!crate::is_spectrum_candidate(0x048D, None));
+        assert!(!crate::is_spectrum_candidate(0x1234, Some(crate::REPORT_LEN)));
+        // Known families first, an unknown family next, the LampArray device last; nothing dropped.
+        let mut d: Vec<(PathBuf, u16)> = vec![("hidraw3".into(), 0xC2A1), ("hidraw4".into(), 0xC193), ("hidraw5".into(), 0xC197)];
+        super::lamparray_last(&mut d, Some(0xC193));
+        assert_eq!(d.iter().map(|x| x.1).collect::<Vec<_>>(), [0xC197, 0xC2A1, 0xC193]);
     }
 }
 

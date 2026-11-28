@@ -10,7 +10,7 @@
 //! action, silent for the active local session); one JSON line every 2 s:
 //!   {"gpu_temp_c": 47}        or {"gpu_temp_c": null} while the EC has no reading
 //! plus, only where the firmware's capability list offers them and no hwmon
-//! driver shows the fans already: "fans": {"cpu": rpm, "gpu": rpm, "pch": rpm};
+//! driver shows the fans already: "fans": {"cpu": rpm, "gpu": rpm, "pch": rpm, "sys2": rpm};
 //! and every 30 s on AC "charger_weak": bool (the firmware's own "this adapter
 //! cannot feed full power" verdict).
 //!

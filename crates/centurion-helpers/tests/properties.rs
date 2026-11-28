@@ -346,3 +346,58 @@ proptest! {
         prop_assert_eq!(back.to_json(), j);
     }
 }
+
+// Model gate and quirks (machine.rs) on hostile DMI: these decide whether a helper may touch
+// hardware at all, and which firmware rule applies.
+mod dmi {
+    use centurion_helpers::machine::{check_at, generation_of, info_at, overdrive_capability_untrusted,
+                                     parse_bios, rgb_firmware_controlled, series_of, Series};
+    use proptest::prelude::*;
+    use std::sync::atomic::{AtomicU32, Ordering};
+
+    fn dmi_dir(vendor: &[u8], version: &[u8], name: &[u8], bios: &[u8]) -> std::path::PathBuf {
+        static N: AtomicU32 = AtomicU32::new(0);
+        let d = std::env::temp_dir().join(format!("centurion-dmi-prop-{}-{}", std::process::id(), N.fetch_add(1, Ordering::SeqCst)));
+        std::fs::create_dir_all(&d).unwrap();
+        for (f, v) in [("sys_vendor", vendor), ("product_version", version), ("product_name", name), ("bios_version", bios)] {
+            std::fs::write(d.join(f), v).unwrap();
+        }
+        d
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig { failure_persistence: None, ..ProptestConfig::default() })]
+
+        /// Any bytes in DMI (non-UTF-8 included): no panic, and the gate never opens for a non-Lenovo vendor.
+        #[test]
+        fn hostile_dmi_never_panics(vendor in prop::collection::vec(any::<u8>(), 0..24),
+                                    version in prop::collection::vec(any::<u8>(), 0..64),
+                                    name in prop::collection::vec(any::<u8>(), 0..16),
+                                    bios in prop::collection::vec(any::<u8>(), 0..16)) {
+            let d = dmi_dir(&vendor, &version, &name, &bios);
+            let gate = check_at(&d);
+            let info = info_at(&d);
+            let _ = (rgb_firmware_controlled(&info), overdrive_capability_untrusted(&info));
+            let _ = std::fs::remove_dir_all(&d);
+            let lenovo = std::str::from_utf8(&vendor).is_ok_and(|v| v.trim().eq_ignore_ascii_case("LENOVO"));
+            prop_assert!(lenovo || gate.is_err());
+        }
+
+        /// A machine type in the table decides the series whatever the marketing name says.
+        #[test]
+        fn machine_type_wins(model in ".{0,40}", pad in "[ \t]{0,3}", tail in "[A-Z0-9]{0,4}") {
+            prop_assert_eq!(series_of(&model, &format!("{pad}83V9{tail}")), Series::Legion7);
+            prop_assert_eq!(series_of(&model, &format!("{pad}83vk{tail}")), Series::Legion5);
+            prop_assert_eq!(series_of(&model, &format!("{pad}83Q6{tail}")), Series::Legion5);
+        }
+
+        /// Odd model and BIOS strings: no panic, and the generation stays a 1-2 digit number.
+        #[test]
+        fn model_and_bios_parsers(model in "\\PC{0,48}", bios in "\\PC{0,16}") {
+            prop_assert!(generation_of(&model) < 100);
+            let b = parse_bios(&bios);
+            prop_assert!(b.prefix.is_empty() || b.prefix.len() == 4);
+            prop_assert!(b.version.is_none_or(|v| v < 100));
+        }
+    }
+}

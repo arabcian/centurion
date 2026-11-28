@@ -73,6 +73,12 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions follo
   after steps 1–2 had already been written to the target (which can be the running system).
 
 ### Added
+- Model tables synced with LenovoLegionToolkit 2.34.0: machine types 83Q6 and 83VK (Legion 5) and 83V9
+  (Legion 7; the Gen 10+ Over Drive rule now reaches it), known-model prefixes 15ASH and 14IAP, the second system
+  fan (capability 0x04030005, Home → *Live* "System 2", read-only), and *Device info…* says when the keyboard RGB is
+  firmware-controlled (Legion 7 Gen 6, GKCN BIOS before 54). A Spectrum keyboard under a product-id family other
+  than C1xx / C6xx / C9xx is found too (still only on a 960-byte feature report that answers the compatibility
+  query; known families are tried first). `tests/test_llt_model_sync_static.py` pins the LLT state.
 - What's new window after an update, starting with *Important*: the PIN, approving scenes and presets once, the
   lighting administrator rights and re-installing everything together. *Don't show again* hides it for good.
 - Optimize: *Apply preset* in the experimental layout sits in the preset row (it was lost from the layout and floated

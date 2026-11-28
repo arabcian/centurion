@@ -90,6 +90,7 @@ void DeviceInfoDialog::load() {
         line("Y-log changed", num("y_log_changed"));
         line("Power modes", strList(j.value("power_modes")).join(QStringLiteral(", ")));
         line("Note", j.value("note").toString());
+        line("Lighting", j.value("lighting_note").toString());
         const QJsonArray caps = j.value("capabilities").toArray();
         out << QString();
         if (caps.isEmpty()) {
