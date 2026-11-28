@@ -605,8 +605,16 @@ RyzenTab::RyzenTab(QWidget *parent) : QWidget(parent), layout_(ryzen::detect()) 
         for (int c = 0; c < COLS; ++c) g->setColumnStretch(c, 1);
         g->setRowStretch(3 + SLOTS_PER_CCD, 1);
         ccdColumns_[ccd] = card;
-        if (ccdTabs) ccdTabs->addTab(card, QStringLiteral("CCD%1").arg(ccd));
-        else cards->addWidget(card, 1);
+        if (ccdTabs) {
+            auto *page = new QWidget;
+            auto *column = new QVBoxLayout(page);
+            column->setContentsMargins(0, 0, 0, 0);
+            column->addWidget(card);
+            column->addStretch(1);
+            ccdTabs->addTab(page, QStringLiteral("CCD%1").arg(ccd));
+        } else {
+            cards->addWidget(card, 1);
+        }
     }
 
     auto *gridHost = new QWidget;
@@ -625,7 +633,7 @@ RyzenTab::RyzenTab(QWidget *parent) : QWidget(parent), layout_(ryzen::detect()) 
         // Slot-by-slot editing already exists in the CCD matrix. A second
         // editor duplicated that state and stole ~30% of the usable width.
         // Preserve one source of truth, the fixed 8-slot table, at full width.
-        root->addWidget(coreBox, 1);
+        root->addWidget(coreBox, 0);
     } else {
         root->addWidget(coreBox, 1);
     }
@@ -643,6 +651,7 @@ RyzenTab::RyzenTab(QWidget *parent) : QWidget(parent), layout_(ryzen::detect()) 
         root->addWidget(experimentalui::disclosure(tr("ACTIVITY LOG  ·  Diagnostics"), logBox));
     }
     root->addWidget(logBox, 0);
+    if (theme::experimentalEnabled()) root->addStretch(1);
 
     monTimer_ = new QTimer(this);
     monTimer_->setInterval(MONITOR_MS);
@@ -699,7 +708,7 @@ void RyzenTab::setCoreMode(bool all) {
     auto *ccdTabs = coreGrid_ ? coreGrid_->findChild<QTabWidget *>() : nullptr;
     for (auto it = ccdColumns_.cbegin(); it != ccdColumns_.cend(); ++it) {
         const bool vis = activeCcds_.contains(it.key());
-        if (ccdTabs) ccdTabs->setTabVisible(ccdTabs->indexOf(it.value()), vis);
+        if (ccdTabs) ccdTabs->setTabVisible(it.key(), vis);
         else it.value()->setVisible(vis);
     }
     for (Slot &s : slots_) if (!activeCcds_.contains(s.ccd)) { s.disable->setChecked(false); s.entry->clear(); }
@@ -978,7 +987,9 @@ void RyzenTab::fitCoreScroll() {
     // them so the measurement is made in the current style.
     for (QWidget *w : coreGrid_->findChildren<QWidget *>()) w->updateGeometry();
     for (QLayout *l : coreGrid_->findChildren<QLayout *>()) l->invalidate();
-    coreScroll_->setMinimumHeight(std::min(coreGrid_->sizeHint().height(), 260));
+    const int contentHeight = coreGrid_->sizeHint().height();
+    coreScroll_->setMinimumHeight(std::min(contentHeight, 260));
+    if (theme::experimentalEnabled()) coreScroll_->setMaximumHeight(contentHeight);
 }
 
 // The height above is measured in the theme's metrics; at start-up the style sheet is applied
