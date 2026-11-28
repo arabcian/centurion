@@ -305,7 +305,7 @@ pub fn set_pin(pin: &str) -> Value {
 }
 
 fn unhex(s: &str) -> Vec<u8> {
-    if s.len() % 2 != 0 { return Vec::new(); }
+    if s.len() % 2 != 0 || !s.is_ascii() { return Vec::new(); }
     (0..s.len()).step_by(2).map_while(|i| u8::from_str_radix(&s[i..i + 2], 16).ok()).collect()
 }
 
@@ -328,6 +328,11 @@ mod tests {
         assert_ne!(a, digest(b"salt", "1234", 11));
         assert_eq!(unhex(&hex(&a)), a.to_vec());
         assert!(same(&a, &a) && !same(&a, &a[..31]));
+    }
+
+    #[test]
+    fn non_ascii_digest_text_is_invalid_not_a_panic() {
+        assert!(unhex("aéb").is_empty());  // 4 bytes: the 2-byte pair would split é
     }
 
     #[test]
