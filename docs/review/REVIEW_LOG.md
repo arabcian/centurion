@@ -17,7 +17,8 @@ Python static testleri kaynakta metin arıyor (≈441 assert); bunları kıran b
 - Aşama 5 bağlam için ikiye bölündü. 5a (Ryzen/SMU, Legion WMI/EC, fwattr): OKUNDU — kod değişikliği yok, F5.1 onay bekliyor.
 - Aşama 5b (amdgpu, dgpu, nvreg, cooling, fan_table, lighting, centurion-spectrum): OKUNDU — kod değişikliği yok,
   F5.4 onay bekliyor, F5.5–F5.8 yalnızca bilgi.
-- Sıradaki: Aşama 6a (autotune).
+- Aşama 6a (autotune): TAMAMLANDI — F6.1 uygulandı (yalnızca doc yorumu), F6.2–F6.4 yalnızca bilgi.
+- Sıradaki: Aşama 6b (calib + centurion-calibrate + calctx + calsim).
 
 ## Başlangıç durumu (2026-11-28, commit 123c3c7, dal experimental)
 
@@ -160,6 +161,10 @@ Aşama 5a: `smu.rs`, `ryzen_mon.rs`, `bin/ryzen-co-helper.rs`, `legion_wmi.rs`, 
 Aşama 5b: `amdgpu.rs`, `bin/amdgpu-helper.rs`, `dgpu.rs`, `nvreg.rs`, `cooling.rs`, `fan_table.rs`, `lighting.rs`,
 `bin/lighting-helper.rs`, `crates/centurion-spectrum/src/lib.rs`, `lamparray.rs` (tamamı).
 
+Aşama 6a: `bin/centurion-autotune.rs` (tamamı); `autotune.rs` kod kısmı 1–2957 satır satır (testler 2957–4210 yalnızca
+fikstür ve doğrulamalar için tarandı). Kural gövdelerindeki sezgisel katsayılar (etki vektörleri) alan kararı olduğu için
+doğruluk açısından değerlendirilmedi; panik, indeksleme, bölme ve dosya G/Ç kalıplarına bakıldı.
+
 ## Bulgular
 
 ### Aşama 1 — helpers ortak altyapı
@@ -261,6 +266,20 @@ tek anlamlı seçenekleri yazıyor; tip aralığı dışı ya da metin/dizi tipl
 okuyup uyuşmazlıkta eski tabloyu geri yüklüyor; son üç adım için termal taban var. Spectrum yalnızca 960 baytlık feature
 raporu bildiren ve D1'e yanıt veren arayüzle konuşuyor; LampArray akışı sinyal/çıkışta otonom moda dönüyor.
 
+### Aşama 6a — autotune
+
+| # | Yer | Sorun | Senaryo | Öneri / yapılan | Risk | Kırmızı çizgi |
+|---|-----|-------|---------|-----------------|------|---------------|
+| F6.1 | `autotune.rs:234`, `:1400`, `:2535` | Üç doc yorumu yanlış öğeye bağlı: `game_sessions`'ınki `project_c_under`'da, `level_costs`'unki `poll_names`'te, `autotune_req`'inki `progress_event`'te. | rustdoc / IDE yanlış açıklamayı gösteriyor. | Yorumlar ait oldukları öğelere taşındı (271b502). Kod değişmedi. | yok | hayır |
+| F6.2 | `autotune.rs:1455` `joint_pass` | `r.joint.take()` sonrası `Rules::seen` için model yok; önbellekte olmayan bir anahtar için `set` → `seen()` `true` döner. `joint_pass`'in kendi `set_live`'ları ve `repair_live` bu yoldan geçer. | Kâğıt üstünde: `signature_pass`'te `calibrated_choice` erken `false` dönmüş (ölçülmüş değer yok) bir eklem-model anahtarını eklem araması değiştirirse karar `seen: true` raporlanır. Mevcut eklem testinde (`joint_model_keeps_synergy_and_drops_redundancy`) geçici bir yoklamayla denedim: tüm anahtarlar önceden önbellekteydi, uyuşmazlık çıkmadı. Ulaşılabilir bir girdi bulamadım. | Kanıt yok, değişiklik yapılmadı. Ulaşılabilirse çözüm: `joint_pass` sonunda `r.joint`'i geri koymak. | düşük (yalnızca rapor alanı) | hayır |
+| F6.3 | `bin/centurion-autotune.rs:161` `write_atomic` | Geçici dosya adı süreç başına değil (`.<ad>.tmp`). `history_push` aynı sorun için süreç kimlikli `write_replace`'e geçirilmiş; `--save` geçirilmemiş. | Aynı adla aynı anda iki `--save` (GUI + CLI) aynı geçici dosyaya yazar. | Yarış için güvenilir bir test yazılamıyor; yalnızca rapor. | çok düşük | hayır |
+| F6.4 | `bin/centurion-autotune.rs:246` `report` | Watermark sayfa boyutu sabit 4 KiB. | Yalnızca 4 KiB dışı sayfa boyutlu çekirdeklerde tanı çıktısı yanlış olur (hedef x86). | Değişiklik önerilmez. | yok | hayır |
+
+Sorunsuz bulunanlar: `centurion-autotune --weights` sıkı ayrıştırılıyor (sonlu, bilinen anahtar, tekrar yok). Kullanıcı
+dosyası okuyan kök yolu (`read_regular`) O_NOFOLLOW + O_NONBLOCK + fstat ile korunuyor. Kanıt geçmişi `read_root_file` /
+`write_root_file` kullanıyor. Çıkan her ön ayar kendi `audit`'inden geçiriliyor; 2^53 üstü tamsayılar atılıyor.
+`guard_verdict` (geri alma kuralı) ve `audit` / `enforce` kırmızı çizgi alanı: yalnızca okundu.
+
 ## Ölü kod adayları
 
 Aşama 1: yok (tüm `pub` öğelerin çağıranı var).
@@ -280,4 +299,6 @@ testleri kullanıyor ya da hiç kullanılmıyor): `EffectType::{name, needs_host
 has_colors}`, `Effect::kind`, `per_key_effects`, `KeyMap::{at, unique, zone_of, zone, spans}`, `Zone`, `is_perimeter`,
 `PERIMETER_REAR/FRONT`, `Device::restore_effects_raw` (hiç çağrılmıyor). GUI C++ olduğu için bunları kullanamaz; eski bir
 Rust GUI'nin ya da yedekleme özelliğinin kalıntısı olabilir. Silinmedi.
+
+Aşama 6a: yok (`explore` yalnızca `#[cfg(test)]`, bilinçli).
 
