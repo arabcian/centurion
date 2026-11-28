@@ -40,7 +40,7 @@ class EvidenceLabIntegration(unittest.TestCase):
         for term in ['"f2fs"','"bluetooth"','"wifi"']:
             self.assertIn(term,r)
         for term in ['"F2FS-fs"','"Bluetooth:"','"mt792"']:
-            self.assertIn(term,ui)
+            self.assertIn(term,ui+src('gui/src/kmsgwake.h'))
         self.assertIn('QLatin1String("f2fs")',src('gui/src/eventinfo.cpp'))
         self.assertIn('QLatin1String("bluetooth")',src('gui/src/eventinfo.cpp'))
 
