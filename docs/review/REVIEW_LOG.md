@@ -19,7 +19,8 @@ Python static testleri kaynakta metin arıyor (≈441 assert); bunları kıran b
   F5.4 onay bekliyor, F5.5–F5.8 yalnızca bilgi.
 - Aşama 6a (autotune): TAMAMLANDI — F6.1 uygulandı (yalnızca doc yorumu), F6.2–F6.4 yalnızca bilgi.
 - Aşama 6b (calib, centurion-calibrate, calctx, calsim): OKUNDU — kod değişikliği yok, F6.5–F6.7 rapor.
-- Sıradaki: Aşama 6c (bench, stability, cooltest, gamemode, boot*).
+- Aşama 6c (bench, stability, cooltest, gamemode, boot*): OKUNDU — kod değişikliği yok; F6.9 onay bekliyor, F6.8/F6.10/F6.11 bilgi.
+- Sıradaki: Aşama 7 (backup, tarscan, sysadmin, fstabcheck).
 
 ## Başlangıç durumu (2026-11-28, commit 123c3c7, dal experimental)
 
@@ -132,6 +133,16 @@ Aşama 5a (kırmızı çizgi, uygulanmadı):
 - **F5.3 (bilgi)** `legion_wmi.rs:530/1183` `record_verified` / `record_unsupported` kilitsiz RMW; iki eşzamanlı status
   çağrısında bir "doğrulandı" kaydı düşebilir, bir sonraki status yeniden kaydeder (kendi kendini onarıyor).
 
+Aşama 6c (kırmızı çizgi değil, ama yarış için güvenilir test yazılamadığından onay bekliyor):
+
+- **F6.9 (düşük-orta)** `stability.rs:118` `record`, `:174` `on_shutdown`, `:192` `on_boot`: `/var/lib/centurion/exposure.json`
+  kilitsiz oku-değiştir-yaz. Yazanlar: tune-helper (her apply/restore'dan sonra `record_now`), centurion-calibrate
+  (`record_calibration`), centurion-boot-guard (açılış ve kapanış). Senaryo: kapanışta bir oyunun POST kancası
+  tune-helper restore çalıştırırken boot-guard `on_shutdown` yazıyor. Son yazan kazanır ve `clean: true` düşebilir. Bir
+  sonraki açılışta `on_boot` o açılışı "unclean" kapatır, `field_risk` o an değişmiş her ayarı çökme ağırlığıyla (3)
+  cezalandırır. Öneri: F1.6'da `defaults::record` için yapılanın aynısı, üç fonksiyonda
+  `let _l = crate::helper_lock("exposure").ok();`.
+
 Aşama 5b (kırmızı çizgi, uygulanmadı):
 
 - **F5.4 (düşük)** `centurion-spectrum/src/lib.rs:135` `Rgb::parse_hex`, uzunluğu (6) denetleyip `u32::from_str_radix`'e
@@ -172,6 +183,12 @@ Aşama 6b: `calctx.rs` (tamamı satır satır). `calib.rs`: dosya G/Ç ve depola
 `--field` içe aktarma ve imza yazma yolları okundu, geri kalanı risk kalıplarıyla tarandı (ölçüm/geri alma mantığı
 değiştirilmeyeceği için ayrıntılı değerlendirilmedi). `calsim.rs` yalnızca test (centurion-calibrate'in test modülü):
 gözden geçirildi.
+
+Aşama 6c: `bootguard.rs`, `bin/centurion-boot-guard.rs`, `boothist.rs`, `stability.rs` (kod kısmı), `bin/centurion-cooltest.rs`
+(tamamı satır satır); `bootlogo.rs` (kırmızı çizgi: UEFI değişkeni + ESP yazımı) tamamı okundu. `bench.rs` (1485 satır kod,
+ölçüm): dosya oluşturma (yalnızca O_TMPFILE), eşleme ve indeksleme yolları okundu, ölçüm yöntemleri değerlendirilmedi.
+`bin/centurion-gamemode.rs` (1673): pkexec çağrısı, ön ayar yükleme, sahne durumu / kilit yolları okundu; sahne uygulama
+akışı (`apply_scene`, 691–1020) helper çağrılarının sırası olduğu için yalnızca tarandı.
 
 ## Bulgular
 
@@ -302,6 +319,20 @@ Sorunsuz bulunanlar: sahne dosyası kök tarafından kullanıcının fsuid'iyle 
 günlüğü tutuyor. `--field` kullanıcı günlüklerini O_NOFOLLOW + sahip denetimiyle okuyor. İmza yüklemesi bozuk dosyayı
 "başka donanım"dan ayırıyor ve yedeğe düşüyor.
 
+### Aşama 6c — bench, stability, cooltest, gamemode, boot*
+
+| # | Yer | Gözlem | Risk | Kırmızı çizgi |
+|---|-----|--------|------|---------------|
+| F6.8 | `bin/centurion-cooltest.rs:177` `fanmax` | `--peaks nan` kabul ediliyor (`f64::parse`); JSON'a `null` yazılıyor ve o ayar için taban kalıcı olarak "fan sayısı farklı" oluyor (`forget` gerekir). GUI (`coolingpage.cpp:584`) yalnızca `qRound` tamsayıları gönderiyor; yalnızca elle CLI çağrısında olur. "İmkânsız durum" kuralı gereği değişiklik önerilmez. | çok düşük | hayır |
+| F6.10 | `bootguard.rs:29` `read` | Okunamayan / bozuk durum dosyası `{}` döner → `should_skip` `None` → ön ayarlar uygulanır (açık kalarak başarısız). Bilinçli olabilir (bozuk bir dosya açılışları kalıcı olarak durdurmasın diye). Soru: niyet bu mu? | bilgi | evet (koruma mantığı) |
+| F6.11 | `autotune.rs:376` `boot_id` | `bootguard::boot_id`'in birebir kopyası (`stability.rs` ikincisini kullanıyor). Davranış farkı yok. | yok | hayır |
+
+Sorunsuz bulunanlar: boot guard sinyalleri `sigtimedwait` ile alıyor (kontrol ile bekleme arasında SIGTERM kaçmaz);
+bootlogo yalnızca tam çözünürlükte temel JPEG kabul ediyor, her UEFI yazımını geri okuyup başarısızlıkta öncekileri geri
+koyuyor. bench G/Ç testleri bağlantısız O_TMPFILE kullanıyor (dünya-yazılabilir `/var/tmp`'de bile sembolik bağlantıya
+açık ad yok). gamemode kök gerektiren her şeyi pkexec ile yapıyor; ön ayar değerleri yalnızca köke ait depodan
+(`/etc/centurion/presets`) alınıyor, kullanıcının dosyası değil; yetkilendirme takılırsa 60 sn, helper 180 sn sınırı var.
+
 ## Ölü kod adayları
 
 Aşama 1: yok (tüm `pub` öğelerin çağıranı var).
@@ -325,4 +356,6 @@ Rust GUI'nin ya da yedekleme özelliğinin kalıntısı olabilir. Silinmedi.
 Aşama 6a: yok (`explore` yalnızca `#[cfg(test)]`, bilinçli).
 
 Aşama 6b: yok (`calsim.rs` `#![allow(dead_code)]` ile test simülatörü, bilinçli).
+
+Aşama 6c: yok (F6.11 bir kopya, ölü değil).
 
