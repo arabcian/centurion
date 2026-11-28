@@ -596,6 +596,9 @@ fn apply_values_checked(st: &mut State, values: &Map<String, Value>, game: bool,
         // Files this row should hold its value in afterwards: written ones and those already at it.
         let mut checks: Vec<(PathBuf, String)> = Vec::new();
         let mut row_stamps = StorageStamps::new();
+        // Recorded paths that are aliases (not canonical) and the canonical file they name: resolved once per row,
+        // not once per baseline entry for every planned file. Rows recorded in this loop are canonical already.
+        let mut aliases: Option<std::collections::HashSet<PathBuf>> = None;
         for (f, data) in plan {
             if tune::scoped_storage(t) {
                 let Some(stamp) = tune::storage_stamp(t, &f) else { errs.push("storage target identity unavailable".into()); continue };
@@ -604,7 +607,9 @@ fn apply_values_checked(st: &mut State, values: &Map<String, Value>, game: bool,
                         errs.push("replacement storage target differs from preflight".into()); continue;
                     }
                 }
-                if st.baseline.iter().any(|(_, p, _)| p != &f && p.canonicalize().ok().as_ref() == Some(&f)) {
+                let aliases = aliases.get_or_insert_with(|| st.baseline.iter()
+                    .filter_map(|(_, p, _)| p.canonicalize().ok().filter(|c| c != p)).collect());
+                if aliases.contains(&f) {
                     errs.push("legacy alias overlaps a current storage target; original preserved".into()); continue;
                 }
                 if recorded.contains(&f) && st.storage_stamps.get(&f) != Some(&stamp) {
