@@ -4,6 +4,7 @@
 #include "bootpage.h"
 #include "healthevidence.h"
 #include "lazywidget.h"
+#include "theme.h"
 
 #include <QTabWidget>
 #include <QVBoxLayout>
@@ -12,6 +13,7 @@ DiagnosticsPage::DiagnosticsPage(QWidget *parent) : QWidget(parent) {
     auto *layout = new QVBoxLayout(this);
     layout->setContentsMargins(0, 0, 0, 0);
     tabs_ = new QTabWidget;
+    if (theme::experimentalEnabled()) tabs_->setDocumentMode(true);
     boots_ = new BootPage;
     findings_ = new AdvancedHealthPage;
     tabs_->addTab(boots_, tr("Boot History"));

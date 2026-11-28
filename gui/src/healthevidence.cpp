@@ -6,6 +6,7 @@
 #include "evidencereports.h"
 #include "incidentfocus.h"
 #include "privileged.h"
+#include "theme.h"
 
 #include <QComboBox>
 #include <QHBoxLayout>
@@ -13,6 +14,7 @@
 #include <QLabel>
 #include <QLineEdit>
 #include <QPushButton>
+#include <QTabBar>
 #include <QTabWidget>
 #include <QVBoxLayout>
 
@@ -38,7 +40,13 @@ static const Component COMPONENTS[] = {
 
 HealthEvidencePage::HealthEvidencePage(QWidget *parent) : QWidget(parent) {
     auto *layout = new QVBoxLayout(this);
-    layout->setContentsMargins(8, 7, 8, 7);
+    const bool experimental = theme::experimentalEnabled();
+    if (experimental) {
+        layout->setContentsMargins(theme::GAP_S, theme::GAP_XS, theme::GAP_S, theme::GAP_XS);
+        layout->setSpacing(theme::GAP_XS);
+    } else {
+        layout->setContentsMargins(8, 7, 8, 7);
+    }
     // One row of controls: Scan, then the incident focus that filters all five reports. The description is
     // the status line until the first scan, then that scan's summary.
     auto *focusRow = new QHBoxLayout;
@@ -62,6 +70,10 @@ HealthEvidencePage::HealthEvidencePage(QWidget *parent) : QWidget(parent) {
     status_->setProperty("role", "muted");
     layout->addWidget(status_);
     tabs_ = new QTabWidget(this);
+    if (experimental) {
+        tabs_->setDocumentMode(true);
+        tabs_->tabBar()->setElideMode(Qt::ElideNone);
+    }
     tabs_->setUsesScrollButtons(true);  // 13 components: scroll rather than squeeze the names
     for (const Component &c : COMPONENTS) {
         auto *view = new DiagReportView;
