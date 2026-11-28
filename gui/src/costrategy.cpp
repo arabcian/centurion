@@ -194,10 +194,13 @@ Trial Search::verifyTrial() const {
     //    busy the shared voltage rail follows that core's request alone, at its highest boost - where a CO
     //    offset fails first. 2. `power` on every thread: dense FMA work up to the package power limit, the
     //    highest current, voltage droop and heat. 3. Every thread for two co cycles, fft-avx then ntt, right
-    //    after it: current steps and a lone core boosting in turn on a hot CPU. 4. More single-core cycles
-    //    with the other kernels (ntt, then fft-avx, ...). 5. The classic SSE load (different code) with random
-    //    1-200 ms idle pauses, if there is room. 6. `power` again, for the rest of the 20 minutes.
-    static constexpr int POWER_FIRST = 180, CO_ALL = 2 * FULL_SECONDS, POWER_LAST = 60;
+    //    after it: current steps and a lone core boosting in turn on a hot CPU. 4. `hop` (two or more
+    //    undervolted cores): one thread jumping between them every 0.3-60 ms, with and without idle waits, over
+    //    every ordered pair: a core waking into its highest boost while the shared rail moves from the previous
+    //    core's voltage request to its own. 5. More single-core cycles with the other kernels (ntt, then
+    //    fft-avx, ...). 6. The classic SSE load (different code) with random 1-200 ms idle pauses, if there is
+    //    room. 7. `power` again, for the rest of the 30 minutes (at least 130 s).
+    static constexpr int POWER_FIRST = 180, CO_ALL = 2 * FULL_SECONDS, HOP = 300, POWER_LAST = 130;
     const QList<int> v = values();
     QList<int> cpus;
     for (int i = 0; i < cores_.size(); ++i) if (v[i] < 0) cpus << cores_[i].cpus.first();
@@ -210,10 +213,14 @@ Trial Search::verifyTrial() const {
     };
     Trial t;
     t.perCore = v;
-    t.what = QStringLiteral("20-minute verification of the per-core set");
+    t.what = QStringLiteral("30-minute verification of the per-core set");
     const int pass = n * QUICK_SECONDS;  // one single-core co cycle on every undervolted core
-    int single = VERIFY_SECONDS - POWER_FIRST - CO_ALL - POWER_LAST - pass;  // what is left for parts 4 and 5
+    const int hop = cpus.size() >= 2 ? HOP : 0;
+    int single = VERIFY_SECONDS - POWER_FIRST - CO_ALL - hop - POWER_LAST - pass;  // what is left for parts 5 and 6
     t.tests << Test{cpustress(true, cpus, 1, 0, true), pass} << power(POWER_FIRST) << Test{cpustress(false, {}, 2, 1), CO_ALL};
+    if (hop > 0)
+        t.tests << Test{{QStringLiteral("percore"), QStringLiteral("--load"), QStringLiteral("hop"), QStringLiteral("--seconds"),
+                         QString::number(hop), QStringLiteral("--cpus"), list.join(',')}, hop};
     if (const int cycles = std::min(100, std::max(0, single) / pass); cycles > 0) {
         t.tests << Test{cpustress(true, cpus, cycles, 2, true), cycles * pass};
         single -= cycles * pass;
@@ -428,7 +435,7 @@ QString Search::stageText() const {
         const int left = int(std::count_if(per_.begin(), per_.end(), [](const Walk &w) { return !w.done; }));
         return QStringLiteral("Per-core search (%1/%2 cores pending; step %3)").arg(left).arg(per_.size()).arg(tuning_.step);
     }
-    case Stage::Confirm: return mode_ == Mode::PerCore ? QStringLiteral("20-minute verification") : QStringLiteral("Confirmation");
+    case Stage::Confirm: return mode_ == Mode::PerCore ? QStringLiteral("30-minute verification") : QStringLiteral("Confirmation");
     case Stage::Done: return QStringLiteral("Finished");
     }
     return {};
@@ -445,7 +452,7 @@ int Search::estimateMinutes(Mode mode, Level level, int cores, int limit, Tuning
             probes += 1 + (first - limit + tuning.step - 1) / tuning.step;
         }
         const int seconds = probes * s.trialCycles * QUICK_SECONDS
-                          + std::max(VERIFY_SECONDS, cores * QUICK_SECONDS + 360);
+                          + std::max(VERIFY_SECONDS, cores * QUICK_SECONDS + 430 + (cores >= 2 ? 300 : 0));
         return (seconds + 59) / 60;
     }
     const int allTrials = std::max(1, -limit * 2 / 3 / 5) + 3;

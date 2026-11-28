@@ -56,6 +56,11 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions follo
   that disagree). Shown as `Base clocks:` in `nvcurve read`, as `base_note` in its JSON and in the helper's result
   files, and in the V/F history entry of each apply/reset. Before, a missing base only showed up as a silent `null`
   (history: "Unknown"). The cross-check itself is unchanged.
+- Ryzen Curve → CO Search, per-core: the final verification of the whole set is 30 minutes instead of 20. It gains
+  `centurion-cpustress percore --load hop`: one verified thread jumping between the undervolted cores every
+  0.3–60 ms, with and without idle waits, over every ordered pair of cores (CoreCycler's core-to-core switching,
+  thousands of times instead of once per core), and the last power-limit part is at least 130 s. An older
+  `centurion-cpustress` without `hop` is refused before the search. See `docs/CO_STRESS_RESEARCH_2026-11-27.md`.
 - 61 rows that neither calibration nor Autotune touch and no built-in preset sets (network latency and buffering, the
   Wi-Fi/Bluetooth rows, elevator and discard fine tuning, NUMA/KSM/khugepaged internals, unmeasured scheduler feature
   bits) moved off the Optimizations tab to three System tools pages: Network tuning, Storage tuning and Kernel tuning.

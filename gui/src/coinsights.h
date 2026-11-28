@@ -23,7 +23,7 @@ std::optional<double> boostShare(int observedMhz, int ratedMhz);
 QList<int> rankAnomalies(const QList<int> &ranks, const QList<int> &values);
 
 /// Per-core search: minutes left, from the pace of the cores finished so far (`fallbackTotal` before the
-/// first one finishes), plus the 20-minute verification while it is still ahead.
+/// first one finishes), plus the 30-minute verification while it is still ahead.
 int etaMinutes(int elapsedMin, int coresDone, int coresTotal, int fallbackTotalMin, bool verificationLeft);
 
 }  // namespace coinsights

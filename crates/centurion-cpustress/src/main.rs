@@ -13,6 +13,10 @@
 //!       cycles (12 s steady, 12 s transitions) are available for CO search probes.
 //!       percore: each core in turn gets N cycles; allcore: N cycles on every online CPU. K = first kernel.
 //!
+//!   centurion-cpustress percore --load hop --seconds <s> [--cpus LIST]
+//!       one thread hopping from core to core every 0.3-60 ms, with and without idle waits, over every ordered
+//!       pair of the listed cores (at least two), see hop.rs
+//!
 //! Output: one JSON object per line on stdout.
 //!   {"ev":"start","mode","load","seconds","cycles","transitions","cpus":[...]}
 //!   {"ev":"core","t","cpu","cycle"}                     percore: the thread moved to this CPU
@@ -36,6 +40,7 @@
 
 mod co;
 mod cowork;
+mod hop;
 mod topo;
 mod work;
 
@@ -63,9 +68,9 @@ fn emit(v: &Value) {
 fn secs(t: Instant) -> f64 { (t.elapsed().as_secs_f64() * 1000.0).round() / 1000.0 }
 
 #[derive(Debug, PartialEq)]
-struct Args { per_core: bool, load: Load, seconds: u64, cycles: u32, transitions: bool, cpus: Option<Vec<usize>>, co: bool, kernel: usize }
+struct Args { per_core: bool, load: Load, seconds: u64, cycles: u32, transitions: bool, cpus: Option<Vec<usize>>, co: bool, kernel: usize, hop: bool }
 
-const USAGE: &str = "usage: centurion-cpustress info | percore --load <sse|avx2|avx512|power> --seconds <s> [--cycles N] [--transitions] [--cpus LIST] | allcore --load <sse|avx2|avx512|power> --seconds <s> [--transitions] | percore|allcore --load co [--seconds 24|60] [--cycles N] [--kernel 0-2] [--cpus LIST (percore)]";
+const USAGE: &str = "usage: centurion-cpustress info | percore --load <sse|avx2|avx512|power> --seconds <s> [--cycles N] [--transitions] [--cpus LIST] | allcore --load <sse|avx2|avx512|power> --seconds <s> [--transitions] | percore|allcore --load co [--seconds 24|60] [--cycles N] [--kernel 0-2] [--cpus LIST (percore)] | percore --load hop --seconds <s> [--cpus LIST]";
 
 fn parse(argv: &[String]) -> Result<Args, String> {
     let per_core = match argv.first().map(String::as_str) {
@@ -100,13 +105,20 @@ fn parse(argv: &[String]) -> Result<Args, String> {
         }
         let kernel = kernel.unwrap_or(0);
         if kernel >= cowork::KERNELS.len() { return Err("--kernel must be 0..2".into()); }
-        return Ok(Args { per_core, load: Load::Sse, seconds, cycles, transitions, cpus, co, kernel });
+        return Ok(Args { per_core, load: Load::Sse, seconds, cycles, transitions, cpus, co, kernel, hop: false });
+    }
+    if load == "hop" {
+        if !per_core { return Err("--load hop is per-core only".into()); }
+        if transitions || kernel.is_some() || cycles != 1 { return Err("--load hop takes only --seconds and --cpus".into()); }
+        let seconds = seconds.ok_or("--seconds is required")?;
+        if !(1..=86_400).contains(&seconds) { return Err("--seconds must be 1..86400".into()); }
+        return Ok(Args { per_core, load: Load::Sse, seconds, cycles, transitions, cpus, co: false, kernel: 0, hop: true });
     }
     if kernel.is_some() { return Err("--kernel goes with --load co only".into()); }
     if !per_core && cycles != 1 { return Err("unknown argument --cycles".into()); }
     let seconds = seconds.ok_or("--seconds is required")?;
     if !(1..=86_400).contains(&seconds) { return Err("--seconds must be 1..86400".into()); }
-    Ok(Args { per_core, load: Load::parse(load).ok_or("--load must be sse, avx2, avx512, power or co")?, seconds, cycles, transitions, cpus, co, kernel: 0 })
+    Ok(Args { per_core, load: Load::parse(load).ok_or("--load must be sse, avx2, avx512, power, co or hop")?, seconds, cycles, transitions, cpus, co, kernel: 0, hop: false })
 }
 
 /// A wrong chunk: time, CPU, seed, expected, actual.
@@ -237,6 +249,7 @@ fn end(status: &str, t: f64, chunks: u64, errors: u64, failed: &[usize], msg: &s
 
 fn run(a: &Args) -> i32 {
     if a.co { return co::run(a); }
+    if a.hop { return hop::run(a); }
     if !a.load.supported() { return end("init_failed", 0.0, 0, 0, &[], &format!("this CPU has no {}", a.load.name())); }
     let cores = topo::cores();
     let online: Vec<usize> = cores.iter().flat_map(|c| c.cpus.iter().copied()).collect();
@@ -333,7 +346,7 @@ fn run(a: &Args) -> i32 {
 
 fn info() -> i32 {
     let cores: Vec<Value> = topo::cores().iter().map(|c| json!({"cpus": c.cpus, "l3": c.l3})).collect();
-    emit(&json!({"cores": cores, "loads": {"sse": Load::Sse.supported(), "avx2": Load::Avx2.supported(), "avx512": Load::Avx512.supported(), "power": Load::Power.supported(), "co": true}, "co_wide": cowork::wide_isa()}));
+    emit(&json!({"cores": cores, "loads": {"sse": Load::Sse.supported(), "avx2": Load::Avx2.supported(), "avx512": Load::Avx512.supported(), "power": Load::Power.supported(), "co": true, "hop": true}, "co_wide": cowork::wide_isa()}));
     0
 }
 
@@ -370,9 +383,9 @@ mod tests {
     #[test]
     fn arguments() {
         assert_eq!(parse(&v("percore --load sse --seconds 60 --cycles 2 --transitions --cpus 0,2")).unwrap(),
-                   Args { per_core: true, load: Load::Sse, seconds: 60, cycles: 2, transitions: true, cpus: Some(vec![0, 2]), co: false, kernel: 0 });
+                   Args { per_core: true, load: Load::Sse, seconds: 60, cycles: 2, transitions: true, cpus: Some(vec![0, 2]), co: false, kernel: 0, hop: false });
         assert_eq!(parse(&v("allcore --seconds 5 --load avx2")).unwrap(),
-                   Args { per_core: false, load: Load::Avx2, seconds: 5, cycles: 1, transitions: false, cpus: None, co: false, kernel: 0 });
+                   Args { per_core: false, load: Load::Avx2, seconds: 5, cycles: 1, transitions: false, cpus: None, co: false, kernel: 0, hop: false });
         assert!(parse(&v("allcore --load sse --seconds 5 --cpus 1")).is_err());  // per-core only
         assert!(parse(&v("percore --load avx --seconds 5")).is_err());
         assert!(parse(&v("percore --load sse --seconds 0")).is_err());
@@ -382,9 +395,9 @@ mod tests {
         assert!(parse(&v("allcore --load sse --seconds 5 --cycles 2")).is_err());  // per-core only, as before
         // --load co: full or short cycles, any mode, a starting kernel.
         assert_eq!(parse(&v("allcore --load co --cycles 3 --kernel 2")).unwrap(),
-                   Args { per_core: false, load: Load::Sse, seconds: 60, cycles: 3, transitions: false, cpus: None, co: true, kernel: 2 });
+                   Args { per_core: false, load: Load::Sse, seconds: 60, cycles: 3, transitions: false, cpus: None, co: true, kernel: 2, hop: false });
         assert_eq!(parse(&v("percore --load co --cpus 4")).unwrap(),
-                   Args { per_core: true, load: Load::Sse, seconds: 60, cycles: 1, transitions: false, cpus: Some(vec![4]), co: true, kernel: 0 });
+                   Args { per_core: true, load: Load::Sse, seconds: 60, cycles: 1, transitions: false, cpus: Some(vec![4]), co: true, kernel: 0, hop: false });
         assert_eq!(parse(&v("percore --load co --seconds 24 --kernel 2")).unwrap().seconds, 24);
         assert_eq!(parse(&v("percore --load co --seconds 60")).unwrap().seconds, 60);
         assert!(parse(&v("percore --load co --seconds 12")).is_err());
@@ -392,6 +405,14 @@ mod tests {
         assert!(parse(&v("percore --load co --transitions")).is_err());
         assert!(parse(&v("percore --load co --kernel 3")).is_err());
         assert!(parse(&v("percore --load sse --seconds 5 --kernel 1")).is_err());
+        // --load hop: per-core, --seconds and --cpus only.
+        assert_eq!(parse(&v("percore --load hop --seconds 300 --cpus 0,2")).unwrap(),
+                   Args { per_core: true, load: Load::Sse, seconds: 300, cycles: 1, transitions: false, cpus: Some(vec![0, 2]), co: false, kernel: 0, hop: true });
+        assert!(parse(&v("allcore --load hop --seconds 5")).is_err());
+        assert!(parse(&v("percore --load hop")).is_err());
+        assert!(parse(&v("percore --load hop --seconds 5 --transitions")).is_err());
+        assert!(parse(&v("percore --load hop --seconds 5 --kernel 1")).is_err());
+        assert!(parse(&v("percore --load hop --seconds 5 --cycles 2")).is_err());
     }
 
     #[test]
